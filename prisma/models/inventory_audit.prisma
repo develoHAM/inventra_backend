@@ -1,0 +1,34 @@
+model InventoryAudit {
+  id              String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyStoreId  String   @map("company_store_id") @db.Uuid
+  title           String   @db.VarChar(255)
+  description     String?  @db.Text
+  fileUrl         String?  @map("file_url") @db.VarChar(2048)
+  auditedDate     DateTime @map("audited_date") @db.Timestamptz(6)
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  companyStore        CompanyStore         @relation(fields: [companyStoreId], references: [id])
+  createdByUser       User                 @relation(fields: [createdByUserId], references: [id])
+  inventoryAuditItems InventoryAuditItem[]
+
+  @@id([id, companyStoreId])
+  @@index([companyStoreId], map: "IDX_inventory_audits_company_store")
+  @@map("inventory_audits")
+}
+
+model InventoryAuditItem {
+  inventoryAuditId      String   @map("inventory_audit_id") @db.Uuid
+  companyStoreId        String   @map("company_store_id") @db.Uuid
+  companyStoreProductId Int      @map("company_store_product_id")
+  productQuantity       Int      @map("product_quantity")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  inventoryAudit      InventoryAudit      @relation(fields: [inventoryAuditId, companyStoreId], references: [id, companyStoreId])
+  companyStoreProduct CompanyStoreProduct @relation(fields: [companyStoreProductId, companyStoreId], references: [id, companyStoreId])
+
+  @@id([inventoryAuditId, companyStoreId, companyStoreProductId])
+  @@map("inventory_audit_items")
+}

@@ -1,0 +1,30 @@
+model PurchaseReservation {
+  id                    String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyStoreProductId Int               @map("company_store_product_id")
+  companyStoreId        String            @map("company_store_id") @db.Uuid
+  reservedByName        String            @map("reserved_by_name") @db.VarChar(100)
+  reservedByPhone       String?           @map("reserved_by_phone") @db.VarChar(20)
+  reservedQuantity      Int               @map("reserved_quantity")
+  status                ReservationStatus @default(PENDING)
+  remark                String?           @db.Text
+  expiresAt             DateTime?         @map("expires_at") @db.Timestamptz(6)
+  fulfilledAt           DateTime?         @map("fulfilled_at") @db.Timestamptz(6)
+  cancelledAt           DateTime?         @map("cancelled_at") @db.Timestamptz(6)
+  cancelReason          String?           @map("cancel_reason") @db.Text
+  reservedAt            DateTime          @default(now()) @map("reserved_at") @db.Timestamptz(6)
+  updatedAt             DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  companyStoreProduct CompanyStoreProduct @relation(fields: [companyStoreProductId, companyStoreId], references: [id, companyStoreId])
+
+  @@map("purchase_reservations")
+}
+
+enum ReservationStatus {
+  PENDING
+  RESERVED
+  FULFILLED
+  CANCELLED
+  EXPIRED
+
+  @@map("reservation_status")
+}

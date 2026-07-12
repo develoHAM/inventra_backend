@@ -22,3 +22,21 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+/src/generated/prisma
+
+# Prisma generated client
+/src/generated/prisma
+
+# Compiled prisma config (source of truth is prisma.config.ts)
+prisma.config.js
+prisma.config.js.map
+prisma.config.d.ts
+
+# oh-my-claudecode tooling state (not part of the project)
+.omc/
+
+# Claude Code local settings (skills stay tracked; local settings do not)
+.claude/settings.local.json

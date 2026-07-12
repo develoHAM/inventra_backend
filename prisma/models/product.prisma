@@ -1,0 +1,85 @@
+model Category {
+  id               Int       @id @default(autoincrement())
+  name             String    @db.VarChar(50)
+  description      String?   @db.Text
+  parentCategoryId Int?      @map("parent_category_id")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id])
+  children Category[] @relation("CategoryHierarchy")
+  products Product[]
+
+  @@map("categories")
+}
+
+model Brand {
+  id                 Int      @id @default(autoincrement())
+  name               String   @db.VarChar(100)
+  nameKr             String?  @map("name_kr") @db.VarChar(100)
+  description        String?  @db.Text
+  logoUrl            String?  @map("logo_url") @db.VarChar(2048)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdByCompanyId String   @map("created_by_company_id") @db.Uuid
+
+  createdByCompany Company   @relation(fields: [createdByCompanyId], references: [id])
+  products         Product[]
+
+  @@map("brands")
+}
+
+model Product {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String    @db.VarChar(255)
+  barcode         String    @unique(map: "UQ_products_barcode") @db.VarChar(100)
+  companyId       String    @map("company_id") @db.Uuid
+  categoryId      Int       @map("category_id")
+  brandId         Int       @map("brand_id")
+  priceKrw        Int       @map("price_krw")
+  color           String?   @db.VarChar(255)
+  imageUrl        String?   @map("image_url") @db.VarChar(2048)
+  isActive        Boolean   @default(true) @map("is_active")
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  company       Company  @relation(fields: [companyId], references: [id])
+  category      Category @relation(fields: [categoryId], references: [id])
+  brand         Brand    @relation(fields: [brandId], references: [id])
+  createdByUser User     @relation(fields: [createdByUserId], references: [id])
+
+  companyStoreProducts CompanyStoreProduct[]
+
+  @@index([companyId], map: "IDX_products_company")
+  @@map("products")
+}
+
+model CompanyStoreProduct {
+  id                  Int      @id @default(autoincrement())
+  companyStoreId      String   @map("company_store_id") @db.Uuid
+  productId           String   @map("product_id") @db.Uuid
+  isActive            Boolean  @default(false) @map("is_active")
+  description         String?  @db.Text
+  targetStockQuantity Int      @default(0) @map("target_stock_quantity")
+  sampleQuantity      Int      @default(0) @map("sample_quantity")
+  reservedQuantity    Int      @default(0) @map("reserved_quantity")
+  currentQuantity     Int      @default(0) @map("current_quantity")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  companyStore CompanyStore @relation(fields: [companyStoreId], references: [id])
+  product      Product      @relation(fields: [productId], references: [id])
+
+  orderItems            OrderItem[]
+  inventoryAuditItems   InventoryAuditItem[]
+  purchaseReservations  PurchaseReservation[]
+  inventoryTransactions InventoryTransaction[]
+
+  @@unique([id, companyStoreId], map: "UQ_csp_id_company_store")
+  @@unique([productId, companyStoreId], map: "UQ_csp_product_company_store")
+  @@index([companyStoreId], map: "IDX_company_store_products_company_store")
+  @@map("company_store_products")
+}

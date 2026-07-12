@@ -1,0 +1,57 @@
+model Store {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String?  @db.VarChar(255)
+  storeAddress String?  @map("store_address") @db.VarChar(255)
+  storePhone   String?  @map("store_phone") @db.VarChar(20)
+  description  String?  @db.Text
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  companyStores CompanyStore[]
+
+  @@map("stores")
+}
+
+model Company {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String    @db.VarChar(100)
+  taxId             String?   @unique(map: "UQ_companies_tax_id") @map("tax_id") @db.VarChar(20)
+  headOfficeAddress String?   @map("head_office_address") @db.VarChar(255)
+  description       String?   @db.Text
+  headOfficePhone   String?   @map("head_office_phone") @db.VarChar(20)
+  headOfficeEmail   String?   @map("head_office_email") @db.VarChar(255)
+  createdByUserId   String    @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  createdByUser User           @relation("CompanyCreator", fields: [createdByUserId], references: [id])
+  users         User[]         @relation("CompanyEmployees")
+  brands        Brand[]
+  products      Product[]
+  companyStores CompanyStore[]
+
+  @@map("companies")
+}
+
+model CompanyStore {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId     String   @map("company_id") @db.Uuid
+  storeId       String   @map("store_id") @db.Uuid
+  managerUserId String?  @map("manager_user_id") @db.Uuid
+  name          String?  @db.VarChar(255)
+  description   String?  @db.Text
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id])
+  store   Store   @relation(fields: [storeId], references: [id])
+  manager User?   @relation("CompanyStoreManager", fields: [managerUserId], references: [id])
+
+  users                User[]                @relation("CompanyStoreStaff")
+  companyStoreProducts CompanyStoreProduct[]
+  orders               Order[]
+  inventoryAudits      InventoryAudit[]
+
+  @@map("company_stores")
+}
