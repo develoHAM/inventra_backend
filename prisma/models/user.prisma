@@ -1,6 +1,6 @@
 model User {
   id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  companyId       String     @map("company_id") @db.Uuid
+  companyId       String?    @map("company_id") @db.Uuid
   roleId          Int        @map("role_id")
   companyStoreId  String?    @map("company_store_id") @db.Uuid
   phone           String?    @db.VarChar(20)
@@ -11,7 +11,7 @@ model User {
   updatedAt       DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt       DateTime?  @map("deleted_at") @db.Timestamptz(6)
 
-  company      Company       @relation("CompanyEmployees", fields: [companyId], references: [id])
+  company      Company?      @relation("CompanyEmployees", fields: [companyId], references: [id])
   role         Role          @relation(fields: [roleId], references: [id])
   companyStore CompanyStore? @relation("CompanyStoreStaff", fields: [companyStoreId], references: [id])
 
