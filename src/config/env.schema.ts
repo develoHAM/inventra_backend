@@ -17,6 +17,14 @@ export const envSchema = z.object({
       (v) => v.startsWith('postgresql://') || v.startsWith('postgres://'),
       { message: 'must be a postgres connection string (postgresql://...)' },
     ),
+  // -- Auth (JWT) --
+  JWT_ACCESS_SECRET: z.string().min(32),
+  JWT_REFRESH_SECRET: z.string().min(32),
+  JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
+  JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
+  // -- Seed (initial platform admin) --
+  SEED_ADMIN_EMAIL: z.email(),
+  SEED_ADMIN_PASSWORD: z.string().min(8),
 });
 
 export type Env = z.infer<typeof envSchema>;
