@@ -60,14 +60,17 @@ Plus `refreshTokens RefreshToken[]` on `User`.
 **Modify `User`:**
 - `companyId` and the `company` relation become **optional** (`String?` / `Company?`) so the platform admin can have no company. Regular users always receive one (enforced in application logic).
 - `roleId` and the `role` relation become **optional** — a member who self-registers via join code is role-less (`PENDING_APPROVAL`) until the owner assigns a role at approval. A role-less user can never pass `JwtAuthGuard` (it requires `ACTIVE`), so null roles never reach permission resolution. Company owners and the platform admin always receive a role at creation.
+- Add `name` (`VarChar(100)`, **NOT NULL**) — a person's display name. No such column existed; every register DTO supplies it. The seeded platform admin row must be backfilled during the migration.
 
-**Modify `Company`:** add `joinCode` — a unique, non-null, unguessable secret generated when the company is created. Members present it at self-signup to resolve their target company. (Shared out-of-band by the owner; retrievable by the authenticated owner.)
+**Modify `Company`:**
+- Add `joinCode` — a unique, non-null, unguessable secret generated when the company is created. Members present it at self-signup to resolve their target company. (Shared out-of-band by the owner; retrievable by the authenticated owner.)
+- `taxId` (사업자등록번호) becomes **NOT NULL** and is **required in `RegisterDto`**. Rationale: the ADMIN's company-approval decision is only meaningful against a verifiable business identity. (DB-nullable ≠ endpoint-optional — here we make both required.) It remains `@unique`, so duplicate registration → 409.
 
 **Seed data** (`prisma/seed.ts`):
 - Roles: `ADMIN` (platform super-admin), `OWNER` (company owner), `MANAGER`, `STAFF`.
 - Permissions: `resource.action` naming (e.g. `users.approve`, `products.create`, `products.read`, …). Full catalog enumerated during implementation, one set per resource. (`users.create` retired — members self-register.)
 - `role_permissions`: baseline mapping per role.
-- One platform-admin `User` (`company_id = NULL`, `status = ACTIVE`, role `ADMIN`) + its `user_login_methods` local credential (seeded from env-provided initial credentials).
+- One platform-admin `User` (`company_id = NULL`, `status = ACTIVE`, role `ADMIN`, `name` set) + its `user_login_methods` local credential (seeded from env-provided initial credentials). Since `users.name` is now NOT NULL, the seed must set the admin's name and the migration must backfill the existing admin row.
 
 ## 4. Config Additions (`src/config/env.schema.ts`)
 
@@ -106,9 +109,9 @@ src/
 ## 6. Flows
 
 **`POST /auth/register` (public) — company self-signup**
-1. Validate DTO; reject if email already in `user_login_methods`.
+1. Validate DTO (`companyName`, `taxId`, `ownerEmail`, `ownerPassword`, `ownerName`); reject if email already in `user_login_methods` (409) or `taxId` already in `companies` (409).
 2. Hash password (argon2id).
-3. Transaction: create `Company` (with a generated unique `join_code`; `created_by_user_id = platform ADMIN id` as bootstrap anchor, then updated to the new owner user), create `User` (role `OWNER`, status `PENDING_APPROVAL`, `company_id = new company`), create `user_login_methods` (local).
+3. Transaction: create `Company` (with `taxId`, a generated unique `join_code`; `created_by_user_id = platform ADMIN id` as bootstrap anchor, then updated to the new owner user), create `User` (`name = ownerName`, role `OWNER`, status `PENDING_APPROVAL`, `company_id = new company`), create `user_login_methods` (local).
 4. Return a "pending approval" response (no tokens until approved).
 
 **`PATCH /companies/:id/approve` (ADMIN only)** — activates the owner user (`PENDING_APPROVAL → ACTIVE`), enabling login.
@@ -130,7 +133,7 @@ src/
 1. Validate DTO (`joinCode`, `email`, `password`, `name`); reject if email already in `user_login_methods`.
 2. Resolve `joinCode` → `Company`; reject (404) if no company matches.
 3. Hash password (argon2id).
-4. Transaction: create `User` (`role_id = NULL`, status `PENDING_APPROVAL`, `company_id = resolved company`), create `user_login_methods` (local).
+4. Transaction: create `User` (`name = name`, `role_id = NULL`, status `PENDING_APPROVAL`, `company_id = resolved company`), create `user_login_methods` (local).
 5. Return a "pending approval" response (no tokens; role-less until approved).
 
 **`PATCH /users/:id/approve` (needs `users.approve`) — owner approves a member**
@@ -177,6 +180,7 @@ src/
 | Authenticated but lacks permission | 403 |
 | Invalid request body | 400 |
 | Email already registered | 409 |
+| Company tax ID already registered | 409 |
 | Unknown/invalid join code | 404 |
 | Approving a member outside the caller's company | 404 (don't leak existence) |
 | Refresh token reuse detected | 401 + revoke all user tokens |
