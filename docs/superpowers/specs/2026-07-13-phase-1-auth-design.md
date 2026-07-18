@@ -2,8 +2,9 @@
 
 - **Project:** Inventra (multi-tenant inventory management SaaS)
 - **Date:** 2026-07-13
-- **Status:** Design approved; pending implementation plan
+- **Status:** Design approved; implementation in progress
 - **Depends on:** Phase 0 (Docker, `@nestjs/config` + Zod, Prisma schema/client)
+- **Revision (2026-07-18):** Member onboarding changed from *insider-creates* (`POST /users`) to *member self-signup via a company join code* + owner-approval-with-role. `POST /users` removed; `users.role_id` becomes nullable.
 
 ## 1. Goal & Scope
 
@@ -12,7 +13,7 @@ Deliver the authentication (identity + tokens) and authorization (permissions) l
 **In scope:**
 - Local **email + password** authentication (no OAuth yet).
 - **Access + refresh** JWT tokens; refresh tokens **stored hashed** and **rotated**.
-- **Company self-signup** + admin-approved members.
+- **Company self-signup** (owner) + **member self-signup via a company join code**, both gated by approval.
 - A platform **super-admin** (`ADMIN`) with cross-company access.
 - **RBAC** with per-user grant/deny overrides, permissions **resolved fresh per request**.
 - Custom `@nestjs/jwt` guards (Passport intentionally deferred; taught alongside as a learning aside).
@@ -26,14 +27,17 @@ Deliver the authentication (identity + tokens) and authorization (permissions) l
 | 1 | Login methods | Local email+password only | Smallest complete auth; OAuth columns in `user_login_methods` wait for a later phase. |
 | 2 | Token strategy | Access + refresh | Limits blast radius of a stolen access token; enables revocation. |
 | 3 | Refresh storage | Hashed, stored + rotated in a new `refresh_tokens` table | Revocation + multi-device sessions + reuse detection. |
-| 4 | Registration | Company self-signup; admin-approved members | Solves the company↔user bootstrap and gives a full lifecycle. |
+| 4 | Registration | Company self-signup (owner); member self-signup via join code; both approval-gated | Solves the company↔user bootstrap and gives a full lifecycle without an insider-create path. |
 | 5 | Permission resolution | Fresh per request from DB | Revocations take effect instantly; Redis optimizes later. |
 | 6 | JWT implementation | Custom guard with `@nestjs/jwt` | Transparent/learnable; no Passport indirection while OAuth is deferred. |
 | 7 | Password hashing | `argon2id` | OWASP-recommended, memory-hard. |
 | 8 | Super-admin | Platform `ADMIN` role, cross-company wildcard | Operator oversight; also the bootstrap anchor that breaks the circular FK. |
 | 9 | Bootstrap fix | Make `users.company_id` nullable | Platform admin genuinely has no company; avoids deferrable FKs. |
+| 10 | Member targeting | Company **join code** (secret, unique per company) | Applicant resolves to exactly one company without a public tenant directory or spam-any-company risk. |
+| 11 | Member role | Assigned by owner **at approval**; `users.role_id` nullable until then | No self-escalation — applicant never controls their privilege level; a member is role-less (unusable) until approved. |
+| 12 | No insider-create | `POST /users` dropped | Join-code self-signup + approval fully covers onboarding; a second path is redundant (YAGNI). `users.create` permission retired. |
 
-## 3. Data Model Changes (one migration)
+## 3. Data Model Changes
 
 **New model — `RefreshToken`:**
 ```prisma
@@ -53,11 +57,15 @@ model RefreshToken {
 ```
 Plus `refreshTokens RefreshToken[]` on `User`.
 
-**Modify `User`:** `companyId` and the `company` relation become **optional** (`String?` / `Company?`) so the platform admin can have no company. Regular users always receive one (enforced in application logic).
+**Modify `User`:**
+- `companyId` and the `company` relation become **optional** (`String?` / `Company?`) so the platform admin can have no company. Regular users always receive one (enforced in application logic).
+- `roleId` and the `role` relation become **optional** — a member who self-registers via join code is role-less (`PENDING_APPROVAL`) until the owner assigns a role at approval. A role-less user can never pass `JwtAuthGuard` (it requires `ACTIVE`), so null roles never reach permission resolution. Company owners and the platform admin always receive a role at creation.
+
+**Modify `Company`:** add `joinCode` — a unique, non-null, unguessable secret generated when the company is created. Members present it at self-signup to resolve their target company. (Shared out-of-band by the owner; retrievable by the authenticated owner.)
 
 **Seed data** (`prisma/seed.ts`):
 - Roles: `ADMIN` (platform super-admin), `OWNER` (company owner), `MANAGER`, `STAFF`.
-- Permissions: `resource.action` naming (e.g. `users.create`, `users.approve`, `products.create`, `products.read`, …). Full catalog enumerated during implementation, one set per resource.
+- Permissions: `resource.action` naming (e.g. `users.approve`, `products.create`, `products.read`, …). Full catalog enumerated during implementation, one set per resource. (`users.create` retired — members self-register.)
 - `role_permissions`: baseline mapping per role.
 - One platform-admin `User` (`company_id = NULL`, `status = ACTIVE`, role `ADMIN`) + its `user_login_methods` local credential (seeded from env-provided initial credentials).
 
@@ -78,7 +86,7 @@ Two **separate** secrets so a leaked access secret cannot forge refresh tokens. 
 src/
 ├── auth/              # authentication (who you are)
 │   ├── auth.module.ts
-│   ├── auth.controller.ts        # POST /auth/register, /login, /refresh, /logout
+│   ├── auth.controller.ts        # POST /auth/register, /register/member, /login, /refresh, /logout
 │   ├── auth.service.ts
 │   ├── token.service.ts          # sign/verify access+refresh, rotation
 │   ├── password.service.ts       # argon2id hash/verify
@@ -91,7 +99,7 @@ src/
 │   └── decorators/require-permissions.decorator.ts
 └── users/             # user lifecycle
     ├── users.module.ts
-    ├── users.controller.ts       # create member, approve member/company
+    ├── users.controller.ts       # approve member (assigns role), approve company
     └── users.service.ts
 ```
 
@@ -100,7 +108,7 @@ src/
 **`POST /auth/register` (public) — company self-signup**
 1. Validate DTO; reject if email already in `user_login_methods`.
 2. Hash password (argon2id).
-3. Transaction: create `Company` (`created_by_user_id = platform ADMIN id` as bootstrap anchor, then updated to the new owner user), create `User` (role `OWNER`, status `PENDING_APPROVAL`, `company_id = new company`), create `user_login_methods` (local).
+3. Transaction: create `Company` (with a generated unique `join_code`; `created_by_user_id = platform ADMIN id` as bootstrap anchor, then updated to the new owner user), create `User` (role `OWNER`, status `PENDING_APPROVAL`, `company_id = new company`), create `user_login_methods` (local).
 4. Return a "pending approval" response (no tokens until approved).
 
 **`PATCH /companies/:id/approve` (ADMIN only)** — activates the owner user (`PENDING_APPROVAL → ACTIVE`), enabling login.
@@ -118,7 +126,17 @@ src/
 
 **`POST /auth/logout` (authenticated)** — revoke the presented refresh token (optional "everywhere").
 
-**Member lifecycle (company admin)** — `POST /users` (needs `users.create`) creates a member in the admin's company (`PENDING_APPROVAL`); `PATCH /users/:id/approve` (needs `users.approve`) activates.
+**`POST /auth/register/member` (public) — member self-signup**
+1. Validate DTO (`joinCode`, `email`, `password`, `name`); reject if email already in `user_login_methods`.
+2. Resolve `joinCode` → `Company`; reject (404) if no company matches.
+3. Hash password (argon2id).
+4. Transaction: create `User` (`role_id = NULL`, status `PENDING_APPROVAL`, `company_id = resolved company`), create `user_login_methods` (local).
+5. Return a "pending approval" response (no tokens; role-less until approved).
+
+**`PATCH /users/:id/approve` (needs `users.approve`) — owner approves a member**
+1. Load target user; enforce it belongs to the **caller's company** (tenant scope) and is `PENDING_APPROVAL`.
+2. Body carries `{ roleId }` (required — you cannot activate a member without a role); reject `ADMIN`/`OWNER` role assignment here.
+3. Set `role_id = roleId`, `status = ACTIVE`.
 
 ## 7. Token Design
 
@@ -159,6 +177,8 @@ src/
 | Authenticated but lacks permission | 403 |
 | Invalid request body | 400 |
 | Email already registered | 409 |
+| Unknown/invalid join code | 404 |
+| Approving a member outside the caller's company | 404 (don't leak existence) |
 | Refresh token reuse detected | 401 + revoke all user tokens |
 
 ## 11. Testing
@@ -177,4 +197,6 @@ src/
 
 - Enumerate the full permission catalog per resource (mechanical).
 - Finalize which role gets which baseline permissions.
-- Decide member-creation credential flow (admin-set initial password vs invite token) — default: admin-set initial password for Phase 1.
+- **Resolved:** member onboarding = self-signup with a company join code; the member sets their own password at signup; the owner assigns the role at approval.
+- Decide `join_code` format/length and generation (e.g. `INV-` + base32 random) and whether the owner can rotate it (rotation deferred — static per company for Phase 1).
+- Decide how the owner retrieves their `join_code` (e.g. include on an authenticated "my company" read) — minimal endpoint in Phase 1.
