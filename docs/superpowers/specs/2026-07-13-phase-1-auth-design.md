@@ -111,8 +111,8 @@ src/
 **`POST /auth/register` (public) — company self-signup**
 1. Validate DTO (`companyName`, `taxId`, `ownerEmail`, `ownerPassword`, `ownerName`); reject if email already in `user_login_methods` (409) or `taxId` already in `companies` (409).
 2. Hash password (argon2id).
-3. Transaction: create `Company` (with `taxId`, a generated unique `join_code`; `created_by_user_id = platform ADMIN id` as bootstrap anchor, then updated to the new owner user), create `User` (`name = ownerName`, role `OWNER`, status `PENDING_APPROVAL`, `company_id = new company`), create `user_login_methods` (local).
-4. Return a "pending approval" response (no tokens until approved).
+3. Transaction (user-first, enabled by nullable `users.company_id`): create `User` (`name = ownerName`, role `OWNER`, status `PENDING_APPROVAL`, `company_id = NULL`) + `user_login_methods` (local, nested) → create `Company` (`taxId`, generated unique `join_code`, `created_by_user_id = new user id`) → update the user's `company_id = new company id`.
+4. Issue access + refresh tokens (store hashed refresh), and return them with the owner's `status = PENDING_APPROVAL` (**auto-login**). The owner can enter the client but is confined to the pending-approval screen (see §8 status handling) until an ADMIN approves.
 
 **`PATCH /companies/:id/approve` (ADMIN only)** — activates the owner user (`PENDING_APPROVAL → ACTIVE`), enabling login.
 
@@ -167,9 +167,11 @@ src/
 
 ## 9. Bootstrapping the circular FK
 
-`companies.created_by_user_id` and `users.company_id` are mutually referencing. Resolution:
-- A **pre-seeded platform `ADMIN`** exists, so a new company can be inserted referencing that real user first — no deferrable FK needed for registration.
-- Seeding the admin itself is broken by making **`users.company_id` nullable** (the super-admin belongs to no company). No `DEFERRABLE` constraints anywhere.
+`companies.created_by_user_id` and `users.company_id` are mutually referencing. Resolution — **user-first**, made possible by nullable `users.company_id`:
+1. Insert the owner `User` with `company_id = NULL` (temporarily company-less).
+2. Insert the `Company` with `created_by_user_id =` that user's id.
+3. Update the user's `company_id` to the new company.
+All three in one transaction, so it's atomic. No admin anchor and no `DEFERRABLE` constraints needed. (The same nullable column also lets the platform `ADMIN` be seeded with no company at all.)
 
 ## 10. Error Handling
 

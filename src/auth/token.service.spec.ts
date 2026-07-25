@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { JwtModule, JwtService } from '@nestjs/jwt';
+import { JwtModule } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { TokenService } from './token.service';
 
@@ -15,9 +15,6 @@ const mockConfig = {
 
 describe('TokenService', () => {
   let tokenService: TokenService;
-  let userId = 1;
-  let testToken1 = 'testToken1';
-  let testToken2 = 'testToken2';
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -37,30 +34,38 @@ describe('TokenService', () => {
     expect(payload.sub).toBe('user-123');
   });
 
-  // TODO (you): type isolation, verifyRefresh returns sub+jti, hashToken determinism
-
-  it('can sign a refresh token and detect wrong tokens', async () => {
-    const token = await tokenService.signRefresh(userId.toString());
-
+  it('rejects a refresh token when verified as an access token', async () => {
+    // NOTE: signRefresh returns an object — destructure the token string out of it
+    const { token } = await tokenService.signRefresh('user-123');
+    // signed with the REFRESH secret → access verification (different secret) fails
     await expect(tokenService.verifyAccess(token)).rejects.toThrow();
   });
 
-  it('guarantees refresh token has both sub and a jti', async () => {
-    const token = await tokenService.signRefresh(userId.toString());
+  it('verifyRefresh returns sub and jti', async () => {
+    const { token } = await tokenService.signRefresh('user-123');
+    const payload = await tokenService.verifyRefresh(token);
+    expect(payload.sub).toBe('user-123');
+    expect(payload).toHaveProperty('jti');
+  });
 
-    const verifiedToken = await tokenService.verifyRefresh(token);
+  it('returns a jti that matches the jti embedded in the token', async () => {
+    const { token, jti } = await tokenService.signRefresh('user-123');
+    const payload = await tokenService.verifyRefresh(token);
+    expect(payload.jti).toBe(jti);
+  });
 
-    expect(verifiedToken).toHaveProperty('sub');
-    expect(verifiedToken).toHaveProperty('jti');
+  it('returns an expiresAt Date in the future', async () => {
+    const { expiresAt } = await tokenService.signRefresh('user-123');
+    expect(expiresAt).toBeInstanceOf(Date);
+    expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
   });
 
   it('hashes to the same value for the same input', () => {
-    const hash1 = tokenService.hashToken(testToken1);
-    const hash2 = tokenService.hashToken(testToken1);
-    const hash3 = tokenService.hashToken(testToken2);
+    const hash1 = tokenService.hashToken('token-a');
+    const hash2 = tokenService.hashToken('token-a');
+    const hash3 = tokenService.hashToken('token-b');
 
     expect(hash1).toBe(hash2);
-    expect(hash2).not.toBe(hash3);
     expect(hash1).not.toBe(hash3);
   });
 });

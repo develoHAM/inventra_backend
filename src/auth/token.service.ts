@@ -31,10 +31,12 @@ export class TokenService {
   }
 
   async signRefresh(userId: string) {
+    const jti = randomUUID();
+
     const payload = {
       sub: userId,
       type: TokenType.REFRESH,
-      jti: randomUUID(),
+      jti: jti,
     };
 
     const signOptions: JwtSignOptions = {
@@ -42,7 +44,10 @@ export class TokenService {
       expiresIn: this.config.get('JWT_REFRESH_EXPIRES_IN'),
     };
 
-    return this.jwt.signAsync(payload, signOptions);
+    const token = await this.jwt.signAsync(payload, signOptions);
+
+    const { exp } = this.jwt.decode(token) as { exp: number }; // exp is seconds since epoch
+    return { token: token, jti: jti, expiresAt: new Date(exp * 1000) };
   }
 
   async verifyAccess(token: string) {
