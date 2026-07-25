@@ -74,18 +74,32 @@ describe('JwtAuthGuard', () => {
     );
   });
 
-  it('rejects a valid token for a non-ACTIVE user', async () => {
+  it('rejects a valid token for a terminal-status (suspended) user', async () => {
     reflector.getAllAndOverride.mockReturnValue(false);
     tokenService.verifyAccess.mockResolvedValue({ sub: 'user-1' });
     prisma.user.findUnique.mockResolvedValue({
       ...activeUser,
-      status: UserStatus.PENDING_APPROVAL,
+      status: UserStatus.SUSPENDED,
     });
     const request = { headers: { authorization: 'Bearer good-token' } };
 
     await expect(guard.canActivate(contextWith(request))).rejects.toThrow(
       UnauthorizedException,
     );
+  });
+
+  it('allows a PENDING user to authenticate (activation is enforced downstream)', async () => {
+    reflector.getAllAndOverride.mockReturnValue(false);
+    tokenService.verifyAccess.mockResolvedValue({ sub: 'user-1' });
+    prisma.user.findUnique.mockResolvedValue({
+      ...activeUser,
+      status: UserStatus.PENDING_APPROVAL,
+    });
+    const request: any = { headers: { authorization: 'Bearer good-token' } };
+
+    await expect(guard.canActivate(contextWith(request))).resolves.toBe(true);
+    // authenticated, and status carried through so downstream guards can gate on it
+    expect(request.user.status).toBe(UserStatus.PENDING_APPROVAL);
   });
 
   it('rejects a soft-deleted user', async () => {

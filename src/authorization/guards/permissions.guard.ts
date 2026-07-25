@@ -5,10 +5,10 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { PermissionsService } from '../permissions.service';
-import { Observable } from 'rxjs';
 import { Reflector } from '@nestjs/core';
 import { REQUIRE_PERMISSIONS_KEY } from '../decorators/require-permissions.decorator';
 import { AuthUser } from '../../auth/types/auth-user';
+import { UserStatus } from '../../generated/prisma/enums';
 
 @Injectable()
 export class PermissionsGuard implements CanActivate {
@@ -30,6 +30,10 @@ export class PermissionsGuard implements CanActivate {
     const user = context.switchToHttp().getRequest().user as AuthUser;
 
     if (!user) {
+      throw new ForbiddenException();
+    }
+
+    if (user.status !== UserStatus.ACTIVE) {
       throw new ForbiddenException();
     }
 

@@ -68,6 +68,17 @@ describe('PermissionsGuard', () => {
     );
   });
 
+  it('denies (403) a PENDING (non-ACTIVE) user on a permissioned route', async () => {
+    reflector.getAllAndOverride.mockReturnValue(['users.approve']);
+    const pendingUser = { ...user, status: UserStatus.PENDING_APPROVAL };
+
+    await expect(
+      guard.canActivate(contextWith(pendingUser)),
+    ).rejects.toThrow(ForbiddenException);
+    // status is rejected before any permission lookup happens
+    expect(permissionsService.getEffectivePermissions).not.toHaveBeenCalled();
+  });
+
   it('denies (403) when no authenticated user is present', async () => {
     reflector.getAllAndOverride.mockReturnValue(['users.approve']);
 

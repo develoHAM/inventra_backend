@@ -89,7 +89,7 @@ Two **separate** secrets so a leaked access secret cannot forge refresh tokens. 
 src/
 ├── auth/              # authentication (who you are)
 │   ├── auth.module.ts
-│   ├── auth.controller.ts        # POST /auth/register, /register/member, /login, /refresh, /logout
+│   ├── auth.controller.ts        # POST /auth/register, /register/member, /login, /refresh, /logout; GET /auth/me
 │   ├── auth.service.ts
 │   ├── token.service.ts          # sign/verify access+refresh, rotation
 │   ├── password.service.ts       # argon2id hash/verify
@@ -118,7 +118,7 @@ src/
 
 **`POST /auth/login` (public)**
 1. Find local `user_login_methods` by email; verify password.
-2. Require `status = ACTIVE` (reject pending/suspended/etc.).
+2. Allow `PENDING_APPROVAL` and `ACTIVE`; reject the terminal statuses (`REJECTED`/`SUSPENDED`/`DEACTIVATED`). A PENDING owner can log in but is confined to the pending screen (see §8).
 3. Issue access+refresh; store hashed refresh in `refresh_tokens`.
 
 **`POST /auth/refresh`**
@@ -155,9 +155,9 @@ src/
 
 ## 8. Authorization
 
-- **`JwtAuthGuard`** (global, first): skip if `@Public()`; verify access token; load user fresh; require `ACTIVE`; attach `req.user`. Failure → **401**.
+- **`JwtAuthGuard`** (global, first): skip if `@Public()`; verify access token; load user fresh; allow only `PENDING_APPROVAL` or `ACTIVE` to authenticate (reject soft-deleted and the terminal statuses `REJECTED`/`SUSPENDED`/`DEACTIVATED`); attach `req.user` (incl. `status`). Failure → **401**. Note: PENDING users *authenticate* but are gated from acting by `PermissionsGuard` (below).
 - **`@CurrentUser()`**: parameter decorator returning the attached `AuthUser` (`id`, `companyId`, `roleId`, `status`).
-- **`PermissionsGuard`** (global, second): read `@RequirePermissions(...)`; allow if none required; allow if role is `ADMIN` (wildcard); else require every listed permission ∈ effective set. Failure → **403**.
+- **`PermissionsGuard`** (global, second): read `@RequirePermissions(...)`; allow if none required (so PENDING users can reach permission-free authenticated routes like `GET /auth/me`); otherwise require `status = ACTIVE` (a PENDING user on a permissioned route → **403**), then require every listed permission ∈ effective set (ADMIN's effective set is all permissions). Failure → **403**. **Order matters:** the no-permissions early-return runs *before* the ACTIVE check, else PENDING users couldn't reach their own pending screen.
 - **`PermissionsService.getEffectivePermissions(user)`**:
   ```
   if role === ADMIN → all permissions
@@ -178,7 +178,8 @@ All three in one transaction, so it's atomic. No admin anchor and no `DEFERRABLE
 | Situation | Response |
 |---|---|
 | Missing/invalid/expired access token | 401 |
-| User pending/suspended/deleted | 401 |
+| User soft-deleted or terminal status (REJECTED/SUSPENDED/DEACTIVATED) | 401 |
+| PENDING user on a permissioned route | 403 |
 | Authenticated but lacks permission | 403 |
 | Invalid request body | 400 |
 | Email already registered | 409 |

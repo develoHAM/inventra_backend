@@ -18,6 +18,11 @@ export class JwtAuthGuard implements CanActivate {
     private prisma: PrismaService,
   ) {}
 
+  private CAN_AUTHENTICATE: UserStatus[] = [
+    UserStatus.PENDING_APPROVAL,
+    UserStatus.ACTIVE,
+  ];
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
@@ -61,7 +66,11 @@ export class JwtAuthGuard implements CanActivate {
       },
     });
 
-    if (!user || user.deletedAt || user.status !== UserStatus.ACTIVE) {
+    if (
+      !user ||
+      user.deletedAt ||
+      !this.CAN_AUTHENTICATE.includes(user.status)
+    ) {
       throw new UnauthorizedException();
     }
 
