@@ -133,8 +133,8 @@ src/
 1. Validate DTO (`joinCode`, `email`, `password`, `name`); reject if email already in `user_login_methods`.
 2. Resolve `joinCode` → `Company`; reject (404) if no company matches.
 3. Hash password (argon2id).
-4. Transaction: create `User` (`name = name`, `role_id = NULL`, status `PENDING_APPROVAL`, `company_id = resolved company`), create `user_login_methods` (local).
-5. Return a "pending approval" response (no tokens; role-less until approved).
+4. Single `user.create` with nested `user_login_methods` (local): `name`, `role_id = NULL`, status `PENDING_APPROVAL`, `company_id = resolved company`. No transaction needed — the company already exists, so it's one atomic write (contrast the owner flow's circular-FK transaction).
+5. Issue access + refresh tokens (**auto-login**, same as owner register) and return them with `status = PENDING_APPROVAL`, `roleId = null`. The member enters the client on the pending screen until the owner approves and assigns a role.
 
 **`PATCH /users/:id/approve` (needs `users.approve`) — owner approves a member**
 1. Load target user; enforce it belongs to the **caller's company** (tenant scope) and is `PENDING_APPROVAL`.

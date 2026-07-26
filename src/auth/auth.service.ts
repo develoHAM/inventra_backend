@@ -1,10 +1,16 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
 import { RegisterDto } from './dto/register.dto';
 import { randomBytes } from 'node:crypto';
 import { UserModel } from '../generated/prisma/models';
+import { RegisterMemberDto } from './dto/register-member.dto';
+import { UserStatus } from '../generated/prisma/enums';
 
 @Injectable()
 export class AuthService {
@@ -114,6 +120,54 @@ export class AuthService {
         status: user.status, // PENDING_APPROVAL
         companyId: user.companyId,
         roleId: user.roleId,
+      },
+    };
+  }
+
+  async registerMember(dto: RegisterMemberDto): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    user: Partial<UserModel>;
+  }> {
+    const { joinCode, email, password, name } = dto;
+
+    const emailTaken = await this.prismaService.userLoginMethod.findFirst({
+      where: {
+        email: email,
+      },
+    });
+
+    if (emailTaken) throw new ConflictException('Email already registered');
+
+    const company = await this.prismaService.company.findUnique({
+      where: { joinCode },
+    });
+    if (!company) throw new NotFoundException('Invalid join code');
+
+    const passwordHash = await this.passwordService.hash(password);
+
+    const user = await this.prismaService.user.create({
+      data: {
+        name,
+        companyId: company.id,
+        roleId: null, // role assigned by the owner at approval
+        status: UserStatus.PENDING_APPROVAL,
+        loginMethods: {
+          create: { method: 'local', email: email, passwordHash: passwordHash },
+        },
+      },
+    });
+
+    const tokens = await this.issueTokens(user.id);
+
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      user: {
+        id: user.id,
+        status: user.status, // PENDING_APPROVAL
+        companyId: user.companyId,
+        roleId: user.roleId, // null
       },
     };
   }

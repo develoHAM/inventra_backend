@@ -4,6 +4,7 @@ import { RegisterDto } from './dto/register.dto';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import type { AuthUser } from './types/auth-user';
+import { RegisterMemberDto } from './dto/register-member.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -18,5 +19,11 @@ export class AuthController {
   @Get('me')
   me(@CurrentUser() user: AuthUser) {
     return user;
+  }
+
+  @Public()
+  @Post('register/member')
+  async registerMember(@Body() dto: RegisterMemberDto) {
+    return await this.authService.registerMember(dto);
   }
 }
