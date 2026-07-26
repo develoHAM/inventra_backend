@@ -9,6 +9,7 @@ import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TokenService } from '../token.service';
 import { UserStatus } from '../../generated/prisma/enums';
+import { CAN_AUTHENTICATE } from '../auth.constants';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -17,11 +18,6 @@ export class JwtAuthGuard implements CanActivate {
     private tokenService: TokenService,
     private prisma: PrismaService,
   ) {}
-
-  private CAN_AUTHENTICATE: UserStatus[] = [
-    UserStatus.PENDING_APPROVAL,
-    UserStatus.ACTIVE,
-  ];
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
@@ -66,11 +62,7 @@ export class JwtAuthGuard implements CanActivate {
       },
     });
 
-    if (
-      !user ||
-      user.deletedAt ||
-      !this.CAN_AUTHENTICATE.includes(user.status)
-    ) {
+    if (!user || user.deletedAt || !CAN_AUTHENTICATE.includes(user.status)) {
       throw new UnauthorizedException();
     }
 

@@ -1,6 +1,7 @@
 import {
   ConflictException,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { UserStatus } from '../generated/prisma/enums';
@@ -12,7 +13,7 @@ describe('AuthService', () => {
     user: { create: jest.Mock; update: jest.Mock };
     company: { create: jest.Mock };
   };
-  let passwordService: { hash: jest.Mock };
+  let passwordService: { hash: jest.Mock; verify: jest.Mock };
   let tokenService: {
     signAccess: jest.Mock;
     signRefresh: jest.Mock;
@@ -68,7 +69,10 @@ describe('AuthService', () => {
       $transaction: jest.fn(async (cb: any) => cb(tx)),
     };
 
-    passwordService = { hash: jest.fn().mockResolvedValue('hashed-pw') };
+    passwordService = {
+      hash: jest.fn().mockResolvedValue('hashed-pw'),
+      verify: jest.fn().mockResolvedValue(true),
+    };
     tokenService = {
       signAccess: jest.fn().mockResolvedValue('access-token'),
       signRefresh: jest.fn().mockResolvedValue({
@@ -197,6 +201,86 @@ describe('AuthService', () => {
         ConflictException,
       );
       expect(prisma.company.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('login', () => {
+    const loginDto = { email: 'jane@acme.com', password: 'password123' };
+
+    const activeLoginMethod = {
+      passwordHash: 'stored-hash',
+      user: {
+        id: 'user-1',
+        status: UserStatus.ACTIVE,
+        companyId: 'company-1',
+        roleId: 2,
+        deletedAt: null,
+      },
+    };
+
+    it('issues a session for valid credentials on an ACTIVE user', async () => {
+      prisma.userLoginMethod.findFirst.mockResolvedValue(activeLoginMethod);
+
+      const result = await service.login(loginDto as any);
+
+      // verify(storedHash, candidate) — argument order matters
+      expect(passwordService.verify).toHaveBeenCalledWith(
+        'stored-hash',
+        'password123',
+      );
+      expect(prisma.refreshToken.create).toHaveBeenCalled();
+      expect(result).toEqual({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        user: {
+          id: 'user-1',
+          status: UserStatus.ACTIVE,
+          companyId: 'company-1',
+          roleId: 2,
+        },
+      });
+    });
+
+    it('allows a PENDING user to log in (lands on the pending screen)', async () => {
+      prisma.userLoginMethod.findFirst.mockResolvedValue({
+        ...activeLoginMethod,
+        user: { ...activeLoginMethod.user, status: UserStatus.PENDING_APPROVAL },
+      });
+
+      const result = await service.login(loginDto as any);
+
+      expect(result.user.status).toBe(UserStatus.PENDING_APPROVAL);
+    });
+
+    it('rejects an unknown email with a generic 401 (no enumeration)', async () => {
+      prisma.userLoginMethod.findFirst.mockResolvedValue(null);
+
+      await expect(service.login(loginDto as any)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(passwordService.verify).not.toHaveBeenCalled();
+    });
+
+    it('rejects a wrong password with a generic 401', async () => {
+      prisma.userLoginMethod.findFirst.mockResolvedValue(activeLoginMethod);
+      passwordService.verify.mockResolvedValue(false);
+
+      await expect(service.login(loginDto as any)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a suspended (terminal-status) user even with valid credentials', async () => {
+      prisma.userLoginMethod.findFirst.mockResolvedValue({
+        ...activeLoginMethod,
+        user: { ...activeLoginMethod.user, status: UserStatus.SUSPENDED },
+      });
+
+      await expect(service.login(loginDto as any)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
     });
   });
 });

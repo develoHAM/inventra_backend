@@ -2,6 +2,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PasswordService } from './password.service';
@@ -11,6 +12,8 @@ import { randomBytes } from 'node:crypto';
 import { UserModel } from '../generated/prisma/models';
 import { RegisterMemberDto } from './dto/register-member.dto';
 import { UserStatus } from '../generated/prisma/enums';
+import { LoginDto } from './dto/login.dto';
+import { CAN_AUTHENTICATE } from './auth.constants';
 
 @Injectable()
 export class AuthService {
@@ -168,6 +171,55 @@ export class AuthService {
         status: user.status, // PENDING_APPROVAL
         companyId: user.companyId,
         roleId: user.roleId, // null
+      },
+    };
+  }
+
+  async login(dto: LoginDto) {
+    const { email, password } = dto;
+
+    const loginMethod = await this.prismaService.userLoginMethod.findFirst({
+      where: { email: email, method: 'local' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            status: true,
+            companyId: true,
+            roleId: true,
+            deletedAt: true,
+          },
+        },
+      },
+    });
+
+    if (!loginMethod?.passwordHash) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    const valid = await this.passwordService.verify(
+      loginMethod.passwordHash,
+      password,
+    );
+    if (!valid) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const user = loginMethod.user;
+
+    if (user.deletedAt || !CAN_AUTHENTICATE.includes(user.status)) {
+      throw new UnauthorizedException('Account cannot sign in');
+    }
+
+    const tokens = await this.issueTokens(user.id);
+
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      user: {
+        id: user.id,
+        status: user.status,
+        companyId: user.companyId,
+        roleId: user.roleId,
       },
     };
   }
