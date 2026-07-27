@@ -6,6 +6,7 @@ import { CurrentUser } from './decorators/current-user.decorator';
 import type { AuthUser } from './types/auth-user';
 import { RegisterMemberDto } from './dto/register-member.dto';
 import { LoginDto } from './dto/login.dto';
+import { RefreshDto } from './dto/refresh.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -32,5 +33,16 @@ export class AuthController {
   @Post('login')
   async login(@Body() dto: LoginDto) {
     return await this.authService.login(dto);
+  }
+
+  @Public()
+  @Post('refresh')
+  refresh(@Body() dto: RefreshDto) {
+    return this.authService.refresh(dto);
+  }
+
+  @Post('logout')
+  logout(@CurrentUser() user: AuthUser, @Body() dto: RefreshDto) {
+    return this.authService.logout(user.id, dto);
   }
 }

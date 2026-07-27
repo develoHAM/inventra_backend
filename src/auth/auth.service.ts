@@ -14,6 +14,7 @@ import { RegisterMemberDto } from './dto/register-member.dto';
 import { UserStatus } from '../generated/prisma/enums';
 import { LoginDto } from './dto/login.dto';
 import { CAN_AUTHENTICATE } from './auth.constants';
+import { RefreshDto } from './dto/refresh.dto';
 
 @Injectable()
 export class AuthService {
@@ -222,5 +223,46 @@ export class AuthService {
         roleId: user.roleId,
       },
     };
+  }
+
+  async refresh(dto: RefreshDto) {
+    let payload;
+    try {
+      payload = await this.tokenService.verifyRefresh(dto.refreshToken);
+    } catch (error) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    const tokenHash = this.tokenService.hashToken(dto.refreshToken);
+    const stored = await this.prismaService.refreshToken.findUnique({
+      where: { tokenHash },
+    });
+    if (!stored) throw new UnauthorizedException('Invalid refresh token');
+
+    if (stored.revokedAt) {
+      await this.prismaService.refreshToken.updateMany({
+        where: { userId: stored.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      throw new UnauthorizedException('Refresh token reuse detected');
+    }
+
+    await this.prismaService.refreshToken.update({
+      where: { tokenHash },
+      data: { revokedAt: new Date() },
+    });
+    const tokens = await this.issueTokens(stored.userId);
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    };
+  }
+
+  async logout(userId: string, dto: RefreshDto) {
+    const tokenHash = this.tokenService.hashToken(dto.refreshToken);
+    await this.prismaService.refreshToken.updateMany({
+      where: { tokenHash, userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
   }
 }

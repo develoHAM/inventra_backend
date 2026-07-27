@@ -152,6 +152,7 @@ src/
 
 - `type` claim prevents cross-use of the two token kinds.
 - Minimal payload (`sub` only); the guard loads the user **fresh** each request (re-checks `status`, no stale claims).
+- **Transport (decided 2026-07-27): request body / header, not cookies.** Both tokens are returned in the JSON response; the client sends the access token as `Authorization: Bearer` and the refresh token in the request body (`POST /auth/refresh`, `POST /auth/logout`). Chosen for **client-agnosticism** (web + mobile + server) and **CSRF-immunity** over httpOnly-cookie transport. Trade-off: a browser SPA must store the refresh token carefully (`localStorage` is XSS-exposed) — revisit httpOnly `Secure` `SameSite` cookies if a web SPA becomes the primary client.
 
 ## 8. Authorization
 

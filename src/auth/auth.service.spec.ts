@@ -18,6 +18,7 @@ describe('AuthService', () => {
     signAccess: jest.Mock;
     signRefresh: jest.Mock;
     hashToken: jest.Mock;
+    verifyRefresh: jest.Mock;
   };
 
   const registerDto = {
@@ -65,7 +66,12 @@ describe('AuthService', () => {
           roleId: null,
         }),
       },
-      refreshToken: { create: jest.fn().mockResolvedValue({}) },
+      refreshToken: {
+        create: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       $transaction: jest.fn(async (cb: any) => cb(tx)),
     };
 
@@ -81,6 +87,7 @@ describe('AuthService', () => {
         expiresAt: new Date('2030-01-01T00:00:00Z'),
       }),
       hashToken: jest.fn().mockReturnValue('hashed-refresh'),
+      verifyRefresh: jest.fn().mockResolvedValue({ sub: 'user-1', jti: 'jti-1' }),
     };
 
     service = new AuthService(
@@ -281,6 +288,88 @@ describe('AuthService', () => {
         UnauthorizedException,
       );
       expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('refresh (rotation + reuse detection)', () => {
+    const refreshDto = { refreshToken: 'refresh-token-string' };
+
+    const validStored = {
+      tokenHash: 'hashed-refresh',
+      userId: 'user-1',
+      revokedAt: null,
+      expiresAt: new Date('2030-01-01T00:00:00Z'),
+    };
+
+    it('rotates: revokes the old token and issues a new pair', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue(validStored);
+
+      const result = await service.refresh(refreshDto as any);
+
+      // old token revoked
+      expect(prisma.refreshToken.update).toHaveBeenCalledWith({
+        where: { tokenHash: 'hashed-refresh' },
+        data: { revokedAt: expect.any(Date) },
+      });
+      // new pair issued + stored
+      expect(prisma.refreshToken.create).toHaveBeenCalled();
+      expect(result).toEqual({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+      });
+    });
+
+    it('rejects an invalid refresh JWT with 401', async () => {
+      tokenService.verifyRefresh.mockRejectedValue(new Error('bad'));
+
+      await expect(service.refresh(refreshDto as any)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(prisma.refreshToken.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('rejects a token that is not in the store with 401', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue(null);
+
+      await expect(service.refresh(refreshDto as any)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(prisma.refreshToken.update).not.toHaveBeenCalled();
+    });
+
+    it('detects reuse: a revoked token revokes ALL the user\'s tokens and 401s', async () => {
+      prisma.refreshToken.findUnique.mockResolvedValue({
+        ...validStored,
+        revokedAt: new Date('2027-01-01T00:00:00Z'), // already revoked
+      });
+
+      await expect(service.refresh(refreshDto as any)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      // whole family revoked
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { userId: 'user-1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+      // and NO new session issued
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('logout', () => {
+    it('revokes the presented refresh token, scoped to the user', async () => {
+      await service.logout('user-1', {
+        refreshToken: 'refresh-token-string',
+      } as any);
+
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: {
+          tokenHash: 'hashed-refresh',
+          userId: 'user-1',
+          revokedAt: null,
+        },
+        data: { revokedAt: expect.any(Date) },
+      });
     });
   });
 });
