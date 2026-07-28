@@ -33,6 +33,7 @@ const PERMISSIONS = [
   { code: 'users.approve', name: 'Approve users' },
   { code: 'companies.read', name: 'Read companies' },
   { code: 'companies.update', name: 'Update companies' },
+  { code: 'companies.approve', name: 'Approve companies' },
 ];
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
@@ -117,6 +118,7 @@ async function main() {
     await prisma.user.create({
       data: {
         roleId: adminRole.id,
+        name: 'Platform Admin',
         status: 'ACTIVE',
         loginMethods: {
           create: { method: 'local', email, passwordHash, emailVerified: true },

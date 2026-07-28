@@ -1,139 +1,140 @@
-model User {
-  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  companyId       String?    @map("company_id") @db.Uuid
-  roleId          Int        @map("role_id")
-  companyStoreId  String?    @map("company_store_id") @db.Uuid
-  phone           String?    @db.VarChar(20)
-  profileImageUrl String?    @map("profile_image_url") @db.VarChar(2048)
-  biography       String?    @db.Text
-  status          UserStatus @default(PENDING_APPROVAL)
-  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt       DateTime?  @map("deleted_at") @db.Timestamptz(6)
+// model User {
+//   id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+//   name            String     @db.VarChar(100)
+//   companyId       String?    @map("company_id") @db.Uuid
+//   roleId          Int?       @map("role_id")
+//   companyStoreId  String?    @map("company_store_id") @db.Uuid
+//   phone           String?    @db.VarChar(20)
+//   profileImageUrl String?    @map("profile_image_url") @db.VarChar(2048)
+//   biography       String?    @db.Text
+//   status          UserStatus @default(PENDING_APPROVAL)
+//   createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+//   updatedAt       DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+//   deletedAt       DateTime?  @map("deleted_at") @db.Timestamptz(6)
 
-  company      Company?      @relation("CompanyEmployees", fields: [companyId], references: [id])
-  role         Role          @relation(fields: [roleId], references: [id])
-  companyStore CompanyStore? @relation("CompanyStoreStaff", fields: [companyStoreId], references: [id])
+//   company      Company?      @relation("CompanyEmployees", fields: [companyId], references: [id])
+//   role         Role?         @relation(fields: [roleId], references: [id])
+//   companyStore CompanyStore? @relation("CompanyStoreStaff", fields: [companyStoreId], references: [id])
 
-  createdCompanies    Company[]              @relation("CompanyCreator")
-  managedStores       CompanyStore[]         @relation("CompanyStoreManager")
-  loginMethods        UserLoginMethod[]
-  permissions         UserPermission[]
-  createdProducts     Product[]
-  createdOrders       Order[]
-  createdAudits       InventoryAudit[]
-  createdTransactions InventoryTransaction[]
-  refreshTokens       RefreshToken[]
+//   createdCompanies    Company[]              @relation("CompanyCreator")
+//   managedStores       CompanyStore[]         @relation("CompanyStoreManager")
+//   loginMethods        UserLoginMethod[]
+//   permissions         UserPermission[]
+//   createdProducts     Product[]
+//   createdOrders       Order[]
+//   createdAudits       InventoryAudit[]
+//   createdTransactions InventoryTransaction[]
+//   refreshTokens       RefreshToken[]
 
-  @@index([companyId], map: "IDX_users_company")
-  @@map("users")
-}
+//   @@index([companyId], map: "IDX_users_company")
+//   @@map("users")
+// }
 
-model UserLoginMethod {
-  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId           String    @map("user_id") @db.Uuid
-  method           String    @db.VarChar(20)
-  passwordHash     String?   @map("password_hash") @db.Text
-  provider         String?   @db.VarChar(30)
-  providerUserId   String?   @map("provider_user_id") @db.VarChar(255)
-  email            String?   @db.VarChar(255)
-  emailVerified    Boolean   @default(false) @map("email_verified")
-  accessToken      String?   @map("access_token") @db.Text
-  refreshToken     String?   @map("refresh_token") @db.Text
-  tokenExpiresAt   DateTime? @map("token_expires_at") @db.Timestamptz(6)
-  providerMetadata Json?     @map("provider_metadata")
-  lastLoginAt      DateTime? @map("last_login_at") @db.Timestamptz(6)
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+// model UserLoginMethod {
+//   id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+//   userId           String    @map("user_id") @db.Uuid
+//   method           String    @db.VarChar(20)
+//   passwordHash     String?   @map("password_hash") @db.Text
+//   provider         String?   @db.VarChar(30)
+//   providerUserId   String?   @map("provider_user_id") @db.VarChar(255)
+//   email            String?   @db.VarChar(255)
+//   emailVerified    Boolean   @default(false) @map("email_verified")
+//   accessToken      String?   @map("access_token") @db.Text
+//   refreshToken     String?   @map("refresh_token") @db.Text
+//   tokenExpiresAt   DateTime? @map("token_expires_at") @db.Timestamptz(6)
+//   providerMetadata Json?     @map("provider_metadata")
+//   lastLoginAt      DateTime? @map("last_login_at") @db.Timestamptz(6)
+//   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+//   updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [id])
+//   user User @relation(fields: [userId], references: [id])
 
-  @@map("user_login_methods")
-}
+//   @@map("user_login_methods")
+// }
 
-model Role {
-  id          Int      @id @default(autoincrement())
-  name        String   @db.VarChar(50)
-  code        String   @unique(map: "UQ_roles_code") @db.VarChar(50)
-  description String?  @db.VarChar(255)
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+// model Role {
+//   id          Int      @id @default(autoincrement())
+//   name        String   @db.VarChar(50)
+//   code        String   @unique(map: "UQ_roles_code") @db.VarChar(50)
+//   description String?  @db.VarChar(255)
+//   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+//   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  users           User[]
-  rolePermissions RolePermission[]
+//   users           User[]
+//   rolePermissions RolePermission[]
 
-  @@map("roles")
-}
+//   @@map("roles")
+// }
 
-model Permission {
-  id          Int      @id @default(autoincrement())
-  name        String   @db.VarChar(100)
-  code        String   @unique(map: "UQ_permissions_code") @db.VarChar(100)
-  description String?  @db.VarChar(255)
-  resource    String   @db.VarChar(50)
-  action      String   @db.VarChar(50)
-  isSystem    Boolean  @default(true) @map("is_system")
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+// model Permission {
+//   id          Int      @id @default(autoincrement())
+//   name        String   @db.VarChar(100)
+//   code        String   @unique(map: "UQ_permissions_code") @db.VarChar(100)
+//   description String?  @db.VarChar(255)
+//   resource    String   @db.VarChar(50)
+//   action      String   @db.VarChar(50)
+//   isSystem    Boolean  @default(true) @map("is_system")
+//   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+//   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  rolePermissions RolePermission[]
-  userPermissions UserPermission[]
+//   rolePermissions RolePermission[]
+//   userPermissions UserPermission[]
 
-  @@map("permissions")
-}
+//   @@map("permissions")
+// }
 
-model RolePermission {
-  permissionId Int       @map("permission_id")
-  roleId       Int       @map("role_id")
-  createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+// model RolePermission {
+//   permissionId Int       @map("permission_id")
+//   roleId       Int       @map("role_id")
+//   createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  permission Permission @relation(fields: [permissionId], references: [id])
-  role       Role       @relation(fields: [roleId], references: [id])
+//   permission Permission @relation(fields: [permissionId], references: [id])
+//   role       Role       @relation(fields: [roleId], references: [id])
 
-  @@id([permissionId, roleId])
-  @@map("role_permissions")
-}
+//   @@id([permissionId, roleId])
+//   @@map("role_permissions")
+// }
 
-model UserPermission {
-  userId       String           @map("user_id") @db.Uuid
-  permissionId Int              @map("permission_id")
-  effect       PermissionEffect
-  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+// model UserPermission {
+//   userId       String           @map("user_id") @db.Uuid
+//   permissionId Int              @map("permission_id")
+//   effect       PermissionEffect
+//   createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  user       User       @relation(fields: [userId], references: [id])
-  permission Permission @relation(fields: [permissionId], references: [id])
+//   user       User       @relation(fields: [userId], references: [id])
+//   permission Permission @relation(fields: [permissionId], references: [id])
 
-  @@id([userId, permissionId])
-  @@map("user_permissions")
-}
+//   @@id([userId, permissionId])
+//   @@map("user_permissions")
+// }
 
-model RefreshToken {
-  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId    String    @map("user_id") @db.Uuid
-  tokenHash String    @unique(map: "UQ_refresh_tokens_token_hash") @map("token_hash") @db.Text
-  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
-  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+// model RefreshToken {
+//   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+//   userId    String    @map("user_id") @db.Uuid
+//   tokenHash String    @unique(map: "UQ_refresh_tokens_token_hash") @map("token_hash") @db.Text
+//   expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+//   revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+//   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [id])
+//   user User @relation(fields: [userId], references: [id])
 
-  @@index([userId], map: "IDX_refresh_tokens_user_id")
-  @@map("refresh_tokens")
-}
+//   @@index([userId], map: "IDX_refresh_tokens_user_id")
+//   @@map("refresh_tokens")
+// }
 
-enum UserStatus {
-  PENDING_APPROVAL
-  ACTIVE
-  REJECTED
-  SUSPENDED
-  DEACTIVATED
+// enum UserStatus {
+//   PENDING_APPROVAL
+//   ACTIVE
+//   REJECTED
+//   SUSPENDED
+//   DEACTIVATED
 
-  @@map("user_status")
-}
+//   @@map("user_status")
+// }
 
-enum PermissionEffect {
-  GRANT
-  DENY
+// enum PermissionEffect {
+//   GRANT
+//   DENY
 
-  @@map("permission_effect")
-}
+//   @@map("permission_effect")
+// }

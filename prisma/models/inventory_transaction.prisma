@@ -1,47 +1,47 @@
-model InventoryTransaction {
-  id                    Int                      @id @default(autoincrement())
-  companyStoreProductId Int                      @map("company_store_product_id")
-  transactionType       InventoryTransactionType @map("transaction_type")
-  quantity              Int?
-  quantityBefore        Int?                     @map("quantity_before")
-  quantityAfter         Int?                     @map("quantity_after")
-  remarks               String?                  @db.Text
-  createdByUserId       String                   @map("created_by_user_id") @db.Uuid
-  createdAt             DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt             DateTime                 @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  sourceType            TransactionSourceType?   @map("source_type")
-  sourceId              String?                  @map("source_id") @db.Uuid
+// model InventoryTransaction {
+//   id                    Int                      @id @default(autoincrement())
+//   companyStoreProductId Int                      @map("company_store_product_id")
+//   transactionType       InventoryTransactionType @map("transaction_type")
+//   quantity              Int?
+//   quantityBefore        Int?                     @map("quantity_before")
+//   quantityAfter         Int?                     @map("quantity_after")
+//   remarks               String?                  @db.Text
+//   createdByUserId       String                   @map("created_by_user_id") @db.Uuid
+//   createdAt             DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+//   updatedAt             DateTime                 @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+//   sourceType            TransactionSourceType?   @map("source_type")
+//   sourceId              String?                  @map("source_id") @db.Uuid
 
-  companyStoreProduct CompanyStoreProduct @relation(fields: [companyStoreProductId], references: [id])
-  createdByUser       User                @relation(fields: [createdByUserId], references: [id])
+//   companyStoreProduct CompanyStoreProduct @relation(fields: [companyStoreProductId], references: [id])
+//   createdByUser       User                @relation(fields: [createdByUserId], references: [id])
 
-  @@index([sourceType, sourceId], map: "IDX_inventory_transactions_source")
-  @@map("inventory_transactions")
-}
+//   @@index([sourceType, sourceId], map: "IDX_inventory_transactions_source")
+//   @@map("inventory_transactions")
+// }
 
-enum TransactionSourceType {
-  ORDER
-  AUDIT
-  RESERVATION
+// enum TransactionSourceType {
+//   ORDER
+//   AUDIT
+//   RESERVATION
 
-  @@map("transaction_source_type")
-}
+//   @@map("transaction_source_type")
+// }
 
-enum InventoryTransactionType {
-  INITIAL_STOCK
-  RESTOCK
-  TRANSFER_IN
-  TRANSFER_OUT
-  ADJUSTMENT
-  SALE
-  RETURN
-  DAMAGED_DISPOSAL
-  DAMAGED_RETURN
-  SAMPLE_ALLOCATION
-  SAMPLE_TRANSFER_IN
-  SAMPLE_TRANSFER_OUT
-  SAMPLE_RETURN
-  SAMPLE_DISPOSAL
+// enum InventoryTransactionType {
+//   INITIAL_STOCK
+//   RESTOCK
+//   TRANSFER_IN
+//   TRANSFER_OUT
+//   ADJUSTMENT
+//   SALE
+//   RETURN
+//   DAMAGED_DISPOSAL
+//   DAMAGED_RETURN
+//   SAMPLE_ALLOCATION
+//   SAMPLE_TRANSFER_IN
+//   SAMPLE_TRANSFER_OUT
+//   SAMPLE_RETURN
+//   SAMPLE_DISPOSAL
 
-  @@map("inventory_transaction_type")
-}
+//   @@map("inventory_transaction_type")
+// }

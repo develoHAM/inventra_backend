@@ -12,3 +12,438 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+model User {
+  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String     @db.VarChar(100)
+  companyId       String?    @map("company_id") @db.Uuid
+  roleId          Int?       @map("role_id")
+  companyStoreId  String?    @map("company_store_id") @db.Uuid
+  phone           String?    @db.VarChar(20)
+  profileImageUrl String?    @map("profile_image_url") @db.VarChar(2048)
+  biography       String?    @db.Text
+  status          UserStatus @default(PENDING_APPROVAL)
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime?  @map("deleted_at") @db.Timestamptz(6)
+
+  company      Company?      @relation("CompanyEmployees", fields: [companyId], references: [id])
+  role         Role?         @relation(fields: [roleId], references: [id])
+  companyStore CompanyStore? @relation("CompanyStoreStaff", fields: [companyStoreId], references: [id])
+
+  createdCompanies    Company[]              @relation("CompanyCreator")
+  managedStores       CompanyStore[]         @relation("CompanyStoreManager")
+  loginMethods        UserLoginMethod[]
+  permissions         UserPermission[]
+  createdProducts     Product[]
+  createdOrders       Order[]
+  createdAudits       InventoryAudit[]
+  createdTransactions InventoryTransaction[]
+  refreshTokens       RefreshToken[]
+
+  @@index([companyId], map: "IDX_users_company")
+  @@map("users")
+}
+
+model UserLoginMethod {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  method           String    @db.VarChar(20)
+  passwordHash     String?   @map("password_hash") @db.Text
+  provider         String?   @db.VarChar(30)
+  providerUserId   String?   @map("provider_user_id") @db.VarChar(255)
+  email            String?   @db.VarChar(255)
+  emailVerified    Boolean   @default(false) @map("email_verified")
+  accessToken      String?   @map("access_token") @db.Text
+  refreshToken     String?   @map("refresh_token") @db.Text
+  tokenExpiresAt   DateTime? @map("token_expires_at") @db.Timestamptz(6)
+  providerMetadata Json?     @map("provider_metadata")
+  lastLoginAt      DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("user_login_methods")
+}
+
+model Role {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(50)
+  code        String   @unique(map: "UQ_roles_code") @db.VarChar(50)
+  description String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  users           User[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)
+  code        String   @unique(map: "UQ_permissions_code") @db.VarChar(100)
+  description String?  @db.VarChar(255)
+  resource    String   @db.VarChar(50)
+  action      String   @db.VarChar(50)
+  isSystem    Boolean  @default(true) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  rolePermissions RolePermission[]
+  userPermissions UserPermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  permissionId Int       @map("permission_id")
+  roleId       Int       @map("role_id")
+  createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  permission Permission @relation(fields: [permissionId], references: [id])
+  role       Role       @relation(fields: [roleId], references: [id])
+
+  @@id([permissionId, roleId])
+  @@map("role_permissions")
+}
+
+model UserPermission {
+  userId       String           @map("user_id") @db.Uuid
+  permissionId Int              @map("permission_id")
+  effect       PermissionEffect
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user       User       @relation(fields: [userId], references: [id])
+  permission Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([userId, permissionId])
+  @@map("user_permissions")
+}
+
+model RefreshToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique(map: "UQ_refresh_tokens_token_hash") @map("token_hash") @db.Text
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId], map: "IDX_refresh_tokens_user_id")
+  @@map("refresh_tokens")
+}
+
+enum UserStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  REJECTED
+  SUSPENDED
+  DEACTIVATED
+
+  @@map("user_status")
+}
+
+enum PermissionEffect {
+  GRANT
+  DENY
+
+  @@map("permission_effect")
+}
+
+model Store {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String?  @db.VarChar(255)
+  storeAddress String?  @map("store_address") @db.VarChar(255)
+  storePhone   String?  @map("store_phone") @db.VarChar(20)
+  description  String?  @db.Text
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  companyStores CompanyStore[]
+
+  @@map("stores")
+}
+
+model Company {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String    @db.VarChar(100)
+  taxId             String    @unique(map: "UQ_companies_tax_id") @map("tax_id") @db.VarChar(20)
+  joinCode          String    @unique(map: "UQ_companies_join_code") @map("join_code") @db.VarChar(30)
+  headOfficeAddress String?   @map("head_office_address") @db.VarChar(255)
+  description       String?   @db.Text
+  headOfficePhone   String?   @map("head_office_phone") @db.VarChar(20)
+  headOfficeEmail   String?   @map("head_office_email") @db.VarChar(255)
+  createdByUserId   String    @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  createdByUser User           @relation("CompanyCreator", fields: [createdByUserId], references: [id])
+  users         User[]         @relation("CompanyEmployees")
+  brands        Brand[]
+  products      Product[]
+  companyStores CompanyStore[]
+
+  @@map("companies")
+}
+
+model CompanyStore {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId     String   @map("company_id") @db.Uuid
+  storeId       String   @map("store_id") @db.Uuid
+  managerUserId String?  @map("manager_user_id") @db.Uuid
+  name          String?  @db.VarChar(255)
+  description   String?  @db.Text
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id])
+  store   Store   @relation(fields: [storeId], references: [id])
+  manager User?   @relation("CompanyStoreManager", fields: [managerUserId], references: [id])
+
+  users                User[]                @relation("CompanyStoreStaff")
+  companyStoreProducts CompanyStoreProduct[]
+  orders               Order[]
+  inventoryAudits      InventoryAudit[]
+
+  @@map("company_stores")
+}
+
+model Category {
+  id               Int       @id @default(autoincrement())
+  name             String    @db.VarChar(50)
+  description      String?   @db.Text
+  parentCategoryId Int?      @map("parent_category_id")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id])
+  children Category[] @relation("CategoryHierarchy")
+  products Product[]
+
+  @@map("categories")
+}
+
+model Brand {
+  id                 Int      @id @default(autoincrement())
+  name               String   @db.VarChar(100)
+  nameKr             String?  @map("name_kr") @db.VarChar(100)
+  description        String?  @db.Text
+  logoUrl            String?  @map("logo_url") @db.VarChar(2048)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdByCompanyId String   @map("created_by_company_id") @db.Uuid
+
+  createdByCompany Company   @relation(fields: [createdByCompanyId], references: [id])
+  products         Product[]
+
+  @@map("brands")
+}
+
+model Product {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String    @db.VarChar(255)
+  barcode         String    @unique(map: "UQ_products_barcode") @db.VarChar(100)
+  companyId       String    @map("company_id") @db.Uuid
+  categoryId      Int       @map("category_id")
+  brandId         Int       @map("brand_id")
+  priceKrw        Int       @map("price_krw")
+  color           String?   @db.VarChar(255)
+  imageUrl        String?   @map("image_url") @db.VarChar(2048)
+  isActive        Boolean   @default(true) @map("is_active")
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  company       Company  @relation(fields: [companyId], references: [id])
+  category      Category @relation(fields: [categoryId], references: [id])
+  brand         Brand    @relation(fields: [brandId], references: [id])
+  createdByUser User     @relation(fields: [createdByUserId], references: [id])
+
+  companyStoreProducts CompanyStoreProduct[]
+
+  @@index([companyId], map: "IDX_products_company")
+  @@map("products")
+}
+
+model CompanyStoreProduct {
+  id                  Int      @id @default(autoincrement())
+  companyStoreId      String   @map("company_store_id") @db.Uuid
+  productId           String   @map("product_id") @db.Uuid
+  isActive            Boolean  @default(false) @map("is_active")
+  description         String?  @db.Text
+  targetStockQuantity Int      @default(0) @map("target_stock_quantity")
+  sampleQuantity      Int      @default(0) @map("sample_quantity")
+  reservedQuantity    Int      @default(0) @map("reserved_quantity")
+  currentQuantity     Int      @default(0) @map("current_quantity")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  companyStore CompanyStore @relation(fields: [companyStoreId], references: [id])
+  product      Product      @relation(fields: [productId], references: [id])
+
+  orderItems            OrderItem[]
+  inventoryAuditItems   InventoryAuditItem[]
+  purchaseReservations  PurchaseReservation[]
+  inventoryTransactions InventoryTransaction[]
+
+  @@unique([id, companyStoreId], map: "UQ_csp_id_company_store")
+  @@unique([productId, companyStoreId], map: "UQ_csp_product_company_store")
+  @@index([companyStoreId], map: "IDX_company_store_products_company_store")
+  @@map("company_store_products")
+}
+
+model Order {
+  id              String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyStoreId  String   @map("company_store_id") @db.Uuid
+  title           String   @db.VarChar(255)
+  description     String?  @db.Text
+  fileUrl         String?  @map("file_url") @db.VarChar(2048)
+  orderDate       DateTime @map("order_date") @db.Timestamptz(6)
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  companyStore  CompanyStore @relation(fields: [companyStoreId], references: [id])
+  createdByUser User         @relation(fields: [createdByUserId], references: [id])
+  orderItems    OrderItem[]
+
+  @@id([id, companyStoreId])
+  @@index([companyStoreId], map: "IDX_orders_company_store")
+  @@map("orders")
+}
+
+model OrderItem {
+  orderId               String   @map("order_id") @db.Uuid
+  companyStoreId        String   @map("company_store_id") @db.Uuid
+  companyStoreProductId Int      @map("company_store_product_id")
+  productOrderQuantity  Int      @map("product_order_quantity")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  order               Order               @relation(fields: [orderId, companyStoreId], references: [id, companyStoreId])
+  companyStoreProduct CompanyStoreProduct @relation(fields: [companyStoreProductId, companyStoreId], references: [id, companyStoreId])
+
+  @@id([orderId, companyStoreId, companyStoreProductId])
+  @@map("order_items")
+}
+
+model InventoryAudit {
+  id              String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyStoreId  String   @map("company_store_id") @db.Uuid
+  title           String   @db.VarChar(255)
+  description     String?  @db.Text
+  fileUrl         String?  @map("file_url") @db.VarChar(2048)
+  auditedDate     DateTime @map("audited_date") @db.Timestamptz(6)
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  companyStore        CompanyStore         @relation(fields: [companyStoreId], references: [id])
+  createdByUser       User                 @relation(fields: [createdByUserId], references: [id])
+  inventoryAuditItems InventoryAuditItem[]
+
+  @@id([id, companyStoreId])
+  @@index([companyStoreId], map: "IDX_inventory_audits_company_store")
+  @@map("inventory_audits")
+}
+
+model InventoryAuditItem {
+  inventoryAuditId      String   @map("inventory_audit_id") @db.Uuid
+  companyStoreId        String   @map("company_store_id") @db.Uuid
+  companyStoreProductId Int      @map("company_store_product_id")
+  productQuantity       Int      @map("product_quantity")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  inventoryAudit      InventoryAudit      @relation(fields: [inventoryAuditId, companyStoreId], references: [id, companyStoreId])
+  companyStoreProduct CompanyStoreProduct @relation(fields: [companyStoreProductId, companyStoreId], references: [id, companyStoreId])
+
+  @@id([inventoryAuditId, companyStoreId, companyStoreProductId])
+  @@map("inventory_audit_items")
+}
+
+model InventoryTransaction {
+  id                    Int                      @id @default(autoincrement())
+  companyStoreProductId Int                      @map("company_store_product_id")
+  transactionType       InventoryTransactionType @map("transaction_type")
+  quantity              Int?
+  quantityBefore        Int?                     @map("quantity_before")
+  quantityAfter         Int?                     @map("quantity_after")
+  remarks               String?                  @db.Text
+  createdByUserId       String                   @map("created_by_user_id") @db.Uuid
+  createdAt             DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime                 @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  sourceType            TransactionSourceType?   @map("source_type")
+  sourceId              String?                  @map("source_id") @db.Uuid
+
+  companyStoreProduct CompanyStoreProduct @relation(fields: [companyStoreProductId], references: [id])
+  createdByUser       User                @relation(fields: [createdByUserId], references: [id])
+
+  @@index([sourceType, sourceId], map: "IDX_inventory_transactions_source")
+  @@map("inventory_transactions")
+}
+
+enum TransactionSourceType {
+  ORDER
+  AUDIT
+  RESERVATION
+
+  @@map("transaction_source_type")
+}
+
+enum InventoryTransactionType {
+  INITIAL_STOCK
+  RESTOCK
+  TRANSFER_IN
+  TRANSFER_OUT
+  ADJUSTMENT
+  SALE
+  RETURN
+  DAMAGED_DISPOSAL
+  DAMAGED_RETURN
+  SAMPLE_ALLOCATION
+  SAMPLE_TRANSFER_IN
+  SAMPLE_TRANSFER_OUT
+  SAMPLE_RETURN
+  SAMPLE_DISPOSAL
+
+  @@map("inventory_transaction_type")
+}
+
+model PurchaseReservation {
+  id                    String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyStoreProductId Int               @map("company_store_product_id")
+  companyStoreId        String            @map("company_store_id") @db.Uuid
+  reservedByName        String            @map("reserved_by_name") @db.VarChar(100)
+  reservedByPhone       String?           @map("reserved_by_phone") @db.VarChar(20)
+  reservedQuantity      Int               @map("reserved_quantity")
+  status                ReservationStatus @default(PENDING)
+  remark                String?           @db.Text
+  expiresAt             DateTime?         @map("expires_at") @db.Timestamptz(6)
+  fulfilledAt           DateTime?         @map("fulfilled_at") @db.Timestamptz(6)
+  cancelledAt           DateTime?         @map("cancelled_at") @db.Timestamptz(6)
+  cancelReason          String?           @map("cancel_reason") @db.Text
+  reservedAt            DateTime          @default(now()) @map("reserved_at") @db.Timestamptz(6)
+  updatedAt             DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  companyStoreProduct CompanyStoreProduct @relation(fields: [companyStoreProductId, companyStoreId], references: [id, companyStoreId])
+
+  @@map("purchase_reservations")
+}
+
+enum ReservationStatus {
+  PENDING
+  RESERVED
+  FULFILLED
+  CANCELLED
+  EXPIRED
+
+  @@map("reservation_status")
+}
