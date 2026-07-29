@@ -12,6 +12,7 @@ describe('PermissionsGuard', () => {
     id: 'user-1',
     companyId: 'company-1',
     roleId: 2,
+    roleCode: 'OWNER',
     status: UserStatus.ACTIVE,
   };
 

@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TokenService } from '../token.service';
 import { UserStatus } from '../../generated/prisma/enums';
 import { CAN_AUTHENTICATE } from '../auth.constants';
+import { AuthUser } from '../types/auth-user';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -59,6 +60,11 @@ export class JwtAuthGuard implements CanActivate {
         roleId: true,
         status: true,
         deletedAt: true,
+        role: {
+          select: {
+            code: true,
+          },
+        },
       },
     });
 
@@ -66,12 +72,15 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException();
     }
 
-    request.user = {
+    const authenticatedUser: AuthUser = {
       id: user.id,
       companyId: user.companyId,
       roleId: user.roleId,
+      roleCode: user.role?.code ?? null,
       status: user.status,
     };
+
+    request.user = authenticatedUser;
 
     return true;
   }

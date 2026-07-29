@@ -14,6 +14,7 @@ describe('JwtAuthGuard', () => {
     roleId: 2,
     status: UserStatus.ACTIVE,
     deletedAt: null,
+    role: { code: 'OWNER' },
   };
 
   // A guard receives an ExecutionContext, not plain arguments. The guard only
@@ -129,6 +130,7 @@ describe('JwtAuthGuard', () => {
       id: 'user-1',
       companyId: 'company-1',
       roleId: 2,
+      roleCode: 'OWNER',
       status: UserStatus.ACTIVE,
     });
     expect(request.user).not.toHaveProperty('deletedAt');
@@ -142,6 +144,7 @@ describe('JwtAuthGuard', () => {
         roleId: true,
         status: true,
         deletedAt: true,
+        role: { select: { code: true } },
       },
     });
   });

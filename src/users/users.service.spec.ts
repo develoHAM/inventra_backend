@@ -14,6 +14,7 @@ describe('UsersService', () => {
     id: 'manager-1',
     companyId: 'company-1',
     roleId: 3,
+    roleCode: 'MANAGER',
     status: UserStatus.ACTIVE,
   };
 
