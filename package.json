@@ -18,7 +18,8 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "pretest:e2e": "dotenv -e .env.test -- prisma migrate reset --force && dotenv -e .env.test -- tsx prisma/seed.ts",
+    "test:e2e": "dotenv -e .env.test -- node --experimental-vm-modules node_modules/jest/bin/jest.js --config ./test/jest-e2e.json --runInBand"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -46,6 +47,7 @@
     "@types/node": "^24.13.2",
     "@types/supertest": "^7.0.0",
     "dotenv": "^17.4.2",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",
