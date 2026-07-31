@@ -7,10 +7,14 @@ import { AuthUser } from '../auth/types/auth-user';
 import { ApproveMemberDto } from './dto/approve-member.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { UserStatus } from '../generated/prisma/enums';
+import { OwnershipService } from '../authorization/ownership.service';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private ownershipService: OwnershipService,
+  ) {}
 
   async approveMember(
     caller: AuthUser,
@@ -18,7 +22,10 @@ export class UsersService {
     dto: ApproveMemberDto,
   ) {
     const target = await this.prisma.user.findFirst({
-      where: { id: targetUserId, companyId: caller.companyId },
+      where: {
+        id: targetUserId,
+        ...this.ownershipService.scopeToCompany(caller),
+      },
     });
     if (!target) throw new NotFoundException('Member not found');
 

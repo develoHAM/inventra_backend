@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { AuthUser } from '../auth/types/auth-user';
 import { UserStatus } from '../generated/prisma/enums';
+import { OwnershipService } from '../authorization/ownership.service';
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -23,7 +24,8 @@ describe('UsersService', () => {
       user: { findFirst: jest.fn(), update: jest.fn().mockResolvedValue({}) },
       role: { findUnique: jest.fn() },
     };
-    service = new UsersService(prisma as any);
+    // OwnershipService is a pure singleton (no deps) — use a real one
+    service = new UsersService(prisma as any, new OwnershipService());
   });
 
   describe('approveMember', () => {
@@ -87,6 +89,27 @@ describe('UsersService', () => {
       await expect(
         service.approveMember(caller, 'member-1', { roleId: 999 }),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('does not company-scope the lookup for an ADMIN caller', async () => {
+      const adminCaller: AuthUser = {
+        ...caller,
+        companyId: null,
+        roleCode: 'ADMIN',
+      };
+      prisma.user.findFirst.mockResolvedValue({
+        id: 'member-1',
+        companyId: 'company-9',
+        status: UserStatus.PENDING_APPROVAL,
+      });
+      prisma.role.findUnique.mockResolvedValue({ id: 4, code: 'STAFF' });
+
+      await service.approveMember(adminCaller, 'member-1', { roleId: 4 });
+
+      // ADMIN → scopeToCompany returns {} → no companyId filter → any tenant reachable
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { id: 'member-1' },
+      });
     });
   });
 
