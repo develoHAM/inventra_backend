@@ -35,7 +35,10 @@ model User {
   managedStores       CompanyStore[]         @relation("CompanyStoreManager")
   loginMethods        UserLoginMethod[]
   permissions         UserPermission[]
-  createdProducts     Product[]
+  createdProducts     Product[]             @relation("ProductCreatedBy")
+  deletedProducts     Product[]             @relation("ProductDeletedBy")
+  deletedBrands       Brand[]                @relation("BrandDeletedBy")
+  deletedCategories   Category[]             @relation("CategoryDeletedBy")
   createdOrders       Order[]
   createdAudits       InventoryAudit[]
   createdTransactions InventoryTransaction[]
@@ -221,9 +224,11 @@ model Category {
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedByUserId  String?   @map("deleted_by_user_id") @db.Uuid
 
   parent   Category?  @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id])
   children Category[] @relation("CategoryHierarchy")
+  deletedByUser User? @relation("CategoryDeletedBy", fields: [deletedByUserId], references: [id])
   products Product[]
 
   @@map("categories")
@@ -238,8 +243,11 @@ model Brand {
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdByCompanyId String   @map("created_by_company_id") @db.Uuid
+  deletedAt          DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedByUserId    String?   @map("deleted_by_user_id") @db.Uuid
 
   createdByCompany Company   @relation(fields: [createdByCompanyId], references: [id])
+  deletedByUser    User?     @relation("BrandDeletedBy", fields: [deletedByUserId], references: [id])
   products         Product[]
 
   @@map("brands")
@@ -260,11 +268,13 @@ model Product {
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedByUserId String?   @map("deleted_by_user_id")  @db.Uuid
 
   company       Company  @relation(fields: [companyId], references: [id])
   category      Category @relation(fields: [categoryId], references: [id])
   brand         Brand    @relation(fields: [brandId], references: [id])
-  createdByUser User     @relation(fields: [createdByUserId], references: [id])
+  createdByUser User     @relation("ProductCreatedBy", fields: [createdByUserId], references: [id])
+  deletedByUser User?     @relation("ProductDeletedBy", fields: [deletedByUserId], references: [id])
 
   companyStoreProducts CompanyStoreProduct[]
 

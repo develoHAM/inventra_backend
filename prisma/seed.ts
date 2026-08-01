@@ -34,6 +34,18 @@ const PERMISSIONS = [
   { code: 'companies.read', name: 'Read companies' },
   { code: 'companies.update', name: 'Update companies' },
   { code: 'companies.approve', name: 'Approve companies' },
+  { code: 'categories.create', name: 'Create categories' },
+  { code: 'categories.read', name: 'Read categories' },
+  { code: 'categories.update', name: 'Update categories' },
+  { code: 'categories.delete', name: 'Delete categories' },
+  { code: 'brands.create', name: 'Create brands' },
+  { code: 'brands.read', name: 'Read brands' },
+  { code: 'brands.update', name: 'Update brands' },
+  { code: 'brands.delete', name: 'Delete brands' },
+  { code: 'products.create', name: 'Create products' },
+  { code: 'products.read', name: 'Read products' },
+  { code: 'products.update', name: 'Update products' },
+  { code: 'products.delete', name: 'Delete products' },
 ];
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
@@ -45,6 +57,15 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'users.approve',
     'companies.read',
     'companies.update',
+    'products.create',
+    'products.read',
+    'products.update',
+    'products.delete',
+    'brands.create',
+    'brands.read',
+    'brands.update',
+    'brands.delete',
+    'categories.read',
   ],
   MANAGER: [
     'users.create',
@@ -53,8 +74,24 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'users.delete',
     'users.approve',
     'companies.read',
+    'products.create',
+    'products.read',
+    'products.update',
+    'products.delete',
+    'brands.create',
+    'brands.read',
+    'brands.update', // note: NO brands.delete
+    'categories.read',
   ],
-  STAFF: ['users.read', 'users.update', 'users.delete', 'companies.read'],
+  STAFF: [
+    'users.read',
+    'users.update',
+    'users.delete',
+    'companies.read',
+    'products.read',
+    'brands.read',
+    'categories.read',
+  ],
   // ADMIN intentionally omitted — its wildcard is handled in code, not via rows.
 };
 
