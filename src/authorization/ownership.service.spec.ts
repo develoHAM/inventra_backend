@@ -34,6 +34,12 @@ describe('OwnershipService', () => {
       expect(service.scopeToCompany(admin)).toEqual({});
     });
 
+    it('scopes to a custom owner column when a field is given', () => {
+      expect(service.scopeToCompany(member, 'createdByCompanyId')).toEqual({
+        createdByCompanyId: 'company-1',
+      });
+    });
+
     it('throws 403 for a non-admin caller with no company', () => {
       expect(() =>
         service.scopeToCompany({ ...member, companyId: null }),

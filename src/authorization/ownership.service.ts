@@ -9,7 +9,10 @@ import { AuthUser } from '../auth/types/auth-user';
 export class OwnershipService {
   constructor() {}
 
-  scopeToCompany(user: AuthUser): { companyId?: string } {
+  scopeToCompany(
+    user: AuthUser,
+    field: string = 'companyId',
+  ): Record<string, string> {
     if (user.roleCode === 'ADMIN') {
       return {};
     }
@@ -17,7 +20,7 @@ export class OwnershipService {
     if (!user.companyId)
       throw new ForbiddenException('User must have a company');
 
-    return { companyId: user.companyId };
+    return { [field]: user.companyId };
   }
 
   assertOwns(user: AuthUser, resourceCompanyId: string | null): void {
