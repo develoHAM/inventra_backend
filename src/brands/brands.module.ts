@@ -7,5 +7,6 @@ import { BrandsController } from './brands.controller';
   imports: [AuthorizationModule],
   providers: [BrandsService],
   controllers: [BrandsController],
+  exports: [BrandsService],
 })
 export class BrandsModule {}

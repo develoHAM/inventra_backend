@@ -1,4 +1,4 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { BrandsService } from './brands.service';
 import { OwnershipService } from '../authorization/ownership.service';
 import { AuthUser } from '../auth/types/auth-user';
@@ -50,11 +50,17 @@ describe('BrandsService', () => {
     });
   });
 
-  it('create is forbidden for a caller with no company (ADMIN)', () => {
-    // create is not async → the guard throws synchronously
-    expect(() => service.create(admin, { name: 'Acme' } as any)).toThrow(
-      ForbiddenException,
-    );
+  it('lets ADMIN create a brand for a supplied companyId', async () => {
+    await service.create(admin, { name: 'Acme', companyId: 'company-9' } as any);
+    expect(prisma.brand.create).toHaveBeenCalledWith({
+      data: { name: 'Acme', createdByCompanyId: 'company-9' },
+    });
+  });
+
+  it('rejects ADMIN create without a companyId (400)', async () => {
+    await expect(
+      service.create(admin, { name: 'Acme' } as any),
+    ).rejects.toThrow(BadRequestException);
     expect(prisma.brand.create).not.toHaveBeenCalled();
   });
 

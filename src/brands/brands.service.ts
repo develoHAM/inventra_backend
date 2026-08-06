@@ -1,8 +1,4 @@
-import {
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { OwnershipService } from '../authorization/ownership.service';
 import { AuthUser } from '../auth/types/auth-user';
@@ -17,10 +13,12 @@ export class BrandsService {
   ) {}
 
   async create(caller: AuthUser, dto: CreateBrandDto) {
-    if (!caller.companyId) throw new ForbiddenException();
-    return this.prisma.brand.create({
-      data: { ...dto, createdByCompanyId: caller.companyId },
-    });
+    const { companyId: requested, ...data } = dto;
+    const createdByCompanyId = this.ownership.resolveCompanyForCreate(
+      caller,
+      requested,
+    );
+    return this.prisma.brand.create({ data: { ...data, createdByCompanyId } });
   }
 
   async findAll(caller: AuthUser) {
@@ -42,6 +40,12 @@ export class BrandsService {
     });
     if (!brand) throw new NotFoundException('Brand not found');
     return brand;
+  }
+
+  findInCompany(brandId: number, companyId: string) {
+    return this.prisma.brand.findFirst({
+      where: { id: brandId, createdByCompanyId: companyId, deletedAt: null },
+    });
   }
 
   async update(caller: AuthUser, id: number, dto: UpdateBrandDto) {

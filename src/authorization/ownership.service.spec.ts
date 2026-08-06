@@ -1,4 +1,8 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { OwnershipService } from './ownership.service';
 import { AuthUser } from '../auth/types/auth-user';
 import { UserStatus } from '../generated/prisma/enums';
@@ -60,6 +64,24 @@ describe('OwnershipService', () => {
 
     it('lets ADMIN access any company', () => {
       expect(() => service.assertOwns(admin, 'company-2')).not.toThrow();
+    });
+  });
+
+  describe('resolveCompanyForCreate', () => {
+    it('uses the caller company for a company user', () => {
+      expect(service.resolveCompanyForCreate(member)).toBe('company-1');
+    });
+
+    it('uses the requested company for ADMIN', () => {
+      expect(service.resolveCompanyForCreate(admin, 'company-9')).toBe(
+        'company-9',
+      );
+    });
+
+    it('throws 400 when ADMIN supplies no company', () => {
+      expect(() => service.resolveCompanyForCreate(admin)).toThrow(
+        BadRequestException,
+      );
     });
   });
 });

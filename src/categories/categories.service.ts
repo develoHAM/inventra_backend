@@ -6,7 +6,7 @@ import { AuthUser } from '../auth/types/auth-user';
 
 @Injectable()
 export class CategoriesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateCategoryDto) {
     return this.prisma.category.create({
@@ -30,6 +30,17 @@ export class CategoriesService {
       },
     });
     if (!category) throw new NotFoundException('Category not found');
+    return category;
+  }
+
+  async findActive(id: number) {
+    const category = await this.prisma.category.findFirst({
+      where: {
+        id: id,
+        deletedAt: null,
+      },
+    });
+
     return category;
   }
 

@@ -5,7 +5,7 @@ import { PermissionEffect } from '../generated/prisma/enums';
 
 @Injectable()
 export class PermissionsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async getEffectivePermissions(user: AuthUser): Promise<Set<string>> {
     if (!user.roleId) {
@@ -30,9 +30,7 @@ export class PermissionsService {
       },
     });
 
-    if (!role) {
-      return new Set();
-    }
+    if (!role) return new Set();
 
     if (role.code === 'ADMIN') {
       const permissions = await this.prisma.permission.findMany({

@@ -1,4 +1,10 @@
-import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+} from 'class-validator';
 
 export class CreateBrandDto {
   @IsString()
@@ -12,6 +18,7 @@ export class CreateBrandDto {
   nameKr?: string;
 
   @IsOptional()
+  @IsNotEmpty()
   @IsString()
   description?: string;
 
@@ -19,4 +26,8 @@ export class CreateBrandDto {
   @IsString()
   @MaxLength(2048)
   logoUrl?: string;
+
+  @IsOptional()
+  @IsUUID()
+  companyId?: string;
 }

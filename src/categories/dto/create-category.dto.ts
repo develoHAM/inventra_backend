@@ -13,6 +13,7 @@ export class CreateCategoryDto {
   name!: string;
 
   @IsOptional()
+  @IsNotEmpty()
   @IsString()
   description?: string;
 

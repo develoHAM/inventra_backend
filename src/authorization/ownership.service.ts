@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -28,8 +29,16 @@ export class OwnershipService {
       return;
     }
 
-    if (resourceCompanyId !== user.companyId) {
-      throw new NotFoundException();
-    }
+    if (resourceCompanyId !== user.companyId) throw new NotFoundException();
+  }
+
+  resolveCompanyForCreate(
+    caller: AuthUser,
+    requestedCompanyId?: string,
+  ): string {
+    const companyId =
+      caller.roleCode === 'ADMIN' ? requestedCompanyId : caller.companyId;
+    if (!companyId) throw new BadRequestException('companyId is required');
+    return companyId;
   }
 }
