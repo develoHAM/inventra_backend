@@ -12,8 +12,8 @@ enum TokenType {
 @Injectable()
 export class TokenService {
   constructor(
-    private jwt: JwtService,
-    private config: ConfigService<Env, true>,
+    private readonly jwt: JwtService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   async signAccess(userId: string) {
@@ -55,13 +55,9 @@ export class TokenService {
       secret: this.config.get('JWT_ACCESS_SECRET'),
     });
 
-    if (!sub || !type) {
-      throw new Error('Missing JWT claim');
-    }
+    if (!sub || !type) throw new Error('Missing JWT claim');
 
-    if (type !== TokenType.ACCESS) {
-      throw new Error('Wrong JWT type');
-    }
+    if (type !== TokenType.ACCESS) throw new Error('Wrong JWT type');
 
     return { sub: sub };
   }
@@ -71,13 +67,9 @@ export class TokenService {
       secret: this.config.get('JWT_REFRESH_SECRET'),
     });
 
-    if (!sub || !type || !jti) {
-      throw new Error('Missing JWT claim');
-    }
+    if (!sub || !type || !jti) throw new Error('Missing JWT claim');
 
-    if (type !== TokenType.REFRESH) {
-      throw new Error('Wrong JWT type');
-    }
+    if (type !== TokenType.REFRESH) throw new Error('Wrong JWT type');
 
     return { sub: sub, jti: jti };
   }

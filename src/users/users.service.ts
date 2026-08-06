@@ -12,8 +12,8 @@ import { OwnershipService } from '../authorization/ownership.service';
 @Injectable()
 export class UsersService {
   constructor(
-    private prisma: PrismaService,
-    private ownershipService: OwnershipService,
+    private readonly prisma: PrismaService,
+    private readonly ownership: OwnershipService,
   ) {}
 
   async approveMember(
@@ -24,21 +24,19 @@ export class UsersService {
     const target = await this.prisma.user.findFirst({
       where: {
         id: targetUserId,
-        ...this.ownershipService.scopeToCompany(caller),
+        ...this.ownership.scopeToCompany(caller),
       },
     });
     if (!target) throw new NotFoundException('Member not found');
 
-    if (target.status !== UserStatus.PENDING_APPROVAL) {
+    if (target.status !== UserStatus.PENDING_APPROVAL)
       throw new BadRequestException('Member is not pending approval');
-    }
 
     const role = await this.prisma.role.findUnique({
       where: { id: dto.roleId },
     });
-    if (!role || !['MANAGER', 'STAFF'].includes(role.code)) {
+    if (!role || !['MANAGER', 'STAFF'].includes(role.code))
       throw new BadRequestException('Invalid role for a member');
-    }
 
     return this.prisma.user.update({
       where: { id: target.id },
@@ -51,12 +49,11 @@ export class UsersService {
       where: { companyId: companyId, role: { code: 'OWNER' } },
     });
 
-    if (!owner) {
-      throw new NotFoundException('Company owner not found');
-    }
-    if (owner.status !== UserStatus.PENDING_APPROVAL) {
+    if (!owner) throw new NotFoundException('Company owner not found');
+
+    if (owner.status !== UserStatus.PENDING_APPROVAL)
       throw new BadRequestException('Owner is not pending approval');
-    }
+
     return this.prisma.user.update({
       where: { id: owner.id },
       data: { status: UserStatus.ACTIVE },

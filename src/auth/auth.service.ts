@@ -19,9 +19,9 @@ import { RefreshDto } from './dto/refresh.dto';
 @Injectable()
 export class AuthService {
   constructor(
-    private prismaService: PrismaService,
-    private passwordService: PasswordService,
-    private tokenService: TokenService,
+    private readonly prisma: PrismaService,
+    private readonly passwordService: PasswordService,
+    private readonly tokenService: TokenService,
   ) {}
 
   private generateJoinCode(): string {
@@ -33,7 +33,7 @@ export class AuthService {
     const { token: refreshToken, expiresAt } =
       await this.tokenService.signRefresh(userId);
 
-    await this.prismaService.refreshToken.create({
+    await this.prisma.refreshToken.create({
       data: {
         userId,
         tokenHash: this.tokenService.hashToken(refreshToken),
@@ -51,10 +51,10 @@ export class AuthService {
   }> {
     const { companyName, taxId, ownerName, ownerEmail, ownerPassword } = dto;
 
-    const emailTakenPromise = this.prismaService.userLoginMethod.findFirst({
+    const emailTakenPromise = this.prisma.userLoginMethod.findFirst({
       where: { email: ownerEmail },
     });
-    const taxIdTakenPromise = this.prismaService.company.findUnique({
+    const taxIdTakenPromise = this.prisma.company.findUnique({
       where: { taxId: taxId },
     });
 
@@ -68,7 +68,7 @@ export class AuthService {
 
     const passwordHash = await this.passwordService.hash(ownerPassword);
 
-    const role = await this.prismaService.role.findUniqueOrThrow({
+    const role = await this.prisma.role.findUniqueOrThrow({
       where: {
         code: 'OWNER',
       },
@@ -76,7 +76,7 @@ export class AuthService {
 
     const companyJoinCode = this.generateJoinCode();
 
-    const { user, company } = await this.prismaService.$transaction(
+    const { user, company } = await this.prisma.$transaction(
       async (transaction) => {
         const newUser = await transaction.user.create({
           data: {
@@ -135,7 +135,7 @@ export class AuthService {
   }> {
     const { joinCode, email, password, name } = dto;
 
-    const emailTaken = await this.prismaService.userLoginMethod.findFirst({
+    const emailTaken = await this.prisma.userLoginMethod.findFirst({
       where: {
         email: email,
       },
@@ -143,14 +143,14 @@ export class AuthService {
 
     if (emailTaken) throw new ConflictException('Email already registered');
 
-    const company = await this.prismaService.company.findUnique({
+    const company = await this.prisma.company.findUnique({
       where: { joinCode },
     });
     if (!company) throw new NotFoundException('Invalid join code');
 
     const passwordHash = await this.passwordService.hash(password);
 
-    const user = await this.prismaService.user.create({
+    const user = await this.prisma.user.create({
       data: {
         name,
         companyId: company.id,
@@ -179,7 +179,7 @@ export class AuthService {
   async login(dto: LoginDto) {
     const { email, password } = dto;
 
-    const loginMethod = await this.prismaService.userLoginMethod.findFirst({
+    const loginMethod = await this.prisma.userLoginMethod.findFirst({
       where: { email: email, method: 'local' },
       include: {
         user: {
@@ -194,22 +194,19 @@ export class AuthService {
       },
     });
 
-    if (!loginMethod?.passwordHash) {
+    if (!loginMethod?.passwordHash)
       throw new UnauthorizedException('Invalid credentials');
-    }
+
     const valid = await this.passwordService.verify(
       loginMethod.passwordHash,
       password,
     );
-    if (!valid) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
+    if (!valid) throw new UnauthorizedException('Invalid credentials');
 
     const user = loginMethod.user;
 
-    if (user.deletedAt || !CAN_AUTHENTICATE.includes(user.status)) {
+    if (user.deletedAt || !CAN_AUTHENTICATE.includes(user.status))
       throw new UnauthorizedException('Account cannot sign in');
-    }
 
     const tokens = await this.issueTokens(user.id);
 
@@ -234,20 +231,20 @@ export class AuthService {
     }
 
     const tokenHash = this.tokenService.hashToken(dto.refreshToken);
-    const stored = await this.prismaService.refreshToken.findUnique({
+    const stored = await this.prisma.refreshToken.findUnique({
       where: { tokenHash },
     });
     if (!stored) throw new UnauthorizedException('Invalid refresh token');
 
     if (stored.revokedAt) {
-      await this.prismaService.refreshToken.updateMany({
+      await this.prisma.refreshToken.updateMany({
         where: { userId: stored.userId, revokedAt: null },
         data: { revokedAt: new Date() },
       });
       throw new UnauthorizedException('Refresh token reuse detected');
     }
 
-    await this.prismaService.refreshToken.update({
+    await this.prisma.refreshToken.update({
       where: { tokenHash },
       data: { revokedAt: new Date() },
     });
@@ -260,7 +257,7 @@ export class AuthService {
 
   async logout(userId: string, dto: RefreshDto) {
     const tokenHash = this.tokenService.hashToken(dto.refreshToken);
-    await this.prismaService.refreshToken.updateMany({
+    await this.prisma.refreshToken.updateMany({
       where: { tokenHash, userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
