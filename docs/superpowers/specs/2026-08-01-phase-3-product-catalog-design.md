@@ -2,7 +2,8 @@
 
 - **Project:** Inventra (multi-tenant inventory management SaaS)
 - **Date:** 2026-08-01
-- **Status:** Design approved; pending implementation plan
+- **Status:** Implemented — Phase 3 complete (unit + e2e green)
+- **Revision (2026-08-07):** Decision #6 changed during implementation — ADMIN now has **full cross-tenant CRUD** (not read-only). Sections §2/#6, §8, §9 below reflect the final behaviour.
 - **Depends on:** Phase 1 (auth, permissions), Phase 2 (`OwnershipService`, `AuthUser.roleCode`)
 
 ## 1. Goal & Scope
@@ -28,7 +29,7 @@ Build the first feature domain — the **product catalog** — as the first real
 | 3 | Brand/Product ownership | **Company-owned**, tenant-scoped via `OwnershipService` | `brands.created_by_company_id` / `products.company_id`. |
 | 4 | Owner-column mismatch | Extend `scopeToCompany(caller, field = 'companyId')` | Brand's owner column is `createdByCompanyId`, not `companyId`; one parameterized helper serves both. Backward-compatible. |
 | 5 | Delete semantics | **Soft delete** for all three | Product/Category already have `deletedAt`; add `deletedAt` to Brand (small migration) for uniformity. Reads filter `deletedAt: null`. |
-| 6 | ADMIN + create | ADMIN **cannot** create products/brands | ADMIN has no company to own them; ADMIN manages the platform + categories, and reads across companies. |
+| 6 | ADMIN + create | ADMIN has **full cross-tenant CRUD**; names the target company via `companyId` on create | ADMIN administers the entire platform — reads *and* writes every company's catalog. On create it must supply `companyId` (→ 400 if omitted, via `resolveCompanyForCreate`); company users always act on their own company. |
 | 7 | Product barcode | Globally unique → 409 on duplicate | `products.barcode` is `@unique` across all tenants. |
 | 8 | MANAGER product delete | Granted, but restricted (in the service) to products they created | Row-level scope beyond the binary permission: OWNER deletes any company product, MANAGER only their own (`createdByUserId`). |
 | 9 | Deletion audit | `deletedByUserId` FK on every soft-deleted table | Records *who* deleted each record; set together with `deletedAt`. A convention for all future soft-delete resources. |
@@ -137,12 +138,12 @@ Every single-record op (`GET/:id`, `PATCH`, `DELETE`) uses a scoped `findFirst`,
 
 ## 8. Product-Creation Validations (`POST /products`)
 
-1. **Company required:** `caller.companyId` must exist (ADMIN with none → 403); set `companyId = caller.companyId`, `createdByUserId = caller.id`.
+1. **Company resolved:** via `resolveCompanyForCreate(caller, dto.companyId)` — a company user gets their own `companyId`; ADMIN must supply `dto.companyId` (→ **400** if missing). Set `createdByUserId = caller.id`.
 2. **Brand must be the caller's:** `findFirst({ where: { id: brandId, createdByCompanyId: caller.companyId, deletedAt: null } })`; not found → **400** (can't reference another company's brand).
 3. **Category must exist:** `findUnique` on `categoryId`, non-deleted; else **400**.
 4. **Barcode unique:** pre-check `products.barcode`; duplicate → **409**.
 
-`POST /brands` sets `createdByCompanyId = caller.companyId` and likewise requires a company.
+`POST /brands` resolves the owner company the same way: `createdByCompanyId = caller.companyId` for a company user, or `dto.companyId` for ADMIN (→ 400 if ADMIN omits it).
 
 ## 8a. Deletion Rules
 
@@ -159,7 +160,7 @@ The service distinguishes roles via `caller.roleCode`. Brand and Category delete
 | Situation | Response |
 |---|---|
 | Cross-tenant record (brand/product) | 404 |
-| ADMIN (no company) creates a product/brand | 403 |
+| ADMIN creates without naming a company (`companyId`) | 400 |
 | MANAGER deletes a product they didn't create | 403 |
 | Duplicate barcode | 409 |
 | Invalid brand reference (not yours / missing) | 400 |

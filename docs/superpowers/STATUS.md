@@ -15,7 +15,7 @@
 | 0 | Infra: Docker Compose, Zod env validation, Prisma modern setup | ✅ complete |
 | 1 | Auth: register (owner + member self-signup via join code), login, JWT access/refresh rotation + reuse detection | ✅ complete (blogged) |
 | 2 | Authz: `PermissionsGuard` (RBAC) + `OwnershipService` tenant scoping (`companyId`) | ✅ complete (blogged) |
-| 3 | **Product catalog** (categories, brands, products) | 🟡 in progress — see below |
+| 3 | **Product catalog** (categories, brands, products) | ✅ complete (unit + e2e green; blog pending) |
 | 4+ | Store placement (company↔store), orders, inventory transactions | ⏳ not started |
 
 ## Where we are right now — Phase 3 (product catalog)
@@ -29,11 +29,9 @@ Two-layer authz applied to a real feature. Design/spec/plan committed under `doc
 - `ProductsService` — company-owned via `companyId`; validates brand (in-company) + category + unique barcode; **MANAGER can only delete products they created**; **ADMIN full cross-tenant read + create (supplies `companyId`)**.
 - **86 unit tests green across 11 suites.**
 
-**Pending — Task 6 (the ONLY open item):**
-- `test/catalog.e2e-spec.ts` is written and committed but **not yet run**.
-- ▶️ **Run it:** `npm run test:e2e`
-- ⚠️ A human must run this — its `pretest:e2e` runs `prisma migrate reset --force`, which Claude's Prisma AI-safety guard blocks. (Claude can run the plain unit suite `npm test`.)
-- When green → **Phase 3 is complete** → generate the bilingual EN+KR `/phase-blog` retrospective (portfolio convention).
+**Task 6 — DONE (2026-08-07):** `test/catalog.e2e-spec.ts` passes end-to-end (after fixing a `@Controller()`→`@Controller('brands')` routing bug). **Phase 3 is complete.**
+Remaining wrap-up: the bilingual EN+KR `/phase-blog` retrospective, then Phase 4.
+- ⚠️ Note for future e2e runs: `npm run test:e2e`'s `pretest` runs `prisma migrate reset --force`, which Claude's Prisma AI-safety guard blocks — **a human must run it**. Claude runs the unit suite (`npm test`) fine.
 
 ## Roadmap after Phase 3
 Store placement (company↔store junction) → orders → inventory transactions (single centralized write function) → cross-cutting concerns → Redis caching (only when a measured need appears).
