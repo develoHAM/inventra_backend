@@ -4,6 +4,9 @@
 /build
 /tmp
 
+# macOS
+.DS_Store
+
 # Logs
 logs
 *.log
