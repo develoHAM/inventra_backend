@@ -15,7 +15,7 @@ import type { AuthUser } from '../auth/types/auth-user';
 import { CreateBrandDto } from './dto/create-brand.dto';
 import { UpdateBrandDto } from './dto/update-brand.dto';
 
-@Controller()
+@Controller('brands')
 export class BrandsController {
   constructor(private readonly brandsService: BrandsService) {}
 
