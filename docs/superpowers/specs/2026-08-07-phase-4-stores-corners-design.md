@@ -107,7 +107,7 @@ src/corners/  { corners.module, corners.service, corners.controller, dto/ }
 - `POST /corners/:id/staff` (`corners.assign`) — body `{ userId }`; add staff; sets `User.companyStoreId = corner.id`
 - `DELETE /corners/:id/staff/:userId` (`corners.assign`) — remove staff; sets `User.companyStoreId = null`
 
-`UpdateCornerDto = PartialType(OmitType(CreateCornerDto, ['companyId', 'storeId'] as const))` — a corner can't be moved to another company or venue via edit.
+`UpdateCornerDto = PartialType(OmitType(CreateCornerDto, ['companyId', 'storeId', 'managerUserId'] as const))` — a corner can't be moved to another company or venue via edit, and the manager is set **only** via `PUT /corners/:id/manager` (so `PATCH` can't bypass the OWNER/ADMIN-only + eligibility rules).
 
 ## 7. Tenant Scoping & Assignment Rules
 
