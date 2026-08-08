@@ -46,6 +46,15 @@ const PERMISSIONS = [
   { code: 'products.read', name: 'Read products' },
   { code: 'products.update', name: 'Update products' },
   { code: 'products.delete', name: 'Delete products' },
+  { code: 'stores.create', name: 'Create stores' },
+  { code: 'stores.read', name: 'Read stores' },
+  { code: 'stores.update', name: 'Update stores' },
+  { code: 'stores.delete', name: 'Delete stores' },
+  { code: 'corners.create', name: 'Create corners' },
+  { code: 'corners.read', name: 'Read corners' },
+  { code: 'corners.update', name: 'Update corners' },
+  { code: 'corners.delete', name: 'Delete corners' },
+  { code: 'corners.assign', name: 'Assign corner manager and staff' },
 ];
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
@@ -66,6 +75,12 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'brands.update',
     'brands.delete',
     'categories.read',
+    'stores.read',
+    'corners.create',
+    'corners.read',
+    'corners.update',
+    'corners.delete',
+    'corners.assign',
   ],
   MANAGER: [
     'users.create',
@@ -82,6 +97,9 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'brands.read',
     'brands.update', // note: NO brands.delete
     'categories.read',
+    'stores.read',
+    'corners.read',
+    'corners.assign',
   ],
   STAFF: [
     'users.read',
@@ -91,8 +109,11 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'products.read',
     'brands.read',
     'categories.read',
+    'stores.read',
+    'corners.read',
   ],
   // ADMIN intentionally omitted — its wildcard is handled in code, not via rows.
+  // stores.{create,update,delete} → granted to NO role (ADMIN wildcard only)
 };
 
 async function main() {

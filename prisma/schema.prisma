@@ -31,18 +31,20 @@ model User {
   role         Role?         @relation(fields: [roleId], references: [id])
   companyStore CompanyStore? @relation("CompanyStoreStaff", fields: [companyStoreId], references: [id])
 
-  createdCompanies    Company[]              @relation("CompanyCreator")
-  managedStores       CompanyStore[]         @relation("CompanyStoreManager")
-  loginMethods        UserLoginMethod[]
-  permissions         UserPermission[]
-  createdProducts     Product[]             @relation("ProductCreatedBy")
-  deletedProducts     Product[]             @relation("ProductDeletedBy")
-  deletedBrands       Brand[]                @relation("BrandDeletedBy")
-  deletedCategories   Category[]             @relation("CategoryDeletedBy")
-  createdOrders       Order[]
-  createdAudits       InventoryAudit[]
-  createdTransactions InventoryTransaction[]
-  refreshTokens       RefreshToken[]
+  createdCompanies        Company[]             @relation("CompanyCreator")
+  managedStores           CompanyStore[]        @relation("CompanyStoreManager")
+  loginMethods            UserLoginMethod[]
+  permissions             UserPermission[]
+  createdProducts         Product[]             @relation("ProductCreatedBy")
+  deletedProducts         Product[]             @relation("ProductDeletedBy")
+  deletedBrands           Brand[]               @relation("BrandDeletedBy")
+  deletedCategories       Category[]            @relation("CategoryDeletedBy")
+  deletedStores           Store[]               @relation("StoreDeletedBy")
+  deletedCompanyStores    CompanyStore[]        @relation("CompanyStoreDeletedBy")
+  createdOrders           Order[]
+  createdAudits           InventoryAudit[]
+  createdTransactions     InventoryTransaction[]
+  refreshTokens           RefreshToken[]
 
   @@index([companyId], map: "IDX_users_company")
   @@map("users")
@@ -158,15 +160,19 @@ enum PermissionEffect {
 }
 
 model Store {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name         String?  @db.VarChar(255)
-  storeAddress String?  @map("store_address") @db.VarChar(255)
-  storePhone   String?  @map("store_phone") @db.VarChar(20)
-  description  String?  @db.Text
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String?    @db.VarChar(255)
+  storeAddress     String?    @map("store_address") @db.VarChar(255)
+  storePhone       String?    @map("store_phone") @db.VarChar(20)
+  description      String?    @db.Text
+  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt        DateTime?  @map("deleted_at") @db.Timestamptz(6)
+  deletedByUserId  String?   @map("deleted_by_user_id") @db.Uuid
 
   companyStores CompanyStore[]
+  deletedByUser User? @relation("StoreDeletedBy", fields: [deletedByUserId], references: [id])
+
 
   @@map("stores")
 }
@@ -195,18 +201,22 @@ model Company {
 }
 
 model CompanyStore {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  companyId     String   @map("company_id") @db.Uuid
-  storeId       String   @map("store_id") @db.Uuid
-  managerUserId String?  @map("manager_user_id") @db.Uuid
-  name          String?  @db.VarChar(255)
-  description   String?  @db.Text
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId         String      @map("company_id") @db.Uuid
+  storeId           String      @map("store_id") @db.Uuid
+  managerUserId     String?     @map("manager_user_id") @db.Uuid
+  name              String?     @db.VarChar(255)
+  description       String?     @db.Text
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime?   @map("deleted_at") @db.Timestamptz(6)
+  deletedByUserId   String?     @map("deleted_by_user_id") @db.Uuid
 
-  company Company @relation(fields: [companyId], references: [id])
-  store   Store   @relation(fields: [storeId], references: [id])
-  manager User?   @relation("CompanyStoreManager", fields: [managerUserId], references: [id])
+
+  company Company       @relation(fields: [companyId], references: [id])
+  store   Store         @relation(fields: [storeId], references: [id])
+  manager User?         @relation("CompanyStoreManager", fields: [managerUserId], references: [id])
+  deletedByUser User?   @relation("CompanyStoreDeletedBy", fields: [deletedByUserId], references: [id])
 
   users                User[]                @relation("CompanyStoreStaff")
   companyStoreProducts CompanyStoreProduct[]
