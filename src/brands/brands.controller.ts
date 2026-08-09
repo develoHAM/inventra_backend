@@ -17,12 +17,12 @@ import { UpdateBrandDto } from './dto/update-brand.dto';
 
 @Controller('brands')
 export class BrandsController {
-  constructor(private readonly brandsService: BrandsService) {}
+  constructor(private readonly brands: BrandsService) {}
 
   @RequirePermissions('brands.read')
   @Get()
   findAll(@CurrentUser() caller: AuthUser) {
-    return this.brandsService.findAll(caller);
+    return this.brands.findAll(caller);
   }
 
   @RequirePermissions('brands.read')
@@ -31,23 +31,23 @@ export class BrandsController {
     @CurrentUser() caller: AuthUser,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    return this.brandsService.findOne(caller, id);
+    return this.brands.findOne(caller, id);
   }
 
   @RequirePermissions('brands.create')
   @Post()
   create(@CurrentUser() caller: AuthUser, @Body() dto: CreateBrandDto) {
-    return this.brandsService.create(caller, dto);
+    return this.brands.create(caller, dto);
   }
 
   @RequirePermissions('brands.update')
   @Patch(':id')
-  updated(
+  update(
     @CurrentUser() caller: AuthUser,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateBrandDto,
   ) {
-    return this.brandsService.update(caller, id, dto);
+    return this.brands.update(caller, id, dto);
   }
 
   @RequirePermissions('brands.delete')
@@ -56,6 +56,6 @@ export class BrandsController {
     @CurrentUser() caller: AuthUser,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    return this.brandsService.remove(caller, id);
+    return this.brands.remove(caller, id);
   }
 }

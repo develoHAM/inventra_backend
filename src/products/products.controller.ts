@@ -17,12 +17,12 @@ import { UpdateProductDto } from './dto/update-product.dto';
 
 @Controller('products')
 export class ProductsController {
-  constructor(private readonly productsService: ProductsService) {}
+  constructor(private readonly products: ProductsService) {}
 
   @RequirePermissions('products.read')
   @Get()
   findAll(@CurrentUser() caller: AuthUser) {
-    return this.productsService.findAll(caller);
+    return this.products.findAll(caller);
   }
 
   @RequirePermissions('products.read')
@@ -31,13 +31,13 @@ export class ProductsController {
     @CurrentUser() caller: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.productsService.findOne(caller, id);
+    return this.products.findOne(caller, id);
   }
 
   @RequirePermissions('products.create')
   @Post()
   create(@CurrentUser() caller: AuthUser, @Body() dto: CreateProductDto) {
-    return this.productsService.create(caller, dto);
+    return this.products.create(caller, dto);
   }
 
   @RequirePermissions('products.update')
@@ -47,7 +47,7 @@ export class ProductsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateProductDto,
   ) {
-    return this.productsService.update(caller, id, dto);
+    return this.products.update(caller, id, dto);
   }
 
   @RequirePermissions('products.delete')
@@ -56,6 +56,6 @@ export class ProductsController {
     @CurrentUser() caller: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.productsService.remove(caller, id);
+    return this.products.remove(caller, id);
   }
 }

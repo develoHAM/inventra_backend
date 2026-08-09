@@ -17,24 +17,24 @@ import type { AuthUser } from '../auth/types/auth-user';
 
 @Controller('categories')
 export class CategoriesController {
-  constructor(private categoriesService: CategoriesService) {}
+  constructor(private categories: CategoriesService) {}
 
   @RequirePermissions('categories.read')
   @Get()
   findAll() {
-    return this.categoriesService.findAll();
+    return this.categories.findAll();
   }
 
   @RequirePermissions('categories.read')
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.categoriesService.findOne(id);
+    return this.categories.findOne(id);
   }
 
   @RequirePermissions('categories.create')
   @Post()
   create(@Body() dto: CreateCategoryDto) {
-    return this.categoriesService.create(dto);
+    return this.categories.create(dto);
   }
 
   @RequirePermissions('categories.update')
@@ -43,7 +43,7 @@ export class CategoriesController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateCategoryDTO,
   ) {
-    return this.categoriesService.update(id, dto);
+    return this.categories.update(id, dto);
   }
 
   @RequirePermissions('categories.delete')
@@ -52,6 +52,6 @@ export class CategoriesController {
     @CurrentUser() caller: AuthUser,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    return this.categoriesService.remove(caller, id);
+    return this.categories.remove(caller, id);
   }
 }
