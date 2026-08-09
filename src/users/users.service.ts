@@ -59,4 +59,18 @@ export class UsersService {
       data: { status: UserStatus.ACTIVE },
     });
   }
+
+  async findActiveMember(userId: string, companyId: string) {
+    return this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        companyId: companyId,
+        deletedAt: null,
+        status: UserStatus.ACTIVE,
+      },
+      include: {
+        role: true,
+      },
+    });
+  }
 }

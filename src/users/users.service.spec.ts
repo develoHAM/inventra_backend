@@ -151,4 +151,31 @@ describe('UsersService', () => {
       );
     });
   });
+
+  describe('findActiveMember', () => {
+    it('returns an active same-company member with role included', async () => {
+      prisma.user.findFirst.mockResolvedValue({
+        id: 'u1',
+        role: { code: 'MANAGER' },
+      });
+
+      const found = await service.findActiveMember('u1', 'company-1');
+
+      expect(found).toEqual({ id: 'u1', role: { code: 'MANAGER' } });
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: 'u1',
+          companyId: 'company-1',
+          status: UserStatus.ACTIVE,
+          deletedAt: null,
+        },
+        include: { role: true },
+      });
+    });
+
+    it('returns null when there is no match (wrong company / inactive / deleted)', async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+      expect(await service.findActiveMember('u1', 'company-1')).toBeNull();
+    });
+  });
 });
