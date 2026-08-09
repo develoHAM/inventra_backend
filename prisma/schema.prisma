@@ -161,7 +161,7 @@ enum PermissionEffect {
 
 model Store {
   id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name             String?    @db.VarChar(255)
+  name             String     @db.VarChar(255)
   storeAddress     String?    @map("store_address") @db.VarChar(255)
   storePhone       String?    @map("store_phone") @db.VarChar(20)
   description      String?    @db.Text
