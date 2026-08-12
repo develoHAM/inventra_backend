@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { CornersService } from './corners.service';
 import { OwnershipService } from '../authorization/ownership.service';
 import { AuthUser } from '../auth/types/auth-user';
@@ -30,6 +34,13 @@ describe('CornersService', () => {
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',
+    status: UserStatus.ACTIVE,
+  };
+  const manager: AuthUser = {
+    id: 'mgr-1',
+    companyId: 'company-1',
+    roleId: 3,
+    roleCode: 'MANAGER',
     status: UserStatus.ACTIVE,
   };
 
@@ -134,6 +145,137 @@ describe('CornersService', () => {
       expect(prisma.companyStore.update).toHaveBeenCalledWith({
         where: { id: 'corner-1' },
         data: { deletedAt: expect.any(Date), deletedByUserId: 'owner-1' },
+      });
+    });
+  });
+
+  describe('assignManager', () => {
+    it('sets managerUserId for an eligible MANAGER target (owner caller)', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c1',
+        companyId: 'company-1',
+        managerUserId: null,
+      });
+      users.findActiveMember.mockResolvedValue({
+        id: 'u1',
+        role: { code: 'MANAGER' },
+      });
+
+      await service.assignManager(owner, 'c1', { userId: 'u1' } as any);
+
+      expect(users.findActiveMember).toHaveBeenCalledWith('u1', 'company-1');
+      expect(prisma.companyStore.update).toHaveBeenCalledWith({
+        where: { id: 'c1' },
+        data: { managerUserId: 'u1' },
+      });
+    });
+
+    it('rejects a non-MANAGER target with 400', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c1',
+        companyId: 'company-1',
+        managerUserId: null,
+      });
+      users.findActiveMember.mockResolvedValue({
+        id: 'u1',
+        role: { code: 'STAFF' },
+      });
+
+      await expect(
+        service.assignManager(owner, 'c1', { userId: 'u1' } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.companyStore.update).not.toHaveBeenCalled();
+    });
+
+    it('forbids a MANAGER caller from appointing a manager (403)', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c1',
+        companyId: 'company-1',
+        managerUserId: 'mgr-1',
+      });
+
+      await expect(
+        service.assignManager(manager, 'c1', { userId: 'u1' } as any),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.companyStore.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('addStaff', () => {
+    it('lets the corner MANAGER add an active member (sets companyStoreId)', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c1',
+        companyId: 'company-1',
+        managerUserId: 'mgr-1',
+      });
+      users.findActiveMember.mockResolvedValue({
+        id: 'u2',
+        role: { code: 'STAFF' },
+      });
+
+      await service.addStaff(manager, 'c1', { userId: 'u2' } as any);
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u2' },
+        data: { companyStoreId: 'c1' },
+      });
+    });
+
+    it('forbids a MANAGER from staffing a corner they do not manage (403)', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c1',
+        companyId: 'company-1',
+        managerUserId: 'someone-else',
+      });
+
+      await expect(
+        service.addStaff(manager, 'c1', { userId: 'u2' } as any),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects an ineligible staff target with 400', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c1',
+        companyId: 'company-1',
+        managerUserId: 'mgr-1',
+      });
+      users.findActiveMember.mockResolvedValue(null);
+
+      await expect(
+        service.addStaff(manager, 'c1', { userId: 'bad' } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('removeStaff', () => {
+    it('404s when the user is not staff of this corner', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c1',
+        companyId: 'company-1',
+        managerUserId: 'mgr-1',
+      });
+      prisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(service.removeStaff(manager, 'c1', 'u2')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('unsets companyStoreId for a current staff member', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c1',
+        companyId: 'company-1',
+        managerUserId: 'mgr-1',
+      });
+      prisma.user.findFirst.mockResolvedValue({ id: 'u2', companyStoreId: 'c1' });
+
+      await service.removeStaff(manager, 'c1', 'u2');
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u2' },
+        data: { companyStoreId: null },
       });
     });
   });

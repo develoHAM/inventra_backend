@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
 } from '@nestjs/common';
 import { CornersService } from './corners.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
@@ -14,6 +15,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth-user';
 import { CreateCornerDto } from './dto/create-corner.dto';
 import { UpdateCornerDto } from './dto/update-corner.dto';
+import { AssignUserDto } from './dto/assign-user.dto';
 
 @Controller('corners')
 export class CornersController {
@@ -57,5 +59,35 @@ export class CornersController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.corners.remove(caller, id);
+  }
+
+  @RequirePermissions('corners.assign')
+  @Put(':id/manager')
+  assignManager(
+    @CurrentUser() caller: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AssignUserDto,
+  ) {
+    return this.corners.assignManager(caller, id, dto);
+  }
+
+  @RequirePermissions('corners.assign')
+  @Post(':id/staff')
+  addStaff(
+    @CurrentUser() caller: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AssignUserDto,
+  ) {
+    return this.corners.addStaff(caller, id, dto);
+  }
+
+  @RequirePermissions('corners.assign')
+  @Delete(':id/staff/:userId')
+  removeStaff(
+    @CurrentUser() caller: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('userId', ParseUUIDPipe) userId: string,
+  ) {
+    return this.corners.removeStaff(caller, id, userId);
   }
 }
