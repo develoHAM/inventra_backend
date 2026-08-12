@@ -205,8 +205,9 @@ model CompanyStore {
   companyId         String      @map("company_id") @db.Uuid
   storeId           String      @map("store_id") @db.Uuid
   managerUserId     String?     @map("manager_user_id") @db.Uuid
-  name              String?     @db.VarChar(255)
+  name              String      @db.VarChar(255)
   description       String?     @db.Text
+  location          String?     @db.VarChar(255)
   createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt         DateTime?   @map("deleted_at") @db.Timestamptz(6)
