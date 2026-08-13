@@ -15,11 +15,31 @@
 ## Global Constraints
 
 - **Quantity scope:** Phase 5 sets `targetStockQuantity` (+ `isActive`, `description`) only. `current`/`reserved`/`sample` stay at `0` (later phases).
-- **Ownership through the corner:** no `companyId` on the placement. Reads → `corners.findOne(caller, cornerId)`; writes → `corners.assertManages(caller, cornerId)`. Then filter placements by `companyStoreId = cornerId` + `deletedAt: null`.
+- **Ownership through the corner:** no `companyId` on the placement. Reads → `corners.findOne(caller, cornerId)`; writes → `corners.assertWorksCorner(caller, cornerId)` (OWNER/ADMIN any · MANAGER-managed · STAFF whose `companyStoreId === cornerId`). Then filter placements by `companyStoreId = cornerId` + `deletedAt: null`.
 - **Soft-delete:** `DELETE` sets `deletedAt = new Date()` **and** `deletedByUserId = caller.id`; reads filter `deletedAt: null`. `isActive` is an independent toggle.
 - **Create reconciliation:** live `(productId, cornerId)` → 409; soft-deleted → **revive** (clear `deletedAt`/`deletedByUserId`, apply new fields); none → insert.
-- **Permissions (spec §4):** +4 → 33. `placements.read` → OWNER/MANAGER/STAFF; `placements.{create,update,delete}` → OWNER/MANAGER (MANAGER row-scoped in service).
+- **Permissions (spec §4, rev):** +4 → 33. `placements.read` → OWNER/MANAGER/STAFF; `placements.{create,update,delete}` → OWNER/MANAGER/**STAFF**, row-scoped in the service (`assertWorksCorner`): MANAGER → managed corners, STAFF → the one corner they're assigned to.
 - **Ids:** `cornerId` UUID (`ParseUUIDPipe`); `placementId` int (`ParseIntPipe`).
+
+**⚠ Revision (2026-08-13) — STAFF placement access.** STAFF may CRUD placements, scoped to their assigned corner. Layered onto the tasks below:
+- **Task 1:** STAFF grant is the full set `placements.{create,read,update,delete}` (not read-only).
+- **Task 3 (also):** add `companyStoreId` to `AuthUser` + the guard, and a new `CornersService.assertWorksCorner` (keep `assertManages` as-is for staff assignment):
+  ```ts
+  // src/auth/types/auth-user.ts — add field
+  companyStoreId: string | null;
+  // src/auth/guards/jwt-auth.guard.ts — add `companyStoreId: true` to the user select, and to the AuthUser object:
+  const authenticatedUser: AuthUser = { ...existing, companyStoreId: user.companyStoreId };
+  // src/corners/corners.service.ts — new write-guard
+  async assertWorksCorner(caller: AuthUser, cornerId: string) {
+    const corner = await this.findOne(caller, cornerId); // company-scoped → 404
+    if (caller.roleCode === 'MANAGER' && corner.managerUserId !== caller.id)
+      throw new ForbiddenException('You can only manage corners you manage');
+    if (caller.roleCode === 'STAFF' && caller.companyStoreId !== cornerId)
+      throw new ForbiddenException('You can only manage the corner you are assigned to');
+    return corner;
+  }
+  ```
+- **Task 4:** placement **writes** (`create`/`update`/`remove`) call `corners.assertWorksCorner` instead of `assertManages`; reads keep `corners.findOne`. Tests mock `assertWorksCorner` and add STAFF-assigned (ok) vs STAFF-unassigned (403) cases.
 
 ---
 
@@ -46,7 +66,7 @@
 // ROLE_PERMISSIONS: append
 OWNER:   [ ...existing, 'placements.create','placements.read','placements.update','placements.delete' ],
 MANAGER: [ ...existing, 'placements.create','placements.read','placements.update','placements.delete' ],
-STAFF:   [ ...existing, 'placements.read' ],
+STAFF:   [ ...existing, 'placements.create','placements.read','placements.update','placements.delete' ],
 ```
 
 - [ ] **Step 4: Re-seed** — `npm run seed`.

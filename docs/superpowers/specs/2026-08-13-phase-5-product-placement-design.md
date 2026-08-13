@@ -2,8 +2,9 @@
 
 - **Project:** Inventra (multi-tenant inventory management SaaS)
 - **Date:** 2026-08-13
-- **Status:** Design approved; pending implementation plan
+- **Status:** Design approved; implementation in progress
 - **Depends on:** Phase 3 (catalog — Products), Phase 4 (Stores & Corners — `CornersService`, `OwnershipService`), Phase 2 (`AuthUser.roleCode`)
+- **Revision (2026-08-13):** STAFF may CRUD placements too, scoped to the **one corner they're assigned to** (`User.companyStoreId`) — a lone staffer must be able to place an arriving delivery. This adds `companyStoreId` to `AuthUser` and a `CornersService.assertWorksCorner` write-guard (STAFF-assigned), distinct from `assertManages` (OWNER/MANAGER-only, for staff assignment). §2 #4, §4, §5, §7 below reflect this.
 
 ## 1. Goal & Scope
 
@@ -20,7 +21,7 @@ Place catalog products onto a corner's shelf: manage the **`CompanyStoreProduct`
 | 1 | Quantity scope | Phase 5 sets **`targetStockQuantity`** (+ `isActive`, `description`) only | `current`/`reserved`/`sample` are actual stock, moved by later inventory/reservation/`SAMPLE_*` transactions. Placement is planning. |
 | 2 | Ownership | **Through the corner** — no `companyId` on the placement | `company_store_products` has no owner column; it's owned via `companyStore.companyId`. Resolve the corner (scoped) first, then filter placements by `companyStoreId`. |
 | 3 | Removal | **Soft-delete columns** (`deletedAt` + `deletedByUserId`); `isActive` stays a separate operational toggle | Matches the app-wide convention + FK-safe (placements accrue order/inventory history). `isActive` = "selling now"; `deletedAt` = "retired". |
-| 4 | Who manages | OWNER/ADMIN **+ the corner's MANAGER** (row-scoped) | A manager curates the shelf of corners they manage (`corner.managerUserId === caller.id`), else 403 — same row-level pattern as Phase 4 staff assignment. |
+| 4 | Who manages | OWNER/ADMIN + the corner's **MANAGER** (managed) + the corner's assigned **STAFF** (`companyStoreId`) | Everyone acts on the corner they're responsible for: MANAGER on corners they manage, STAFF on the corner they're assigned to (a lone staffer must be able to place an arriving delivery). Else 403. Reads stay company-scoped. |
 | 5 | URL shape | **Nested** under the corner: `/corners/:cornerId/products` | A placement is the corner's shelf; nesting makes corner-scoping fall out of the path. Consistent with Phase 4 corner sub-resources. |
 | 6 | Unique vs soft-delete | On re-place, **revive** a soft-deleted row | `UNIQUE(productId, companyStoreId)` ignores `deletedAt`, so a re-insert of a previously-removed product would conflict; reviving the existing row resolves it. |
 | 7 | Row-check reuse | Extract `CornersService.assertManages(caller, cornerId)` and refactor Phase 4 staff methods onto it | DRYs the "resolve corner + manager row-rule" check now shared by staff assignment and placements. |
@@ -53,9 +54,10 @@ Migration adds a nullable `deleted_at` + `deleted_by_user_id` (uuid, FK → `use
 | Permission | OWNER | MANAGER | STAFF | ADMIN |
 |---|:---:|:---:|:---:|:---:|
 | `placements.read` | ✓ | ✓ | ✓ | (wildcard) |
-| `placements.create` / `placements.update` / `placements.delete` | ✓ | ✓ * | — | (wildcard) |
+| `placements.create` / `placements.update` / `placements.delete` | ✓ | ✓ * | ✓ ** | (wildcard) |
 
-\* MANAGER holds the write permissions, but `PlacementsService` restricts them (via `CornersService.assertManages`) to corners they manage. STAFF can read the shelf, not change it.
+\* MANAGER holds the write permissions, but the service (via `CornersService.assertWorksCorner`) restricts them to corners they manage.
+\*\* STAFF also holds the write permissions, restricted to the **one corner they're assigned to** (`User.companyStoreId`). Reads stay company-scoped for all roles.
 
 ## 5. Module Structure
 
@@ -67,7 +69,8 @@ src/placements/  { placements.module, placements.service, placements.controller,
 - **`CornersModule` must `exports: [CornersService]`** (add it) so Placements can inject it.
 - **New reused lookups (fetch-then-decide):**
   - `ProductsService.findInCompany(productId, companyId)` → the live product in that company, or `null` (mirrors `BrandsService.findInCompany`). Validating against the *corner's* company is what makes ADMIN cross-tenant placement correct.
-  - `CornersService.assertManages(caller, cornerId)` → the corner if the caller may manage it, else throws (404 not-theirs / 403 manager-of-another-corner). Phase 4's `addStaff`/`removeStaff` are refactored to call it.
+  - `CornersService.assertManages(caller, cornerId)` → the corner if the caller may **manage its org** (staff roster): OWNER/ADMIN + MANAGER-managed only. Phase 4's `addStaff`/`removeStaff` refactor onto it.
+  - `CornersService.assertWorksCorner(caller, cornerId)` → the corner if the caller **works it** (may touch its shelf): OWNER/ADMIN any · MANAGER-managed · STAFF whose `companyStoreId === cornerId`. Placement **writes** use this. Requires adding `companyStoreId` to `AuthUser` (+ the `JwtAuthGuard` select).
 
 ## 6. Endpoints
 
@@ -91,14 +94,14 @@ Reads resolve the corner with the plain scoped `findOne`; writes resolve it with
 // read path
 const corner = await this.corners.findOne(caller, cornerId);   // scoped → 404
 // write path
-const corner = await this.corners.assertManages(caller, cornerId); // → 404/403
+const corner = await this.corners.assertWorksCorner(caller, cornerId); // → 404/403
 ```
 
 Once the corner is proven to be the caller's, placements are filtered by `companyStoreId = cornerId` (+ `deletedAt: null`). A single placement is fetched with `findFirst({ where: { id: placementId, companyStoreId: cornerId, deletedAt: null } })` → absent/cross-corner id = **404**.
 
 ## 8. Create Semantics (`POST /corners/:cornerId/products`)
 
-1. **Corner:** `assertManages(caller, cornerId)` → 404/403.
+1. **Corner:** `assertWorksCorner(caller, cornerId)` → 404/403.
 2. **Product:** `productsService.findInCompany(productId, corner.companyId)`; `null` → **400** ("invalid product" — missing, deleted, or another company's).
 3. **Uniqueness / revive:** look up any placement for `(productId, cornerId)`, *including soft-deleted*:
    - a **live** one exists → **409** (already on the shelf),
@@ -115,7 +118,7 @@ Once the corner is proven to be the caller's, placements are filtered by `compan
 | Situation | Response |
 |---|---|
 | Corner not the caller's / absent | 404 |
-| MANAGER acting on a corner they don't manage | 403 |
+| MANAGER on a corner they don't manage, or STAFF on a corner they're not assigned to | 403 |
 | Invalid/foreign/deleted product | 400 |
 | Placement already live for this (product, corner) | 409 |
 | Placement id absent / on another corner | 404 |
