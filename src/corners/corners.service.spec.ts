@@ -43,6 +43,14 @@ describe('CornersService', () => {
     roleCode: 'MANAGER',
     status: UserStatus.ACTIVE,
   };
+  const staff: AuthUser = {
+    id: 'staff-1',
+    companyId: 'company-1',
+    companyStoreId: 'c1',
+    roleId: 4,
+    roleCode: 'STAFF',
+    status: UserStatus.ACTIVE,
+  };
 
   beforeEach(() => {
     prisma = {
@@ -277,6 +285,94 @@ describe('CornersService', () => {
         where: { id: 'u2' },
         data: { companyStoreId: null },
       });
+    });
+  });
+
+  describe('assertManages', () => {
+    it('returns the corner for an OWNER', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c1',
+        companyId: 'company-1',
+        managerUserId: 'x',
+      });
+      await expect(service.assertManages(owner, 'c1')).resolves.toEqual(
+        expect.objectContaining({ id: 'c1' }),
+      );
+    });
+
+    it('403s a MANAGER who does not manage the corner', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c1',
+        companyId: 'company-1',
+        managerUserId: 'someone-else',
+      });
+      await expect(service.assertManages(manager, 'c1')).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('404s a cross-tenant / absent corner', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue(null);
+      await expect(service.assertManages(owner, 'c9')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('assertWorksCorner', () => {
+    it('lets the corner MANAGER through', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c1',
+        companyId: 'company-1',
+        managerUserId: 'mgr-1',
+      });
+      await expect(service.assertWorksCorner(manager, 'c1')).resolves.toEqual(
+        expect.objectContaining({ id: 'c1' }),
+      );
+    });
+
+    it('403s a MANAGER who does not manage the corner', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c1',
+        companyId: 'company-1',
+        managerUserId: 'someone-else',
+      });
+      await expect(service.assertWorksCorner(manager, 'c1')).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('lets the STAFF member assigned to the corner through', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c1',
+        companyId: 'company-1',
+        managerUserId: 'mgr-1',
+      });
+      await expect(service.assertWorksCorner(staff, 'c1')).resolves.toEqual(
+        expect.objectContaining({ id: 'c1' }),
+      );
+    });
+
+    it('403s a STAFF member not assigned to the corner', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c2',
+        companyId: 'company-1',
+        managerUserId: 'mgr-1',
+      });
+      await expect(service.assertWorksCorner(staff, 'c2')).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('lets an OWNER through any corner', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c9',
+        companyId: 'company-1',
+        managerUserId: 'x',
+      });
+      await expect(service.assertWorksCorner(owner, 'c9')).resolves.toEqual(
+        expect.objectContaining({ id: 'c9' }),
+      );
     });
   });
 });

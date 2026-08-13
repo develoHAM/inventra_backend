@@ -11,6 +11,7 @@ describe('JwtAuthGuard', () => {
   const activeUser = {
     id: 'user-1',
     companyId: 'company-1',
+    companyStoreId: 'store-1',
     roleId: 2,
     status: UserStatus.ACTIVE,
     deletedAt: null,
@@ -129,6 +130,7 @@ describe('JwtAuthGuard', () => {
     expect(request.user).toEqual({
       id: 'user-1',
       companyId: 'company-1',
+      companyStoreId: 'store-1',
       roleId: 2,
       roleCode: 'OWNER',
       status: UserStatus.ACTIVE,
@@ -141,6 +143,7 @@ describe('JwtAuthGuard', () => {
       select: {
         id: true,
         companyId: true,
+        companyStoreId: true,
         roleId: true,
         status: true,
         deletedAt: true,

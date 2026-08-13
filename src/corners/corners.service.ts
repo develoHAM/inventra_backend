@@ -31,15 +31,22 @@ export class CornersService {
     return user;
   }
 
-  private assertCanManageStaff(
-    caller: AuthUser,
-    corner: { managerUserId: string | null },
-  ) {
+  async assertManages(caller: AuthUser, cornerId: string) {
+    const corner = await this.findOne(caller, cornerId); // scoped → 404
     if (caller.roleCode === 'MANAGER' && corner.managerUserId !== caller.id)
+      throw new ForbiddenException('You can only manage corners you manage');
+    return corner;
+  }
+
+  async assertWorksCorner(caller: AuthUser, cornerId: string) {
+    const corner = await this.findOne(caller, cornerId); // company-scoped → 404
+    if (caller.roleCode === 'MANAGER' && corner.managerUserId !== caller.id)
+      throw new ForbiddenException('You can only manage corners you manage');
+    if (caller.roleCode === 'STAFF' && caller.companyStoreId !== cornerId)
       throw new ForbiddenException(
-        'You can only manage staff of corners you manage',
+        'You can only manage the corner you are assigned to',
       );
-    // OWNER / ADMIN pass through
+    return corner;
   }
 
   async create(caller: AuthUser, dto: CreateCornerDto) {
@@ -95,8 +102,7 @@ export class CornersService {
   }
 
   async addStaff(caller: AuthUser, cornerId: string, dto: AssignUserDto) {
-    const corner = await this.findOne(caller, cornerId);
-    this.assertCanManageStaff(caller, corner);
+    const corner = await this.assertManages(caller, cornerId);
     const member = await this.users.findActiveMember(
       dto.userId,
       corner.companyId,
@@ -112,8 +118,7 @@ export class CornersService {
   }
 
   async removeStaff(caller: AuthUser, cornerId: string, userId: string) {
-    const corner = await this.findOne(caller, cornerId);
-    this.assertCanManageStaff(caller, corner);
+    await this.assertManages(caller, cornerId);
     const staff = await this.prisma.user.findFirst({
       where: { id: userId, companyStoreId: cornerId },
     });

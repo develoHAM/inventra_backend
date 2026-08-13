@@ -9,5 +9,6 @@ import { CornersController } from './corners.controller';
   imports: [AuthorizationModule, StoresModule, UsersModule],
   providers: [CornersService],
   controllers: [CornersController],
+  exports: [CornersService],
 })
 export class CornersModule {}
