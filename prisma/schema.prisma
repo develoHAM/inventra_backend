@@ -41,6 +41,7 @@ model User {
   deletedCategories       Category[]            @relation("CategoryDeletedBy")
   deletedStores           Store[]               @relation("StoreDeletedBy")
   deletedCompanyStores    CompanyStore[]        @relation("CompanyStoreDeletedBy")
+  deletedPlacements       CompanyStoreProduct[] @relation("CompanyStoreProductDeletedBy")
   createdOrders           Order[]
   createdAudits           InventoryAudit[]
   createdTransactions     InventoryTransaction[]
@@ -305,9 +306,12 @@ model CompanyStoreProduct {
   currentQuantity     Int      @default(0) @map("current_quantity")
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt           DateTime?   @map("deleted_at") @db.Timestamptz(6)
+  deletedByUserId     String?     @map("deleted_by_user_id") @db.Uuid
 
-  companyStore CompanyStore @relation(fields: [companyStoreId], references: [id])
-  product      Product      @relation(fields: [productId], references: [id])
+  companyStore    CompanyStore @relation(fields: [companyStoreId], references: [id])
+  product         Product      @relation(fields: [productId], references: [id])
+  deletedByUser   User?        @relation("CompanyStoreProductDeletedBy", fields: [deletedByUserId], references: [id])
 
   orderItems            OrderItem[]
   inventoryAuditItems   InventoryAuditItem[]
