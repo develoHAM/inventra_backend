@@ -182,4 +182,22 @@ describe('ProductsService', () => {
       });
     });
   });
+
+  describe('findInCompany', () => {
+    it('returns the live product scoped to the given company', async () => {
+      prisma.product.findFirst.mockResolvedValue({ id: 'p1' });
+
+      const found = await service.findInCompany('p1', 'company-1');
+
+      expect(found).toEqual({ id: 'p1' });
+      expect(prisma.product.findFirst).toHaveBeenCalledWith({
+        where: { id: 'p1', companyId: 'company-1', deletedAt: null },
+      });
+    });
+
+    it('returns null when absent / other company / deleted', async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      expect(await service.findInCompany('p1', 'company-1')).toBeNull();
+    });
+  });
 });

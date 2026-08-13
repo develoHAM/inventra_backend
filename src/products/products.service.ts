@@ -69,6 +69,12 @@ export class ProductsService {
     return product;
   }
 
+  findInCompany(productId: string, companyId: string) {
+    return this.prisma.product.findFirst({
+      where: { id: productId, companyId, deletedAt: null },
+    });
+  }
+
   async update(caller: AuthUser, id: string, dto: UpdateProductDto) {
     const product = await this.findOne(caller, id);
 
