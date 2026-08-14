@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-08-13.
+> Last updated: 2026-08-15.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -16,23 +16,25 @@
 | 1 | Auth: register (owner + member self-signup via join code), login, JWT access/refresh rotation + reuse detection | ✅ complete (blogged) |
 | 2 | Authz: `PermissionsGuard` (RBAC) + `OwnershipService` tenant scoping (`companyId`) | ✅ complete (blogged) |
 | 3 | Product catalog (categories, brands, products) | ✅ complete (blogged) |
-| 4 | **Stores & Corners** (venues + company corners, manager/staff assignment) | ✅ complete (blogged) |
-| 5+ | Product placement (`CompanyStoreProduct`), orders, inventory transactions | ⏳ not started |
+| 4 | Stores & Corners (venues + company corners, manager/staff assignment) | ✅ complete (blogged) |
+| 5 | **Product placement** (`CompanyStoreProduct` — products on a corner's shelf) | ✅ complete (blogged) |
+| 6+ | Inventory transactions, orders, audits, reservations | ⏳ not started |
 
-## Where we are right now — Phase 4 complete (stores & corners)
+## Where we are right now — Phase 5 complete (product placement)
 
-Phases 0–4 are done, tested, and blogged. Phase 4 built the organizational layer beneath the catalog:
-- **Stores** — global, ADMIN-managed venues (mirrors Categories).
-- **Corners** (`CompanyStore`) — company-owned, tenant-scoped; CRUD + store/manager validation; ADMIN cross-tenant.
-- **Assignment** — `PUT /corners/:id/manager` (OWNER/ADMIN-only; target must be an active MANAGER member) + `POST`/`DELETE /corners/:id/staff` (MANAGER row-scoped to corners they manage; mirrors Phase 3's creator-scoped delete).
-- Data: soft-delete + `deletedByUserId` on `stores`/`company_stores`; `name` NOT NULL; new `corners.location`; **29 permissions** (`stores.*`, `corners.*`, `corners.assign`).
-- **100 unit tests green** + `test/stores-corners.e2e-spec.ts`.
+Phases 0–5 are done, tested, and blogged. Phase 5 connected the catalog to the corners via `CompanyStoreProduct`:
+- **Placement CRUD** nested under the corner — `GET/POST/PATCH/DELETE /corners/:cornerId/products`.
+- **Ownership through the corner** — placements have no `companyId`; reads resolve via `CornersService.findOne`, writes via `assertWorksCorner`. ADMIN targets a tenant via the URL path (no body `companyId`).
+- **Auth** — OWNER/ADMIN any · MANAGER on corners they manage · **STAFF on the corner they're assigned to** (`AuthUser.companyStoreId`, the lone-staffer delivery case). Two sibling helpers: `assertManages` (roster) vs `assertWorksCorner` (shelf).
+- **Revive-on-replace** — create reconciles the `(product, corner)` unique constraint (which ignores `deletedAt`) by un-deleting a soft-deleted row (409 if live, 400 for a foreign product).
+- Data: soft-delete on `company_store_products`; **33 permissions** (`placements.*`). Only `targetStockQuantity` is set here — `current`/`reserved`/`sample` are the inventory phase's job.
+- **124 unit tests green** + `test/placements.e2e-spec.ts`.
 
-**Next — Phase 5: product placement** (`CompanyStoreProduct`): place catalog products onto a corner's shelf with stock targets (`targetStockQuantity`, `sampleQuantity`, `isActive`); `reserved`/`current` quantities are driven by the later orders/inventory phases. This is where the atomic `updateMany`/`$transaction` write pattern (deliberately deferred in Phase 4) becomes mandatory — inventory races cost money.
+**Next — Phase 6: inventory transactions.** Move real stock (`currentQuantity`/`sampleQuantity`/`reservedQuantity`) through a single centralized write. **This is where the atomic `updateMany`/`$transaction` pattern (deferred since Phase 4) becomes mandatory** — two concurrent decrements on the same shelf is an oversell. Start with `/brainstorming` → spec → plan → per-task build.
 - ⚠️ e2e reminder: `npm run test:e2e`'s `pretest` runs `prisma migrate reset --force`, blocked by Claude's Prisma AI-guard — **a human must run it**. Claude runs `npm test` fine.
 
-## Roadmap after Phase 5
-Orders → inventory transactions (single centralized write function) → cross-cutting concerns → Redis caching (only when a measured need appears).
+## Roadmap after Phase 6
+Orders → audits → purchase reservations → cross-cutting concerns → Redis caching (only when a measured need appears).
 
 ---
 
@@ -49,13 +51,13 @@ The DB, secrets, and generated client are **not** in the repo. After `git pull`:
 3. `docker compose up -d` (postgres + redis)
 4. `npx prisma generate` (client generates into `src/generated/prisma`, which is gitignored)
 5. `npx prisma migrate deploy` then `npm run seed` (or `npx prisma migrate reset --force` which also seeds via `prisma/seed.ts`)
-6. `npm test` (unit — should be 100 green) and `npm run test:e2e`
+6. `npm test` (unit — should be 124 green) and `npm run test:e2e`
 
-Latest migration: `prisma/migrations/20260811154859_corner_add_location`.
+Latest migration: `prisma/migrations/20260813134452_placement_soft_delete_audit`.
 
 ## Key references in-repo
-- `docs/superpowers/specs/2026-08-07-phase-4-stores-corners-design.md` — Phase 4 design (latest)
-- `docs/superpowers/plans/2026-08-07-phase-4-stores-corners.md` — Phase 4 implementation plan
-- `docs/superpowers/specs/2026-08-01-phase-3-product-catalog-design.md` — Phase 3 design
-- `blog/en` + `blog/ko` — Phase 1–4 retrospectives
+- `docs/superpowers/specs/2026-08-13-phase-5-product-placement-design.md` — Phase 5 design (latest)
+- `docs/superpowers/plans/2026-08-13-phase-5-product-placement.md` — Phase 5 implementation plan
+- `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–4 specs & plans
+- `blog/en` + `blog/ko` — Phase 1–5 retrospectives
 - `prisma/schema.prisma` — single source of truth for the data model
