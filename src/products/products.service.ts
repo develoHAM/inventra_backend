@@ -71,7 +71,7 @@ export class ProductsService {
 
   findInCompany(productId: string, companyId: string) {
     return this.prisma.product.findFirst({
-      where: { id: productId, companyId, deletedAt: null },
+      where: { id: productId, companyId: companyId, deletedAt: null },
     });
   }
 
