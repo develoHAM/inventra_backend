@@ -12,6 +12,7 @@ import { BrandsModule } from './brands/brands.module';
 import { ProductsModule } from './products/products.module';
 import { StoresModule } from './stores/stores.module';
 import { CornersModule } from './corners/corners.module';
+import { PlacementsModule } from './placements/placements.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { CornersModule } from './corners/corners.module';
     ProductsModule,
     StoresModule,
     CornersModule,
+    PlacementsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
