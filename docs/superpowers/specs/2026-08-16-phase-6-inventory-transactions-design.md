@@ -7,36 +7,55 @@
 
 ## 1. Goal & Scope
 
-Move **real stock** on a placement through a **single, centralized, atomic write** that (a) appends an immutable `InventoryTransaction` ledger row and (b) adjusts the affected quantity bucket(s) — both in one DB transaction so the audit trail and the balances can never diverge. This is the phase where the atomic `updateMany`/`$transaction` pattern (deferred since Phase 4) becomes mandatory: concurrent decrements on one shelf must not oversell.
+Move **real stock** on a placement through a **single, centralized, atomic write** that (a) appends an immutable `InventoryTransaction` ledger row and (b) adjusts the affected quantity bucket(s) — both in one DB transaction, so the audit trail and the balances can never diverge. This is the phase where the atomic `updateMany`/`$transaction` pattern (deferred since Phase 4) becomes mandatory: concurrent decrements on one shelf must not oversell.
 
-**In scope:** the inventory-transaction engine (`InventoryService.record`), the 17 transaction types and their bucket effects, a `damagedQuantity` column, the nested record/read endpoints, 2 permissions, one migration.
+**A modeling change lands here too:** the live balances split out of `CompanyStoreProduct` into a **1:1 `CompanyStoreProductStock` table** — separating the *hot, high-write fact* (the running balance) from the *cold, slowly-changing dimension* (the placement's product/target/config). See §2 #1 and §3.
 
-**Out of scope (later phases):** `reservedQuantity` movement (reservations phase), and order/audit/reservation *sources* that will *call* this engine. The engine is designed to accept an optional `source` so those phases reuse it; Phase 6's manual endpoint passes none.
+**In scope:** the stock-table split + a light Phase 5 retrofit; the inventory-transaction engine (`InventoryService.record`); the 17 transaction types and their bucket effects; the nested record/read endpoints; 2 permissions; one migration.
+
+**Out of scope (later phases):** `reservedQuantity` movement (reservations phase), and order/audit/reservation *sources* that will *call* this engine. The engine takes an optional `source` so those phases reuse it; Phase 6's manual endpoint passes none.
 
 ## 2. Key Decisions
 
 | # | Decision | Choice | Rationale |
 |---|---|---|---|
-| 1 | Balance model | **Four buckets** on a placement: `currentQuantity` (sellable) + `reservedQuantity` + `sampleQuantity` + `damagedQuantity` = total physical on-hand | Each bucket is a *state* a unit can be in; the sum is the physical count. Add `damagedQuantity` so damaged stock has a home and `current` stays "sellable". |
-| 2 | Ledger + balance | `InventoryTransaction` is an **append-only ledger**; the bucket columns are the **running balance**. Every movement writes one ledger row **and** the balance delta, **atomically** | Immutable audit history; the balance is the ledger's running total. Both-or-neither = no drift. |
-| 3 | Atomicity | `prisma.$transaction` wrapping a **guarded conditional `updateMany`** per decrement + the ledger insert | The `where: { <field>: { gte: q } }` guard makes check-and-decrement one statement → no oversell under concurrency. |
-| 4 | Negative stock | **Hard block → 409** | A decrement whose guarded `updateMany` touches 0 rows means insufficient stock. Race-safe, no negatives. |
-| 5 | ADJUSTMENT | **Set current to the counted total** (absolute); engine computes the delta | Matches a physical stock-take; reused by the later AUDIT source. |
-| 6 | Type effects | 17 types → external (±total) / internal-transfer (`SAMPLE_ALLOCATION`, `BREAKAGE`) / `ADJUSTMENT`; driven by a data map | The engine is type-agnostic; a lookup table holds the domain. |
-| 7 | API shape | **Nested** under the placement: `/corners/:cornerId/products/:placementId/transactions` | Corner-scoping + placement resolution fall out of the path; consistent with Phase 5. |
-| 8 | Auth | Through the corner via `assertWorksCorner` (writes) / `findOne` (reads) | Same model as placements — OWNER/ADMIN any · MANAGER managed · STAFF assigned. A floor staffer records sales/restocks. |
-| 9 | Immutability | Ledger is **create + read only** (no update/delete) | You correct a mistake by posting a compensating transaction, never by editing history. |
-| 10 | Reusable engine | `InventoryService.record(caller, cornerId, placementId, dto, source?)` takes an optional `source` (`{ type, id }`) | Orders/audits/reservations will call it later with a `sourceType`/`sourceId`; the manual endpoint passes none. |
+| 1 | **Balance storage** | **Split** the four balances into a **1:1 `CompanyStoreProductStock`** table (PK = FK = `companyStoreProductId`); `CompanyStoreProduct` keeps only config | Separates the hot mutable *fact* (written on every movement) from the cold *dimension*. Narrower hot rows → less WAL/MVCC-bloat per write, cache-stable metadata reads, independently tunable. It's also the natural pairing: ledger = the log, stock table = its materialized running total. |
+| 2 | Buckets | `currentQuantity` (sellable) + `reservedQuantity` + `sampleQuantity` + `damagedQuantity` = total physical on-hand | Each bucket is a *state* a unit can be in; the sum is the physical count. Add `damagedQuantity` so damaged stock has a home and `current` stays "sellable". |
+| 3 | Ledger + balance | `InventoryTransaction` is an **append-only ledger**; the stock row is the **running balance**. Every movement writes one ledger row **and** the balance delta, **atomically** | Immutable audit history; the balance is the ledger's running total. Both-or-neither = no drift. |
+| 4 | Atomicity | `prisma.$transaction` wrapping a **guarded conditional `updateMany`** per decrement + the ledger insert | The `where: { <field>: { gte: q } }` guard makes check-and-decrement one statement → no oversell under concurrency. |
+| 5 | Negative stock | **Hard block → 409** | A decrement whose guarded `updateMany` touches 0 rows means insufficient stock. Race-safe, no negatives. |
+| 6 | ADJUSTMENT | **Set current to the counted total** (absolute); engine computes the delta | Matches a physical stock-take; reused by the later AUDIT source. |
+| 7 | Type effects | 17 types → external (±total) / internal-transfer (`SAMPLE_ALLOCATION`, `BREAKAGE`) / `ADJUSTMENT`; driven by a data map | The engine is type-agnostic; a lookup table holds the domain. |
+| 8 | API shape | **Nested** under the placement: `/corners/:cornerId/products/:placementId/transactions` | Corner-scoping + placement resolution fall out of the path; consistent with Phase 5. |
+| 9 | Auth | Through the corner via `assertWorksCorner` (writes) / `findOne` (reads) | Same model as placements — OWNER/ADMIN any · MANAGER managed · STAFF assigned. A floor staffer records sales/restocks. |
+| 10 | Immutability | Ledger is **create + read only** (no update/delete) | You correct a mistake with a compensating transaction, never by editing history. |
+| 11 | Reusable engine | `InventoryService.record(caller, cornerId, placementId, dto, source?)` takes an optional `source` (`{ type, id }`) | Orders/audits/reservations will call it later with a `sourceType`/`sourceId`; the manual endpoint passes none. |
 
 ## 3. Data Model Changes (one migration)
 
-**(a) Add the damaged bucket to `CompanyStoreProduct`:**
+**(a) Split the balances out of `CompanyStoreProduct` into a 1:1 stock table.** The placement keeps its config (`targetStockQuantity` stays — it's a rarely-set planning value); the four live balances move to the new table, which gains `damagedQuantity`:
+
 ```prisma
-model CompanyStoreProduct {
-  // ... existing quantity buckets ...
-  damagedQuantity Int @default(0) @map("damaged_quantity")
+model CompanyStoreProduct {          // the DIMENSION (cold): identity + config
+  // id, companyStoreId, productId, isActive, description,
+  // targetStockQuantity, timestamps, deletedAt/deletedByUserId ... (unchanged)
+  // REMOVE: currentQuantity, reservedQuantity, sampleQuantity
+  stock CompanyStoreProductStock?    // 1:1
+}
+
+model CompanyStoreProductStock {     // the FACT (hot): the running balance
+  companyStoreProductId Int      @id @map("company_store_product_id")   // PK = FK → enforces 1:1
+  currentQuantity       Int      @default(0) @map("current_quantity")
+  reservedQuantity      Int      @default(0) @map("reserved_quantity")
+  sampleQuantity        Int      @default(0) @map("sample_quantity")
+  damagedQuantity       Int      @default(0) @map("damaged_quantity")
+  updatedAt             DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  companyStoreProduct CompanyStoreProduct @relation(fields: [companyStoreProductId], references: [id])
+  @@map("company_store_product_stocks")
 }
 ```
+`InventoryTransaction` is unchanged — it still references the **placement** (`companyStoreProductId`); the balance write targets the stock row (1:1 by that same id). The three moved columns carried no meaningful data (Phase 5 never populated live quantities), so on the dev DB a `migrate reset` regenerates cleanly.
 
 **(b) Extend `InventoryTransactionType`** (14 → 17: add `CUSTOMER_RETURN`, `CUSTOMER_DAMAGED_RETURN`, `BREAKAGE`), documented per value:
 ```prisma
@@ -80,11 +99,17 @@ enum InventoryTransactionType {
 }
 ```
 
-Both changes are additive (new nullable-defaulted column; new enum values) → clean migration, no backfill. `InventoryTransaction` itself already has every field we need (`quantity`, `quantityBefore`, `quantityAfter`, `createdByUserId`, `sourceType`, `sourceId`).
+## 3a. Phase 5 Retrofit (part of this phase)
+
+Splitting the balances ripples into the placements module — small, contained changes:
+- **`PlacementsService.create`** (new placement): create the 1:1 stock row (zeroed) alongside the placement, via a nested create — `data: { ...fields, companyStoreId, productId, stock: { create: {} } }`.
+- **Revive-on-replace:** a revived (previously soft-deleted) placement already has its stock row — leave it as-is (don't recreate/reset). *(Placement soft-delete does not zero stock today; a future refinement could. Out of scope here.)*
+- **`PlacementsService.findAll`/`findOne`:** `include: { stock: true }` so the API keeps returning the quantities (now on the nested `stock` object). Additive to the response shape.
+- Phase 5's placement unit/e2e assertions get a light touch-up for the moved fields.
 
 ## 4. Transaction Effect Map
 
-The engine reads a static map `type → effect`. An **effect** is either a set of signed bucket deltas, or an absolute set.
+The engine reads a static map `type → effect`. An **effect** is either a set of signed bucket deltas, or an absolute set. All fields live on the **stock** row.
 
 | Type | Effect | family |
 |---|---|---|
@@ -118,27 +143,31 @@ record(caller, cornerId, placementId, dto, source?):
   validate dto.quantity (≥ 1 for movements; ≥ 0 for ADJUSTMENT)
 
   return prisma.$transaction(async tx => {
-    read the placement's affected bucket value(s) for before/after
+    const stock = await tx.companyStoreProductStock.findUnique({ where: { companyStoreProductId: placementId } })
+    // before/after come from `stock[effect.primary]`
     for each decrement delta:
-      const { count } = tx.companyStoreProduct.updateMany({
-        where: { id: placementId, [field]: { gte: q } },
+      const { count } = await tx.companyStoreProductStock.updateMany({
+        where: { companyStoreProductId: placementId, [field]: { gte: q } },
         data:  { [field]: { decrement: q } },
       })
       if (count === 0) throw new ConflictException('Insufficient stock')   // 409
     for each increment delta:
-      tx.companyStoreProduct.update({ where: { id: placementId }, data: { [field]: { increment: q } } })
+      await tx.companyStoreProductStock.update({
+        where: { companyStoreProductId: placementId }, data: { [field]: { increment: q } } })
     if ADJUSTMENT:
-      before = placement.currentQuantity; after = q
-      tx.companyStoreProduct.update({ where: { id: placementId }, data: { currentQuantity: q } })
-    insert InventoryTransaction { companyStoreProductId: placementId, transactionType, quantity,
-        quantityBefore, quantityAfter, remarks, createdByUserId: caller.id,
-        sourceType: source?.type ?? null, sourceId: source?.id ?? null }
+      before = stock.currentQuantity; after = q
+      await tx.companyStoreProductStock.update({
+        where: { companyStoreProductId: placementId }, data: { currentQuantity: q } })
+    return tx.inventoryTransaction.create({ data: {
+      companyStoreProductId: placementId, transactionType, quantity,
+      quantityBefore, quantityAfter, remarks, createdByUserId: caller.id,
+      sourceType: source?.type ?? null, sourceId: source?.id ?? null } })
   })
 ```
 
 - The **guarded `updateMany`** is what prevents oversell: the `gte: q` predicate and the decrement happen in one atomic statement, so two concurrent `SALE`s of the last unit can't both succeed — the second sees `count === 0` → 409.
 - Everything runs inside `$transaction`, so the ledger row and the balance change commit together or not at all.
-- `quantityBefore`/`quantityAfter` record the **primary** bucket's value around the change (audit trail).
+- `quantityBefore`/`quantityAfter` record the **primary** bucket's value around the change.
 
 ## 6. Module Structure
 
@@ -156,7 +185,7 @@ Nested under the placement (`cornerId` UUID → `ParseUUIDPipe`; `placementId` i
 - `POST /corners/:cornerId/products/:placementId/transactions` (`transactions.create`) — body `{ transactionType, quantity, remarks? }`; records a movement, returns the created transaction. → 409 on insufficient stock.
 - `GET /corners/:cornerId/products/:placementId/transactions` (`transactions.read`) — the placement's ledger, newest first.
 
-The current balances are already visible via the Phase 5 `GET /corners/:cornerId/products/:placementId` (the placement row carries `current`/`sample`/`damaged`/`reserved`), so no separate balance endpoint.
+Current balances are visible via the Phase 5 `GET /corners/:cornerId/products/:placementId` (now with `include: { stock }`), so no separate balance endpoint.
 
 `CreateTransactionDto`: `@IsEnum(InventoryTransactionType) transactionType`; `@IsInt() @Min(0) quantity`; `@IsOptional() @IsString() remarks`. (Service rejects `quantity < 1` for non-`ADJUSTMENT` types.)
 
@@ -188,13 +217,14 @@ Transactions mutate stock, so they use the **write** guard: `corners.assertWorks
 
 ## 11. Testing
 
-- **Unit (`InventoryService`, mocked `$transaction`/Prisma + `CornersService`):** each effect family (current in/out, sample, damaged, the two cross-field transfers, ADJUSTMENT absolute); the guarded decrement → 409 when the conditional `updateMany` returns `count 0`; ledger row fields (type, quantity, before/after, source null); `quantity < 1` rejection; placement 404. Verify decrements use the `gte` guard, not a read-then-write.
+- **Phase 5 retrofit:** placement `create` also creates a zeroed stock row; `findOne`/`findAll` include `stock`. Update the existing placement specs for the moved fields.
+- **Unit (`InventoryService`, mocked `$transaction`/Prisma + `CornersService`):** each effect family (current in/out, sample, damaged, the two cross-field transfers, ADJUSTMENT absolute); the guarded decrement → 409 when the conditional `updateMany` on the stock table returns `count 0`; ledger row fields (type, quantity, before/after, source null); `quantity < 1` rejection; placement 404. Verify decrements use the `gte` guard, not a read-then-write.
 - **`inventory-effects.ts`:** a table test asserting every `InventoryTransactionType` has an effect (no unmapped type).
-- **e2e (`inventory.e2e-spec.ts`):** RESTOCK raises `current`; SALE lowers it; **overselling → 409** and leaves the balance unchanged; ADJUSTMENT sets `current` to a count; BREAKAGE moves current→damaged (total unchanged); a STAFF member assigned to the corner can record a SALE; a foreign MANAGER is 403; the ledger `GET` lists the history; cross-tenant placement → 404.
+- **e2e (`inventory.e2e-spec.ts`):** RESTOCK raises `current`; SALE lowers it; **overselling → 409** with the balance unchanged; ADJUSTMENT sets `current` to a count; BREAKAGE moves current→damaged (total unchanged); a STAFF member assigned to the corner records a SALE; a foreign MANAGER is 403; the ledger `GET` lists history; cross-tenant placement → 404.
 
 ## 12. Open Items
 
-- **Reservations phase:** moves `current ↔ reserved` (a `current → reserved` internal transfer) and will call `record` with `sourceType: RESERVATION`.
+- **Reservations phase:** moves `current ↔ reserved` (a `current → reserved` internal transfer) and calls `record` with `sourceType: RESERVATION`.
 - **Orders / audits phases:** create transactions with `sourceType: ORDER`/`AUDIT` (audits drive `ADJUSTMENT`s from a count).
-- Per-bucket `ADJUSTMENT` (e.g. correcting a sample or damaged count) is deferred — Phase 6 `ADJUSTMENT` targets `current` only.
-- A future `DAMAGE`-style stock-take for the damaged bucket, if a real need appears.
+- Per-bucket `ADJUSTMENT` (correcting a sample/damaged count) is deferred — Phase 6 `ADJUSTMENT` targets `current` only.
+- Zeroing stock when a placement is soft-deleted (so a revive starts clean) is a future refinement.
