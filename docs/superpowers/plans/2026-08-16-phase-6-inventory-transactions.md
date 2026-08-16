@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- **Balances live on `CompanyStoreProductStock`** (1:1, PK = FK = `companyStoreProductId`): `currentQuantity`, `reservedQuantity`, `sampleQuantity`, `damagedQuantity`. `CompanyStoreProduct` keeps only config (`targetStockQuantity`, `isActive`, `description`).
+- **Target + balances live on `CompanyStoreProductStock`** (1:1, PK = FK = `companyStoreProductId`): `targetStockQuantity`, `currentQuantity`, `reservedQuantity`, `sampleQuantity`, `damagedQuantity`. `CompanyStoreProduct` keeps only identity + config (`isActive`, `description`).
 - **Atomic write:** `prisma.$transaction`; every decrement is a **guarded `updateMany`** (`where: { companyStoreProductId, [field]: { gte: q } }`) → `count === 0` throws **409**. Ledger insert is in the same transaction.
 - **ADJUSTMENT** sets `currentQuantity` to the entered value (absolute); every other type is a signed delta (`q ≥ 1`, else 400).
 - **17 types** driven by the `EFFECTS` map; `reservedQuantity` is untouched this phase.
@@ -38,17 +38,19 @@
 
 ```prisma
 model CompanyStoreProduct {
-  // ... keep: id, companyStoreId, productId, isActive, description, targetStockQuantity,
+  // ... keep: id, companyStoreId, productId, isActive, description,
   //           createdAt, updatedAt, deletedAt, deletedByUserId, relations, indexes ...
-  // REMOVE these three lines:
-  //   sampleQuantity   Int @default(0) @map("sample_quantity")
-  //   reservedQuantity Int @default(0) @map("reserved_quantity")
-  //   currentQuantity  Int @default(0) @map("current_quantity")
+  // REMOVE these four lines:
+  //   targetStockQuantity Int @default(0) @map("target_stock_quantity")
+  //   sampleQuantity      Int @default(0) @map("sample_quantity")
+  //   reservedQuantity    Int @default(0) @map("reserved_quantity")
+  //   currentQuantity     Int @default(0) @map("current_quantity")
   stock CompanyStoreProductStock?
 }
 
 model CompanyStoreProductStock {
   companyStoreProductId Int      @id @map("company_store_product_id")
+  targetStockQuantity   Int      @default(0) @map("target_stock_quantity")
   currentQuantity       Int      @default(0) @map("current_quantity")
   reservedQuantity      Int      @default(0) @map("reserved_quantity")
   sampleQuantity        Int      @default(0) @map("sample_quantity")
@@ -81,17 +83,44 @@ model CompanyStoreProductStock {
 ## Task 2: Phase 5 retrofit — placements create the stock row, reads include it
 
 **Files:**
-- Modify: `src/placements/placements.service.ts` (create nested stock; reads `include: { stock }`)
+- Modify: `src/placements/placements.service.ts` (create/update/revive route `targetStockQuantity` to nested stock; reads `include: { stock }`)
 - Test: `src/placements/placements.service.spec.ts` (update moved-field assertions)
 
 **Interfaces (Consumes):** `CompanyStoreProductStock` from Task 1.
 
-- [ ] **Step 1: Teach + edit `create`** — the insert branch nested-creates the zeroed stock row (the revive branch is unchanged — a revived placement already has its stock row):
+- [ ] **Step 1: Edit `create`** — `targetStockQuantity` now lives on the stock row, so split it out of `fields` and route it through the nested `stock` (both the insert and the revive branch):
 
 ```ts
-return this.prisma.companyStoreProduct.create({
-  data: { ...fields, companyStoreId: cornerId, productId, stock: { create: {} } },
+const { productId, targetStockQuantity, ...fields } = dto;   // fields = { isActive?, description? }
+// ... product validation + `existing` lookup unchanged ...
+if (existing)   // revive: update the existing stock row's target
+  return this.prisma.companyStoreProduct.update({
+    where: { id: existing.id },
+    data: { ...fields, deletedAt: null, deletedByUserId: null,
+      stock: { update: { targetStockQuantity: targetStockQuantity ?? 0 } } },
+  });
+return this.prisma.companyStoreProduct.create({   // new: create the stock row with the target
+  data: { ...fields, companyStoreId: cornerId, productId,
+    stock: { create: { targetStockQuantity: targetStockQuantity ?? 0 } } },
 });
+```
+
+- [ ] **Step 1b: Edit `update`** — route `targetStockQuantity` to the nested stock (only when present):
+
+```ts
+async update(caller: AuthUser, cornerId: string, placementId: number, dto: UpdatePlacementDto) {
+  await this.corners.assertWorksCorner(caller, cornerId);
+  await this.getPlacement(cornerId, placementId);
+  const { targetStockQuantity, ...fields } = dto;
+  return this.prisma.companyStoreProduct.update({
+    where: { id: placementId },
+    data: {
+      ...fields,
+      ...(targetStockQuantity !== undefined ? { stock: { update: { targetStockQuantity } } } : {}),
+    },
+    include: { stock: true },
+  });
+}
 ```
 
 - [ ] **Step 2: Edit the reads** — `findAll` and the private `getPlacement` add `include: { stock: true }` so the API returns quantities:
@@ -109,12 +138,12 @@ const placement = await this.prisma.companyStoreProduct.findFirst({
 });
 ```
 
-- [ ] **Step 3: Update the placements spec** — the create test's expected `data` now carries `stock: { create: {} }`, and the `findOne` lookup carries `include: { stock: true }`:
+- [ ] **Step 3: Update the placements spec** — the create test sends `{ productId: 'prod-1', targetStockQuantity: 5 }`, so `data` carries the nested stock create; `findOne` carries the `include`:
 
 ```ts
 // create — "places a product ..." test:
 expect(prisma.companyStoreProduct.create).toHaveBeenCalledWith({
-  data: { targetStockQuantity: 5, companyStoreId: 'corner-1', productId: 'prod-1', stock: { create: {} } },
+  data: { companyStoreId: 'corner-1', productId: 'prod-1', stock: { create: { targetStockQuantity: 5 } } },
 });
 // findOne — "404s ... scoped" test:
 expect(prisma.companyStoreProduct.findFirst).toHaveBeenCalledWith({

@@ -33,18 +33,19 @@ Move **real stock** on a placement through a **single, centralized, atomic write
 
 ## 3. Data Model Changes (one migration)
 
-**(a) Split the balances out of `CompanyStoreProduct` into a 1:1 stock table.** The placement keeps its config (`targetStockQuantity` stays — it's a rarely-set planning value); the four live balances move to the new table, which gains `damagedQuantity`:
+**(a) Split all the numbers out of `CompanyStoreProduct` into a 1:1 stock table.** The placement becomes a pure junction/config record (`isActive`, `description`); the `targetStockQuantity` target **and** the four live balances (incl. new `damagedQuantity`) move to the new table:
 
 ```prisma
 model CompanyStoreProduct {          // the DIMENSION (cold): identity + config
   // id, companyStoreId, productId, isActive, description,
-  // targetStockQuantity, timestamps, deletedAt/deletedByUserId ... (unchanged)
-  // REMOVE: currentQuantity, reservedQuantity, sampleQuantity
+  // timestamps, deletedAt/deletedByUserId ... (unchanged)
+  // REMOVE: targetStockQuantity, currentQuantity, reservedQuantity, sampleQuantity
   stock CompanyStoreProductStock?    // 1:1
 }
 
-model CompanyStoreProductStock {     // the FACT (hot): the running balance
+model CompanyStoreProductStock {     // the FACT (hot): target + running balance
   companyStoreProductId Int      @id @map("company_store_product_id")   // PK = FK → enforces 1:1
+  targetStockQuantity   Int      @default(0) @map("target_stock_quantity")
   currentQuantity       Int      @default(0) @map("current_quantity")
   reservedQuantity      Int      @default(0) @map("reserved_quantity")
   sampleQuantity        Int      @default(0) @map("sample_quantity")
@@ -55,7 +56,7 @@ model CompanyStoreProductStock {     // the FACT (hot): the running balance
   @@map("company_store_product_stocks")
 }
 ```
-`InventoryTransaction` is unchanged — it still references the **placement** (`companyStoreProductId`); the balance write targets the stock row (1:1 by that same id). The three moved columns carried no meaningful data (Phase 5 never populated live quantities), so on the dev DB a `migrate reset` regenerates cleanly.
+`InventoryTransaction` is unchanged — it still references the **placement** (`companyStoreProductId`); the balance write targets the stock row (1:1 by that same id). The moved columns carried no meaningful data (Phase 5 never populated live quantities; `targetStockQuantity` was set on placements but the dev DB `migrate reset`s), so the migration is clean.
 
 **(b) Extend `InventoryTransactionType`** (14 → 17: add `CUSTOMER_RETURN`, `CUSTOMER_DAMAGED_RETURN`, `BREAKAGE`), documented per value:
 ```prisma
@@ -101,11 +102,12 @@ enum InventoryTransactionType {
 
 ## 3a. Phase 5 Retrofit (part of this phase)
 
-Splitting the balances ripples into the placements module — small, contained changes:
-- **`PlacementsService.create`** (new placement): create the 1:1 stock row (zeroed) alongside the placement, via a nested create — `data: { ...fields, companyStoreId, productId, stock: { create: {} } }`.
-- **Revive-on-replace:** a revived (previously soft-deleted) placement already has its stock row — leave it as-is (don't recreate/reset). *(Placement soft-delete does not zero stock today; a future refinement could. Out of scope here.)*
-- **`PlacementsService.findAll`/`findOne`:** `include: { stock: true }` so the API keeps returning the quantities (now on the nested `stock` object). Additive to the response shape.
-- Phase 5's placement unit/e2e assertions get a light touch-up for the moved fields.
+Splitting the numbers ripples into the placements module. `targetStockQuantity` now lives on the stock row, so it routes through the nested `stock` relation:
+- **`PlacementsService.create`** (new placement): nested-create the stock row with the target — `stock: { create: { targetStockQuantity: dto.targetStockQuantity ?? 0 } }`; placement `data` keeps only `isActive`/`description` + `companyStoreId`/`productId`.
+- **Revive-on-replace:** the soft-deleted placement already has its stock row — nested-`update` its target: `stock: { update: { targetStockQuantity: dto.targetStockQuantity ?? 0 } }`.
+- **`PlacementsService.update`:** route `targetStockQuantity` to `stock: { update: { targetStockQuantity } }` (only when present); other fields stay on the placement.
+- **`PlacementsService.findAll`/`findOne`:** `include: { stock: true }` so the API returns the target + balances (now on the nested `stock` object).
+- Phase 5's placement unit assertions get updated for the moved fields.
 
 ## 4. Transaction Effect Map
 
