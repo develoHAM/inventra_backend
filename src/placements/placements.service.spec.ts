@@ -67,9 +67,9 @@ describe('PlacementsService', () => {
       expect(products.findInCompany).toHaveBeenCalledWith('prod-1', 'company-1');
       expect(prisma.companyStoreProduct.create).toHaveBeenCalledWith({
         data: {
-          targetStockQuantity: 5,
           companyStoreId: 'corner-1',
           productId: 'prod-1',
+          stock: { create: { targetStockQuantity: 5 } },
         },
       });
     });
@@ -107,7 +107,11 @@ describe('PlacementsService', () => {
       expect(prisma.companyStoreProduct.create).not.toHaveBeenCalled();
       expect(prisma.companyStoreProduct.update).toHaveBeenCalledWith({
         where: { id: 9 },
-        data: { targetStockQuantity: 3, deletedAt: null, deletedByUserId: null },
+        data: {
+          deletedAt: null,
+          deletedByUserId: null,
+          stock: { update: { targetStockQuantity: 3 } },
+        },
       });
     });
   });
@@ -120,6 +124,27 @@ describe('PlacementsService', () => {
       );
       expect(prisma.companyStoreProduct.findFirst).toHaveBeenCalledWith({
         where: { id: 9, companyStoreId: 'corner-1', deletedAt: null },
+        include: { stock: true },
+      });
+    });
+  });
+
+  describe('update', () => {
+    it('routes targetStockQuantity to the nested stock update', async () => {
+      prisma.companyStoreProduct.findFirst.mockResolvedValue({
+        id: 9,
+        companyStoreId: 'corner-1',
+      });
+
+      await service.update(owner, 'corner-1', 9, {
+        targetStockQuantity: 20,
+        isActive: true,
+      } as any);
+
+      expect(prisma.companyStoreProduct.update).toHaveBeenCalledWith({
+        where: { id: 9 },
+        data: { isActive: true, stock: { update: { targetStockQuantity: 20 } } },
+        include: { stock: true },
       });
     });
   });

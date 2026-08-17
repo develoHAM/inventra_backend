@@ -22,6 +22,7 @@ export class PlacementsService {
   private async getPlacement(cornerId: string, placementId: number) {
     const placement = await this.prisma.companyStoreProduct.findFirst({
       where: { id: placementId, companyStoreId: cornerId, deletedAt: null },
+      include: { stock: true },
     });
     if (!placement) throw new NotFoundException('Placement not found');
     return placement;
@@ -29,7 +30,7 @@ export class PlacementsService {
 
   async create(caller: AuthUser, cornerId: string, dto: CreatePlacementDto) {
     const corner = await this.corners.assertWorksCorner(caller, cornerId); // 404/403
-    const { productId, ...fields } = dto;
+    const { productId, targetStockQuantity, ...fields } = dto;
 
     const product = await this.products.findInCompany(
       productId,
@@ -45,11 +46,25 @@ export class PlacementsService {
     if (existing)
       return this.prisma.companyStoreProduct.update({
         where: { id: existing.id },
-        data: { ...fields, deletedAt: null, deletedByUserId: null },
+        data: {
+          ...fields,
+          deletedAt: null,
+          deletedByUserId: null,
+          stock: {
+            update: {
+              targetStockQuantity: targetStockQuantity ?? 0,
+            },
+          },
+        },
       });
 
     return this.prisma.companyStoreProduct.create({
-      data: { ...fields, companyStoreId: cornerId, productId: productId },
+      data: {
+        ...fields,
+        companyStoreId: cornerId,
+        productId: productId,
+        stock: { create: { targetStockQuantity: targetStockQuantity ?? 0 } },
+      },
     });
   }
 
@@ -57,6 +72,7 @@ export class PlacementsService {
     await this.corners.findOne(caller, cornerId); // read scope → 404
     return this.prisma.companyStoreProduct.findMany({
       where: { companyStoreId: cornerId, deletedAt: null },
+      include: { stock: true },
     });
   }
 
@@ -73,9 +89,16 @@ export class PlacementsService {
   ) {
     await this.corners.assertWorksCorner(caller, cornerId); // write scope → 404/403
     await this.getPlacement(cornerId, placementId);
+    const { targetStockQuantity, ...fields } = dto;
     return this.prisma.companyStoreProduct.update({
       where: { id: placementId },
-      data: dto,
+      data: {
+        ...fields,
+        ...(targetStockQuantity !== undefined
+          ? { stock: { update: { targetStockQuantity: targetStockQuantity } } }
+          : {}),
+      },
+      include: { stock: true },
     });
   }
 
