@@ -14,9 +14,9 @@
 
 ## Global Constraints
 
-- **Target + balances live on `CompanyStoreProductStock`** (1:1, PK = FK = `companyStoreProductId`): `targetStockQuantity`, `currentQuantity`, `reservedQuantity`, `sampleQuantity`, `damagedQuantity`. `CompanyStoreProduct` keeps only identity + config (`isActive`, `description`).
+- **Target + balances live on `CompanyStoreProductStock`** (1:1, PK = FK = `companyStoreProductId`): `targetStockQuantity`, `availableQuantity`, `reservedQuantity`, `sampleQuantity`, `damagedQuantity`. `CompanyStoreProduct` keeps only identity + config (`isActive`, `description`).
 - **Atomic write:** `prisma.$transaction`; every decrement is a **guarded `updateMany`** (`where: { companyStoreProductId, [field]: { gte: q } }`) → `count === 0` throws **409**. Ledger insert is in the same transaction.
-- **ADJUSTMENT** sets `currentQuantity` to the entered value (absolute); every other type is a signed delta (`q ≥ 1`, else 400).
+- **ADJUSTMENT** sets `availableQuantity` to the entered value (absolute); every other type is a signed delta (`q ≥ 1`, else 400).
 - **17 types** driven by the `EFFECTS` map; `reservedQuantity` is untouched this phase.
 - **Auth:** writes → `corners.assertWorksCorner(caller, cornerId)`; reads → `corners.findOne`. Placement resolved scoped to `cornerId` + `deletedAt: null` → 404.
 - **Ledger is append-only:** create + read only.
@@ -44,14 +44,14 @@ model CompanyStoreProduct {
   //   targetStockQuantity Int @default(0) @map("target_stock_quantity")
   //   sampleQuantity      Int @default(0) @map("sample_quantity")
   //   reservedQuantity    Int @default(0) @map("reserved_quantity")
-  //   currentQuantity     Int @default(0) @map("current_quantity")
+  //   currentQuantity     Int @default(0) @map("current_quantity")   (renamed to availableQuantity on the new table)
   stock CompanyStoreProductStock?
 }
 
 model CompanyStoreProductStock {
   companyStoreProductId Int      @id @map("company_store_product_id")
   targetStockQuantity   Int      @default(0) @map("target_stock_quantity")
-  currentQuantity       Int      @default(0) @map("current_quantity")
+  availableQuantity     Int      @default(0) @map("available_quantity")
   reservedQuantity      Int      @default(0) @map("reserved_quantity")
   sampleQuantity        Int      @default(0) @map("sample_quantity")
   damagedQuantity       Int      @default(0) @map("damaged_quantity")
@@ -180,20 +180,20 @@ describe('EFFECTS', () => {
 
   it('SALE decrements current', () => {
     expect(EFFECTS.SALE).toEqual({
-      kind: 'delta', deltas: [{ field: 'currentQuantity', sign: -1 }], primary: 'currentQuantity',
+      kind: 'delta', deltas: [{ field: 'availableQuantity', sign: -1 }], primary: 'availableQuantity',
     });
   });
 
   it('BREAKAGE moves current -> damaged (primary = current)', () => {
     expect(EFFECTS.BREAKAGE).toEqual({
       kind: 'delta',
-      deltas: [{ field: 'currentQuantity', sign: -1 }, { field: 'damagedQuantity', sign: 1 }],
-      primary: 'currentQuantity',
+      deltas: [{ field: 'availableQuantity', sign: -1 }, { field: 'damagedQuantity', sign: 1 }],
+      primary: 'availableQuantity',
     });
   });
 
   it('ADJUSTMENT is an absolute set on current', () => {
-    expect(EFFECTS.ADJUSTMENT).toEqual({ kind: 'set', field: 'currentQuantity' });
+    expect(EFFECTS.ADJUSTMENT).toEqual({ kind: 'set', field: 'availableQuantity' });
   });
 });
 ```
@@ -204,12 +204,12 @@ describe('EFFECTS', () => {
 ```ts
 import { InventoryTransactionType } from '../generated/prisma/enums';
 
-export type Bucket = 'currentQuantity' | 'sampleQuantity' | 'damagedQuantity';
+export type Bucket = 'availableQuantity' | 'sampleQuantity' | 'damagedQuantity';
 export type Effect =
   | { kind: 'delta'; deltas: { field: Bucket; sign: 1 | -1 }[]; primary: Bucket }
-  | { kind: 'set'; field: 'currentQuantity' };
+  | { kind: 'set'; field: 'availableQuantity' };
 
-const cur: Bucket = 'currentQuantity';
+const cur: Bucket = 'availableQuantity';
 const smp: Bucket = 'sampleQuantity';
 const dmg: Bucket = 'damagedQuantity';
 const inc = (f: Bucket): Effect => ({ kind: 'delta', deltas: [{ field: f, sign: 1 }], primary: f });
@@ -287,7 +287,7 @@ describe('InventoryService', () => {
     tx = {
       companyStoreProductStock: {
         findUnique: jest.fn().mockResolvedValue({
-          companyStoreProductId: 7, currentQuantity: 5, sampleQuantity: 0, damagedQuantity: 0,
+          companyStoreProductId: 7, availableQuantity: 5, sampleQuantity: 0, damagedQuantity: 0,
         }),
         update: jest.fn().mockResolvedValue({}),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -311,8 +311,8 @@ describe('InventoryService', () => {
 
     expect(corners.assertWorksCorner).toHaveBeenCalledWith(owner, 'corner-1');
     expect(tx.companyStoreProductStock.updateMany).toHaveBeenCalledWith({
-      where: { companyStoreProductId: 7, currentQuantity: { gte: 2 } },
-      data: { currentQuantity: { decrement: 2 } },
+      where: { companyStoreProductId: 7, availableQuantity: { gte: 2 } },
+      data: { availableQuantity: { decrement: 2 } },
     });
     expect(tx.inventoryTransaction.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -335,7 +335,7 @@ describe('InventoryService', () => {
     await service.record(owner, 'corner-1', 7, { transactionType: 'RESTOCK', quantity: 4 } as any);
     expect(tx.companyStoreProductStock.update).toHaveBeenCalledWith({
       where: { companyStoreProductId: 7 },
-      data: { currentQuantity: { increment: 4 } },
+      data: { availableQuantity: { increment: 4 } },
     });
   });
 
@@ -343,7 +343,7 @@ describe('InventoryService', () => {
     await service.record(owner, 'corner-1', 7, { transactionType: 'ADJUSTMENT', quantity: 12 } as any);
     expect(tx.companyStoreProductStock.update).toHaveBeenCalledWith({
       where: { companyStoreProductId: 7 },
-      data: { currentQuantity: 12 },
+      data: { availableQuantity: 12 },
     });
     expect(tx.inventoryTransaction.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ quantityBefore: 5, quantityAfter: 12 }),
@@ -353,8 +353,8 @@ describe('InventoryService', () => {
   it('BREAKAGE decrements current (guarded) and increments damaged', async () => {
     await service.record(owner, 'corner-1', 7, { transactionType: 'BREAKAGE', quantity: 1 } as any);
     expect(tx.companyStoreProductStock.updateMany).toHaveBeenCalledWith({
-      where: { companyStoreProductId: 7, currentQuantity: { gte: 1 } },
-      data: { currentQuantity: { decrement: 1 } },
+      where: { companyStoreProductId: 7, availableQuantity: { gte: 1 } },
+      data: { availableQuantity: { decrement: 1 } },
     });
     expect(tx.companyStoreProductStock.update).toHaveBeenCalledWith({
       where: { companyStoreProductId: 7 },
@@ -426,11 +426,11 @@ export class InventoryService {
       let quantityAfter: number;
 
       if (effect.kind === 'set') {
-        quantityBefore = stock.currentQuantity;
+        quantityBefore = stock.availableQuantity;
         quantityAfter = q;
         await tx.companyStoreProductStock.update({
           where: { companyStoreProductId: placementId },
-          data: { currentQuantity: q },
+          data: { availableQuantity: q },
         });
       } else {
         quantityBefore = stock[effect.primary];
@@ -562,7 +562,7 @@ it('RESTOCK raises current; SALE lowers it; the ledger lists both', async () => 
   await request(http).post(base).set(...auth(ownerAccess)).send({ transactionType: 'RESTOCK', quantity: 10 }).expect(201);
   await request(http).post(base).set(...auth(ownerAccess)).send({ transactionType: 'SALE', quantity: 3 }).expect(201);
   const shelf = await request(http).get(`/corners/${cornerId}/products/${placementId}`).set(...auth(ownerAccess)).expect(200);
-  expect(shelf.body.stock.currentQuantity).toBe(7);
+  expect(shelf.body.stock.availableQuantity).toBe(7);
   const ledger = await request(http).get(base).set(...auth(ownerAccess)).expect(200);
   expect(ledger.body.length).toBe(2);
 });
@@ -570,19 +570,19 @@ it('RESTOCK raises current; SALE lowers it; the ledger lists both', async () => 
 it('overselling is 409 and leaves the balance unchanged', async () => {
   await request(http).post(base).set(...auth(ownerAccess)).send({ transactionType: 'SALE', quantity: 999 }).expect(409);
   const shelf = await request(http).get(`/corners/${cornerId}/products/${placementId}`).set(...auth(ownerAccess)).expect(200);
-  expect(shelf.body.stock.currentQuantity).toBe(7);
+  expect(shelf.body.stock.availableQuantity).toBe(7);
 });
 
 it('ADJUSTMENT sets current to the counted total', async () => {
   await request(http).post(base).set(...auth(ownerAccess)).send({ transactionType: 'ADJUSTMENT', quantity: 5 }).expect(201);
   const shelf = await request(http).get(`/corners/${cornerId}/products/${placementId}`).set(...auth(ownerAccess)).expect(200);
-  expect(shelf.body.stock.currentQuantity).toBe(5);
+  expect(shelf.body.stock.availableQuantity).toBe(5);
 });
 
 it('BREAKAGE moves current -> damaged (total unchanged)', async () => {
   await request(http).post(base).set(...auth(ownerAccess)).send({ transactionType: 'BREAKAGE', quantity: 2 }).expect(201);
   const shelf = await request(http).get(`/corners/${cornerId}/products/${placementId}`).set(...auth(ownerAccess)).expect(200);
-  expect(shelf.body.stock.currentQuantity).toBe(3);
+  expect(shelf.body.stock.availableQuantity).toBe(3);
   expect(shelf.body.stock.damagedQuantity).toBe(2);
 });
 

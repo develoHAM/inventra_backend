@@ -20,11 +20,11 @@ Move **real stock** on a placement through a **single, centralized, atomic write
 | # | Decision | Choice | Rationale |
 |---|---|---|---|
 | 1 | **Balance storage** | **Split** the four balances into a **1:1 `CompanyStoreProductStock`** table (PK = FK = `companyStoreProductId`); `CompanyStoreProduct` keeps only config | Separates the hot mutable *fact* (written on every movement) from the cold *dimension*. Narrower hot rows → less WAL/MVCC-bloat per write, cache-stable metadata reads, independently tunable. It's also the natural pairing: ledger = the log, stock table = its materialized running total. |
-| 2 | Buckets | `currentQuantity` (sellable) + `reservedQuantity` + `sampleQuantity` + `damagedQuantity` = total physical on-hand | Each bucket is a *state* a unit can be in; the sum is the physical count. Add `damagedQuantity` so damaged stock has a home and `current` stays "sellable". |
+| 2 | Buckets | `availableQuantity` (sellable) + `reservedQuantity` + `sampleQuantity` + `damagedQuantity` = total physical on-hand | Each bucket is a *state* a unit can be in; the sum is the physical count. Add `damagedQuantity` so damaged stock has a home and `current` stays "sellable". |
 | 3 | Ledger + balance | `InventoryTransaction` is an **append-only ledger**; the stock row is the **running balance**. Every movement writes one ledger row **and** the balance delta, **atomically** | Immutable audit history; the balance is the ledger's running total. Both-or-neither = no drift. |
 | 4 | Atomicity | `prisma.$transaction` wrapping a **guarded conditional `updateMany`** per decrement + the ledger insert | The `where: { <field>: { gte: q } }` guard makes check-and-decrement one statement → no oversell under concurrency. |
 | 5 | Negative stock | **Hard block → 409** | A decrement whose guarded `updateMany` touches 0 rows means insufficient stock. Race-safe, no negatives. |
-| 6 | ADJUSTMENT | **Set current to the counted total** (absolute); engine computes the delta | Matches a physical stock-take; reused by the later AUDIT source. |
+| 6 | ADJUSTMENT | **Set available to the counted total** (absolute); engine computes the delta | Matches a physical stock-take; reused by the later AUDIT source. |
 | 7 | Type effects | 17 types → external (±total) / internal-transfer (`SAMPLE_ALLOCATION`, `BREAKAGE`) / `ADJUSTMENT`; driven by a data map | The engine is type-agnostic; a lookup table holds the domain. |
 | 8 | API shape | **Nested** under the placement: `/corners/:cornerId/products/:placementId/transactions` | Corner-scoping + placement resolution fall out of the path; consistent with Phase 5. |
 | 9 | Auth | Through the corner via `assertWorksCorner` (writes) / `findOne` (reads) | Same model as placements — OWNER/ADMIN any · MANAGER managed · STAFF assigned. A floor staffer records sales/restocks. |
@@ -39,14 +39,14 @@ Move **real stock** on a placement through a **single, centralized, atomic write
 model CompanyStoreProduct {          // the DIMENSION (cold): identity + config
   // id, companyStoreId, productId, isActive, description,
   // timestamps, deletedAt/deletedByUserId ... (unchanged)
-  // REMOVE: targetStockQuantity, currentQuantity, reservedQuantity, sampleQuantity
+  // REMOVE: targetStockQuantity, currentQuantity, reservedQuantity, sampleQuantity  (renamed to availableQuantity on the new table)
   stock CompanyStoreProductStock?    // 1:1
 }
 
 model CompanyStoreProductStock {     // the FACT (hot): target + running balance
   companyStoreProductId Int      @id @map("company_store_product_id")   // PK = FK → enforces 1:1
   targetStockQuantity   Int      @default(0) @map("target_stock_quantity")
-  currentQuantity       Int      @default(0) @map("current_quantity")
+  availableQuantity     Int      @default(0) @map("available_quantity")
   reservedQuantity      Int      @default(0) @map("reserved_quantity")
   sampleQuantity        Int      @default(0) @map("sample_quantity")
   damagedQuantity       Int      @default(0) @map("damaged_quantity")
@@ -61,31 +61,31 @@ model CompanyStoreProductStock {     // the FACT (hot): target + running balance
 **(b) Extend `InventoryTransactionType`** (14 → 17: add `CUSTOMER_RETURN`, `CUSTOMER_DAMAGED_RETURN`, `BREAKAGE`), documented per value:
 ```prisma
 enum InventoryTransactionType {
-  /// First stock-in when a placement is stocked. current +q.
+  /// First stock-in when a placement is stocked. available +q.
   INITIAL_STOCK
-  /// Replenishment delivery from the supplier. current +q.
+  /// Replenishment delivery from the supplier. available +q.
   RESTOCK
-  /// Sellable stock received from another corner. current +q.
+  /// Sellable stock received from another corner. available +q.
   TRANSFER_IN
-  /// A customer returns a sellable item — back on the shelf. current +q.
+  /// A customer returns a sellable item — back on the shelf. available +q.
   CUSTOMER_RETURN
-  /// Sold to a customer. current -q.
+  /// Sold to a customer. available -q.
   SALE
-  /// Sellable stock sent to another corner. current -q.
+  /// Sellable stock sent to another corner. available -q.
   TRANSFER_OUT
-  /// The corner returns good stock to the supplier. current -q.
+  /// The corner returns good stock to the supplier. available -q.
   RETURN
-  /// Stock-take correction — sets current to the counted total (absolute).
+  /// Stock-take correction — sets available to the counted total (absolute).
   ADJUSTMENT
   /// A customer returns a damaged (non-sellable) item. damaged +q.
   CUSTOMER_DAMAGED_RETURN
-  /// Sellable stock found damaged on-site (breakage/spoilage). current -q, damaged +q.
+  /// Sellable stock found damaged on-site (breakage/spoilage). available -q, damaged +q.
   BREAKAGE
   /// Damaged stock thrown away. damaged -q.
   DAMAGED_DISPOSAL
   /// The corner returns damaged stock to the supplier. damaged -q.
   DAMAGED_RETURN
-  /// Sellable stock set aside as display/tester samples. current -q, sample +q.
+  /// Sellable stock set aside as display/tester samples. available -q, sample +q.
   SAMPLE_ALLOCATION
   /// Samples received from another corner. sample +q.
   SAMPLE_TRANSFER_IN
@@ -115,24 +115,24 @@ The engine reads a static map `type → effect`. An **effect** is either a set o
 
 | Type | Effect | family |
 |---|---|---|
-| `INITIAL_STOCK` `RESTOCK` `TRANSFER_IN` `CUSTOMER_RETURN` | current **+q** | external in |
-| `SALE` `TRANSFER_OUT` `RETURN` | current **−q** | external out |
+| `INITIAL_STOCK` `RESTOCK` `TRANSFER_IN` `CUSTOMER_RETURN` | available **+q** | external in |
+| `SALE` `TRANSFER_OUT` `RETURN` | available **−q** | external out |
 | `CUSTOMER_DAMAGED_RETURN` | damaged **+q** | external in |
 | `DAMAGED_DISPOSAL` `DAMAGED_RETURN` | damaged **−q** | external out |
 | `SAMPLE_TRANSFER_IN` | sample **+q** | external in |
 | `SAMPLE_TRANSFER_OUT` `SAMPLE_RETURN` `SAMPLE_DISPOSAL` | sample **−q** | external out |
-| `SAMPLE_ALLOCATION` | current **−q**, sample **+q** | internal transfer |
-| `BREAKAGE` | current **−q**, damaged **+q** | internal transfer |
-| `ADJUSTMENT` | current **:= q** (absolute) | set |
+| `SAMPLE_ALLOCATION` | available **−q**, sample **+q** | internal transfer |
+| `BREAKAGE` | available **−q**, damaged **+q** | internal transfer |
+| `ADJUSTMENT` | available **:= q** (absolute) | set |
 
 Shape (illustrative):
 ```ts
-type Bucket = 'currentQuantity' | 'sampleQuantity' | 'damagedQuantity';
+type Bucket = 'availableQuantity' | 'sampleQuantity' | 'damagedQuantity';
 type Effect =
   | { kind: 'delta'; deltas: { field: Bucket; sign: 1 | -1 }[]; primary: Bucket }
-  | { kind: 'set';   field: 'currentQuantity' };
+  | { kind: 'set';   field: 'availableQuantity' };
 ```
-`primary` is the bucket whose value the ledger records as `quantityBefore`/`quantityAfter` (for cross-field transfers it's `currentQuantity`, the source side).
+`primary` is the bucket whose value the ledger records as `quantityBefore`/`quantityAfter` (for cross-field transfers it's `availableQuantity`, the source side).
 
 ## 5. The Atomic Write (`InventoryService.record`)
 
@@ -157,9 +157,9 @@ record(caller, cornerId, placementId, dto, source?):
       await tx.companyStoreProductStock.update({
         where: { companyStoreProductId: placementId }, data: { [field]: { increment: q } } })
     if ADJUSTMENT:
-      before = stock.currentQuantity; after = q
+      before = stock.availableQuantity; after = q
       await tx.companyStoreProductStock.update({
-        where: { companyStoreProductId: placementId }, data: { currentQuantity: q } })
+        where: { companyStoreProductId: placementId }, data: { availableQuantity: q } })
     return tx.inventoryTransaction.create({ data: {
       companyStoreProductId: placementId, transactionType, quantity,
       quantityBefore, quantityAfter, remarks, createdByUserId: caller.id,
