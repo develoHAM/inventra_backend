@@ -59,6 +59,8 @@ const PERMISSIONS = [
   { code: 'placements.read', name: 'Read placements' },
   { code: 'placements.update', name: 'Update placements' },
   { code: 'placements.delete', name: 'Delete placements' },
+  { code: 'transactions.create', name: 'Create inventory transactions' },
+  { code: 'transactions.read', name: 'Read inventory transactions' },
 ];
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
@@ -89,6 +91,8 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'placements.read',
     'placements.update',
     'placements.delete',
+    'transactions.create',
+    'transactions.read',
   ],
   MANAGER: [
     'users.create',
@@ -112,6 +116,8 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'placements.read',
     'placements.update',
     'placements.delete',
+    'transactions.create',
+    'transactions.read',
   ],
   STAFF: [
     'users.read',
@@ -127,6 +133,8 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'placements.read',
     'placements.update',
     'placements.delete',
+    'transactions.create',
+    'transactions.read',
   ],
   // ADMIN intentionally omitted — its wildcard is handled in code, not via rows.
   // stores.{create,update,delete} → granted to NO role (ADMIN wildcard only)

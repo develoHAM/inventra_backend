@@ -300,10 +300,6 @@ model CompanyStoreProduct {
   productId           String   @map("product_id") @db.Uuid
   isActive            Boolean  @default(false) @map("is_active")
   description         String?  @db.Text
-  targetStockQuantity Int      @default(0) @map("target_stock_quantity")
-  sampleQuantity      Int      @default(0) @map("sample_quantity")
-  reservedQuantity    Int      @default(0) @map("reserved_quantity")
-  currentQuantity     Int      @default(0) @map("current_quantity")
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt           DateTime?   @map("deleted_at") @db.Timestamptz(6)
@@ -313,6 +309,7 @@ model CompanyStoreProduct {
   product         Product      @relation(fields: [productId], references: [id])
   deletedByUser   User?        @relation("CompanyStoreProductDeletedBy", fields: [deletedByUserId], references: [id])
 
+  stock                 CompanyStoreProductStock?
   orderItems            OrderItem[]
   inventoryAuditItems   InventoryAuditItem[]
   purchaseReservations  PurchaseReservation[]
@@ -324,19 +321,33 @@ model CompanyStoreProduct {
   @@map("company_store_products")
 }
 
-model Order {
-  id              String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  companyStoreId  String   @map("company_store_id") @db.Uuid
-  title           String   @db.VarChar(255)
-  description     String?  @db.Text
-  fileUrl         String?  @map("file_url") @db.VarChar(2048)
-  orderDate       DateTime @map("order_date") @db.Timestamptz(6)
-  createdByUserId String   @map("created_by_user_id") @db.Uuid
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+model CompanyStoreProductStock {
+  companyStoreProductId   Int         @id @map("company_store_product_id")
+  targetStockQuantity     Int         @default(0) @map("target_stock_quantity")
+  availableQuantity       Int         @default(0) @map("available_quantity")
+  reservedQuantity        Int         @default(0) @map("reserved_quantity")
+  sampleQuantity          Int         @default(0) @map("sample_quantity")
+  damagedQuantity         Int         @default(0) @map("damaged_quantity")
+  updatedAt               DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  
+  companyStoreProduct     CompanyStoreProduct @relation(fields: [companyStoreProductId], references: [id])
 
-  companyStore  CompanyStore @relation(fields: [companyStoreId], references: [id])
-  createdByUser User         @relation(fields: [createdByUserId], references: [id])
+  @@map("company_store_product_stocks")
+}
+
+model Order {
+  id              String      @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyStoreId  String      @map("company_store_id") @db.Uuid
+  title           String      @db.VarChar(255)
+  description     String?     @db.Text
+  fileUrl         String?     @map("file_url") @db.VarChar(2048)
+  orderDate       DateTime    @map("order_date") @db.Timestamptz(6)
+  createdByUserId String      @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  companyStore  CompanyStore  @relation(fields: [companyStoreId], references: [id])
+  createdByUser User          @relation(fields: [createdByUserId], references: [id])
   orderItems    OrderItem[]
 
   @@id([id, companyStoreId])
@@ -424,23 +435,44 @@ enum TransactionSourceType {
 }
 
 enum InventoryTransactionType {
+  /// First stock-in when a placement is stocked. available +q.
   INITIAL_STOCK
+  /// Replenishment delivery from the supplier. available +q.
   RESTOCK
+  /// Sellable stock received from another corner. available +q.
   TRANSFER_IN
-  TRANSFER_OUT
-  ADJUSTMENT
+  /// A customer returns a sellable item — back on the shelf. available +q.
+  CUSTOMER_RETURN
+  /// Sold to a customer. available -q.
   SALE
+  /// Sellable stock sent to another corner. available -q.
+  TRANSFER_OUT
+  /// The corner returns good stock to the supplier. available -q.
   RETURN
+  /// Stock-take correction — sets available to the counted total (absolute).
+  ADJUSTMENT
+  /// A customer returns a damaged (non-sellable) item. damaged +q.
+  CUSTOMER_DAMAGED_RETURN
+  /// Sellable stock found damaged on-site (breakage/spoilage). available -q, damaged +q.
+  BREAKAGE
+  /// Damaged stock thrown away. damaged -q.
   DAMAGED_DISPOSAL
+  /// The corner returns damaged stock to the supplier. damaged -q.
   DAMAGED_RETURN
+  /// Sellable stock set aside as display/tester samples. available -q, sample +q.
   SAMPLE_ALLOCATION
+  /// Samples received from another corner. sample +q.
   SAMPLE_TRANSFER_IN
+  /// Samples sent to another corner. sample -q.
   SAMPLE_TRANSFER_OUT
+  /// The corner returns a sample to the supplier. sample -q.
   SAMPLE_RETURN
+  /// A sample is used up or thrown away. sample -q.
   SAMPLE_DISPOSAL
 
   @@map("inventory_transaction_type")
 }
+
 
 model PurchaseReservation {
   id                    String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
