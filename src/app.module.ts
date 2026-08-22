@@ -13,6 +13,7 @@ import { ProductsModule } from './products/products.module';
 import { StoresModule } from './stores/stores.module';
 import { CornersModule } from './corners/corners.module';
 import { PlacementsModule } from './placements/placements.module';
+import { InventoryModule } from './inventory/inventory.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { PlacementsModule } from './placements/placements.module';
     StoresModule,
     CornersModule,
     PlacementsModule,
+    InventoryModule,
   ],
   controllers: [AppController],
   providers: [AppService],
