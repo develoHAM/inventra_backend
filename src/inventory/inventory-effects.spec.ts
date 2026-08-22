@@ -12,7 +12,7 @@ describe('EFFECTS', () => {
     expect(EFFECTS.SALE).toEqual({
       kind: 'delta',
       deltas: [{ field: 'availableQuantity', sign: -1 }],
-      primary: 'availableQuantity',
+      primaryBucket: 'availableQuantity',
     });
   });
 
@@ -23,7 +23,7 @@ describe('EFFECTS', () => {
         { field: 'availableQuantity', sign: -1 },
         { field: 'damagedQuantity', sign: 1 },
       ],
-      primary: 'availableQuantity',
+      primaryBucket: 'availableQuantity',
     });
   });
 
@@ -34,7 +34,7 @@ describe('EFFECTS', () => {
         { field: 'availableQuantity', sign: -1 },
         { field: 'sampleQuantity', sign: 1 },
       ],
-      primary: 'availableQuantity',
+      primaryBucket: 'availableQuantity',
     });
   });
 
@@ -47,6 +47,14 @@ describe('EFFECTS', () => {
       const eff = EFFECTS[t];
       expect(eff.kind).toBe('delta');
       if (eff.kind === 'delta') expect(eff.deltas[0].sign).toBe(-1);
+    }
+  });
+
+  it('every delta effect lists its primaryBucket among its deltas', () => {
+    for (const effect of Object.values(EFFECTS)) {
+      if (effect.kind === 'delta') {
+        expect(effect.deltas.some((delta) => delta.field === effect.primaryBucket)).toBe(true);
+      }
     }
   });
 });

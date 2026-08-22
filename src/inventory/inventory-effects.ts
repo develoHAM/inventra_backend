@@ -5,56 +5,56 @@ export type Effect =
   | {
       kind: 'delta';
       deltas: { field: Bucket; sign: 1 | -1 }[];
-      primary: Bucket;
+      primaryBucket: Bucket;
     }
   | { kind: 'set'; field: 'availableQuantity' };
 
-const avail: Bucket = 'availableQuantity';
-const smp: Bucket = 'sampleQuantity';
-const dmg: Bucket = 'damagedQuantity';
+const availableQuantity: Bucket = 'availableQuantity';
+const sampleQuantity: Bucket = 'sampleQuantity';
+const damagedQuantity: Bucket = 'damagedQuantity';
 
 const inc = (f: Bucket): Effect => ({
   kind: 'delta',
   deltas: [{ field: f, sign: 1 }],
-  primary: f,
+  primaryBucket: f,
 });
 
 const dec = (f: Bucket): Effect => ({
   kind: 'delta',
   deltas: [{ field: f, sign: -1 }],
-  primary: f,
+  primaryBucket: f,
 });
 
 export const EFFECTS: Record<InventoryTransactionType, Effect> = {
-  INITIAL_STOCK: inc(avail),
-  RESTOCK: inc(avail),
-  TRANSFER_IN: inc(avail),
-  CUSTOMER_RETURN: inc(avail),
-  SALE: dec(avail),
-  TRANSFER_OUT: dec(avail),
-  RETURN: dec(avail),
-  ADJUSTMENT: { kind: 'set', field: avail },
-  CUSTOMER_DAMAGED_RETURN: inc(dmg),
+  INITIAL_STOCK: inc(availableQuantity),
+  RESTOCK: inc(availableQuantity),
+  TRANSFER_IN: inc(availableQuantity),
+  CUSTOMER_RETURN: inc(availableQuantity),
+  SALE: dec(availableQuantity),
+  TRANSFER_OUT: dec(availableQuantity),
+  RETURN: dec(availableQuantity),
+  ADJUSTMENT: { kind: 'set', field: availableQuantity },
+  CUSTOMER_DAMAGED_RETURN: inc(damagedQuantity),
   BREAKAGE: {
     kind: 'delta',
     deltas: [
-      { field: avail, sign: -1 },
-      { field: dmg, sign: 1 },
+      { field: availableQuantity, sign: -1 },
+      { field: damagedQuantity, sign: 1 },
     ],
-    primary: avail,
+    primaryBucket: availableQuantity,
   },
-  DAMAGED_DISPOSAL: dec(dmg),
-  DAMAGED_RETURN: dec(dmg),
+  DAMAGED_DISPOSAL: dec(damagedQuantity),
+  DAMAGED_RETURN: dec(damagedQuantity),
   SAMPLE_ALLOCATION: {
     kind: 'delta',
     deltas: [
-      { field: avail, sign: -1 },
-      { field: smp, sign: 1 },
+      { field: availableQuantity, sign: -1 },
+      { field: sampleQuantity, sign: 1 },
     ],
-    primary: avail,
+    primaryBucket: availableQuantity,
   },
-  SAMPLE_TRANSFER_IN: inc(smp),
-  SAMPLE_TRANSFER_OUT: dec(smp),
-  SAMPLE_RETURN: dec(smp),
-  SAMPLE_DISPOSAL: dec(smp),
+  SAMPLE_TRANSFER_IN: inc(sampleQuantity),
+  SAMPLE_TRANSFER_OUT: dec(sampleQuantity),
+  SAMPLE_RETURN: dec(sampleQuantity),
+  SAMPLE_DISPOSAL: dec(sampleQuantity),
 };
