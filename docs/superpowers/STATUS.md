@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-08-15.
+> Last updated: 2026-08-22.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -18,19 +18,21 @@
 | 3 | Product catalog (categories, brands, products) | ✅ complete (blogged) |
 | 4 | Stores & Corners (venues + company corners, manager/staff assignment) | ✅ complete (blogged) |
 | 5 | **Product placement** (`CompanyStoreProduct` — products on a corner's shelf) | ✅ complete (blogged) |
-| 6+ | Inventory transactions, orders, audits, reservations | ⏳ not started |
+| 6 | **Inventory transactions** (ledger + running balance, one atomic write) | ✅ complete |
+| 7+ | Orders, audits, reservations | ⏳ not started |
 
-## Where we are right now — Phase 5 complete (product placement)
+## Where we are right now — Phase 6 complete (inventory transactions)
 
-Phases 0–5 are done, tested, and blogged. Phase 5 connected the catalog to the corners via `CompanyStoreProduct`:
-- **Placement CRUD** nested under the corner — `GET/POST/PATCH/DELETE /corners/:cornerId/products`.
-- **Ownership through the corner** — placements have no `companyId`; reads resolve via `CornersService.findOne`, writes via `assertWorksCorner`. ADMIN targets a tenant via the URL path (no body `companyId`).
-- **Auth** — OWNER/ADMIN any · MANAGER on corners they manage · **STAFF on the corner they're assigned to** (`AuthUser.companyStoreId`, the lone-staffer delivery case). Two sibling helpers: `assertManages` (roster) vs `assertWorksCorner` (shelf).
-- **Revive-on-replace** — create reconciles the `(product, corner)` unique constraint (which ignores `deletedAt`) by un-deleting a soft-deleted row (409 if live, 400 for a foreign product).
-- Data: soft-delete on `company_store_products`; **33 permissions** (`placements.*`). Only `targetStockQuantity` is set here — `current`/`reserved`/`sample` are the inventory phase's job.
-- **124 unit tests green** + `test/placements.e2e-spec.ts`.
+Phases 0–6 are done and tested (Phase 6 blog pending). Phase 6 moves real stock through a single centralized, oversell-safe write:
+- **Stock split.** `CompanyStoreProduct` (cold placement config) now 1:1-owns `CompanyStoreProductStock` (hot balances) via a shared PK/FK (`company_store_product_id`). Splitting the hot fact from the cold dimension keeps the frequently-mutated balance rows narrow (less MVCC/WAL churn) and the placement metadata cache-stable. The stock row is created with the placement (nested `stock: { create }`) and inherits its soft-delete lifecycle.
+- **Four buckets** on the stock row sum to the physical count: `availableQuantity` (renamed from `currentQuantity`), `reservedQuantity`, `sampleQuantity`, `damagedQuantity` (new). `targetStockQuantity` also lives here now.
+- **17 transaction types → an effect map** (`src/inventory/inventory-effects.ts`): each type is a `delta` (±buckets, with a `primaryBucket` the ledger's before/after tracks) or a `set` (ADJUSTMENT overwrites `availableQuantity`). Cross-bucket moves (BREAKAGE available→damaged, SAMPLE_ALLOCATION available→sample) list the decrement first.
+- **The atomic engine** (`InventoryService.record`): one `$transaction` appends an immutable `InventoryTransaction` (ledger) **and** moves the balance. Decrements use a **guarded `updateMany`** (`where: { [bucket]: { gte: q } }`) → `count === 0` ⇒ `ConflictException` (409), the oversell guard. `record(caller, cornerId, placementId, dto, source?)` — the optional `source` (type+id) is for later phases (orders/audits) to stamp provenance; it's not in the DTO.
+- **Nested API** — `GET/POST /corners/:cornerId/products/:placementId/transactions`, RBAC `transactions.read`/`transactions.create`, ownership via `assertWorksCorner` (writes) / `findOne` (reads). **35 permissions** now.
+- **Errors:** 400 (quantity < 1 or bad enum) · 403 (foreign manager) · 404 (absent placement / other tenant) · 409 (oversell).
+- **140 unit tests green** + `test/inventory.e2e-spec.ts` (**39 e2e green across 5 suites**).
 
-**Next — Phase 6: inventory transactions.** Move real stock (`currentQuantity`/`sampleQuantity`/`reservedQuantity`) through a single centralized write. **This is where the atomic `updateMany`/`$transaction` pattern (deferred since Phase 4) becomes mandatory** — two concurrent decrements on the same shelf is an oversell. Start with `/brainstorming` → spec → plan → per-task build.
+**Next — Phase 7: orders.** First consumer of `InventoryService.record(...source)` — an order line stamps its `sourceType`/`sourceId` onto the ledger as it moves stock. Start with `/brainstorming` → spec → plan → per-task build.
 - ⚠️ e2e reminder: `npm run test:e2e`'s `pretest` runs `prisma migrate reset --force`, blocked by Claude's Prisma AI-guard — **a human must run it**. Claude runs `npm test` fine.
 
 ## Roadmap after Phase 6
@@ -51,13 +53,13 @@ The DB, secrets, and generated client are **not** in the repo. After `git pull`:
 3. `docker compose up -d` (postgres + redis)
 4. `npx prisma generate` (client generates into `src/generated/prisma`, which is gitignored)
 5. `npx prisma migrate deploy` then `npm run seed` (or `npx prisma migrate reset --force` which also seeds via `prisma/seed.ts`)
-6. `npm test` (unit — should be 124 green) and `npm run test:e2e`
+6. `npm test` (unit — should be 140 green) and `npm run test:e2e` (39 green across 5 suites)
 
-Latest migration: `prisma/migrations/20260813134452_placement_soft_delete_audit`.
+Latest migration: `prisma/migrations/20260817105948_stock_pk_snake_case` (preceded by `20260817011208_inventory_stock_split_and_types`).
 
 ## Key references in-repo
-- `docs/superpowers/specs/2026-08-13-phase-5-product-placement-design.md` — Phase 5 design (latest)
-- `docs/superpowers/plans/2026-08-13-phase-5-product-placement.md` — Phase 5 implementation plan
-- `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–4 specs & plans
-- `blog/en` + `blog/ko` — Phase 1–5 retrospectives
+- `docs/superpowers/specs/2026-08-16-phase-6-inventory-transactions-design.md` — Phase 6 design (latest)
+- `docs/superpowers/plans/2026-08-16-phase-6-inventory-transactions.md` — Phase 6 implementation plan
+- `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–5 specs & plans
+- `blog/en` + `blog/ko` — Phase 1–5 retrospectives (Phase 6 pending)
 - `prisma/schema.prisma` — single source of truth for the data model
