@@ -17,7 +17,6 @@ export class PermissionsService {
         id: user.roleId,
       },
       select: {
-        code: true,
         rolePermissions: {
           select: {
             permission: {
@@ -31,20 +30,6 @@ export class PermissionsService {
     });
 
     if (!role) return new Set();
-
-    if (role.code === 'ADMIN') {
-      const permissions = await this.prisma.permission.findMany({
-        select: {
-          code: true,
-        },
-      });
-
-      const adminPermissions: Set<string> = new Set(
-        permissions.map((permission) => permission.code),
-      );
-
-      return adminPermissions;
-    }
 
     const effective: Set<string> = new Set(
       role.rolePermissions.map(

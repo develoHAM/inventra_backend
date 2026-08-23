@@ -6,7 +6,6 @@ describe('PermissionsService', () => {
   let service: PermissionsService;
   let prisma: {
     role: { findUnique: jest.Mock };
-    permission: { findMany: jest.Mock };
     userPermission: { findMany: jest.Mock };
   };
 
@@ -21,7 +20,6 @@ describe('PermissionsService', () => {
   beforeEach(() => {
     prisma = {
       role: { findUnique: jest.fn() },
-      permission: { findMany: jest.fn() },
       userPermission: { findMany: jest.fn() },
     };
     service = new PermissionsService(prisma as any);
@@ -89,24 +87,24 @@ describe('PermissionsService', () => {
     expect([...result]).toEqual(['products.read']);
   });
 
-  it('returns every permission for the ADMIN role and skips override lookup', async () => {
+  it('treats ADMIN like any role: its rows are the baseline and overrides apply', async () => {
+    // ADMIN is no longer a code-level wildcard — its permissions come from the
+    // role_permissions rows seed grants it (PERMISSIONS.map(...)), and a DENY
+    // override now takes effect just like for any other role.
     prisma.role.findUnique.mockResolvedValue({
-      code: 'ADMIN',
-      rolePermissions: [],
+      rolePermissions: [
+        { permission: { code: 'stores.create' } },
+        { permission: { code: 'orders.delete' } },
+      ],
     });
-    prisma.permission.findMany.mockResolvedValue([
-      { code: 'products.read' },
-      { code: 'users.approve' },
-      { code: 'companies.update' },
+    prisma.userPermission.findMany.mockResolvedValue([
+      { effect: PermissionEffect.DENY, permission: { code: 'orders.delete' } },
     ]);
 
-    const result = await service.getEffectivePermissions(user);
+    const adminUser: AuthUser = { ...user, roleCode: 'ADMIN' };
+    const result = await service.getEffectivePermissions(adminUser);
 
-    expect([...result].sort()).toEqual([
-      'companies.update',
-      'products.read',
-      'users.approve',
-    ]);
-    expect(prisma.userPermission.findMany).not.toHaveBeenCalled();
+    expect([...result]).toEqual(['stores.create']); // DENY removed orders.delete
+    expect(prisma.userPermission.findMany).toHaveBeenCalled();
   });
 });

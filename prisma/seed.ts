@@ -61,9 +61,14 @@ const PERMISSIONS = [
   { code: 'placements.delete', name: 'Delete placements' },
   { code: 'transactions.create', name: 'Create inventory transactions' },
   { code: 'transactions.read', name: 'Read inventory transactions' },
+  { code: 'orders.create', name: 'Create orders' },
+  { code: 'orders.read', name: 'Read orders' },
+  { code: 'orders.update', name: 'Update orders' },
+  { code: 'orders.delete', name: 'Delete orders' },
 ];
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
+  ADMIN: PERMISSIONS.map((permission) => permission.code),
   OWNER: [
     'users.create',
     'users.read',
@@ -93,6 +98,10 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'placements.delete',
     'transactions.create',
     'transactions.read',
+    'orders.create',
+    'orders.read',
+    'orders.update',
+    'orders.delete',
   ],
   MANAGER: [
     'users.create',
@@ -118,6 +127,10 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'placements.delete',
     'transactions.create',
     'transactions.read',
+    'orders.create',
+    'orders.read',
+    'orders.update',
+    'orders.delete',
   ],
   STAFF: [
     'users.read',
@@ -135,9 +148,11 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'placements.delete',
     'transactions.create',
     'transactions.read',
+    'orders.create',
+    'orders.read',
+    'orders.update',
+    'orders.delete',
   ],
-  // ADMIN intentionally omitted — its wildcard is handled in code, not via rows.
-  // stores.{create,update,delete} → granted to NO role (ADMIN wildcard only)
 };
 
 async function main() {
