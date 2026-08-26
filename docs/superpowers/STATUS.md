@@ -19,12 +19,12 @@
 | 4 | Stores & Corners (venues + company corners, manager/staff assignment) | ✅ complete (blogged) |
 | 5 | **Product placement** (`CompanyStoreProduct` — products on a corner's shelf) | ✅ complete (blogged) |
 | 6 | **Inventory transactions** (ledger + running balance, one atomic write) | ✅ complete (blogged) |
-| 7 | **Restock orders** (request document: header + line items, nested CRUD) | ✅ complete |
+| 7 | **Restock orders** (request document: header + line items, nested CRUD) | ✅ complete (blogged) |
 | 8+ | Audits, reservations | ⏳ not started |
 
 ## Where we are right now — Phase 7 complete (restock orders)
 
-Phases 0–7 are done and tested (Phase 7 blog pending). Phase 7 adds **restock-request orders** — an official document filed against a corner, listing placements + requested quantities. It records intent only; it never moves stock (the real `RESTOCK` transactions are recorded by hand when goods arrive, optionally pointing `source=ORDER` at the request — that reconciliation link is manual, deferred).
+Phases 0–7 are done, tested, and blogged. Phase 7 adds **restock-request orders** — an official document filed against a corner, listing placements + requested quantities. It records intent only; it never moves stock (the real `RESTOCK` transactions are recorded by hand when goods arrive, optionally pointing `source=ORDER` at the request — that reconciliation link is manual, deferred).
 - **Order = aggregate** (`Order` header + `OrderItem[]`), tenant-scoped through the corner (no `companyId`; ownership via `CornersService`). `deletedAt`/`deletedByUserId` added to `orders` (migration `20260823070235_orders_soft_delete`).
 - **Nested CRUD API** — `GET/POST /corners/:cornerId/orders`, `GET/PATCH/DELETE …/:orderId`, RBAC `orders.{create,read,update,delete}`, writes via `assertWorksCorner` / reads via `findOne`. **≥1 line item** enforced at the DTO (`@ArrayMinSize(1)` + nested `@ValidateNested`/`@Type`).
 - **Replace-all line items** — editing swaps the whole set (`deleteMany` + `createMany`) in one `$transaction`; in-progress durability is the client's job (local draft). `validateItems` rejects duplicate or non-live-placement lines (400).
@@ -75,5 +75,5 @@ Latest migration: `prisma/migrations/20260823070235_orders_soft_delete`.
 - `docs/superpowers/specs/2026-08-23-phase-7-restock-orders-design.md` — Phase 7 design (latest)
 - `docs/superpowers/plans/2026-08-23-phase-7-restock-orders.md` — Phase 7 implementation plan
 - `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–6 specs & plans
-- `blog/en` + `blog/ko` — Phase 1–6 retrospectives (Phase 7 pending)
+- `blog/en` + `blog/ko` — Phase 1–7 retrospectives
 - `prisma/schema.prisma` — single source of truth for the data model
