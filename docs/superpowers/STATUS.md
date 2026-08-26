@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-08-22.
+> Last updated: 2026-08-27.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -18,10 +18,24 @@
 | 3 | Product catalog (categories, brands, products) | ✅ complete (blogged) |
 | 4 | Stores & Corners (venues + company corners, manager/staff assignment) | ✅ complete (blogged) |
 | 5 | **Product placement** (`CompanyStoreProduct` — products on a corner's shelf) | ✅ complete (blogged) |
-| 6 | **Inventory transactions** (ledger + running balance, one atomic write) | ✅ complete |
-| 7+ | Orders, audits, reservations | ⏳ not started |
+| 6 | **Inventory transactions** (ledger + running balance, one atomic write) | ✅ complete (blogged) |
+| 7 | **Restock orders** (request document: header + line items, nested CRUD) | ✅ complete |
+| 8+ | Audits, reservations | ⏳ not started |
 
-## Where we are right now — Phase 6 complete (inventory transactions)
+## Where we are right now — Phase 7 complete (restock orders)
+
+Phases 0–7 are done and tested (Phase 7 blog pending). Phase 7 adds **restock-request orders** — an official document filed against a corner, listing placements + requested quantities. It records intent only; it never moves stock (the real `RESTOCK` transactions are recorded by hand when goods arrive, optionally pointing `source=ORDER` at the request — that reconciliation link is manual, deferred).
+- **Order = aggregate** (`Order` header + `OrderItem[]`), tenant-scoped through the corner (no `companyId`; ownership via `CornersService`). `deletedAt`/`deletedByUserId` added to `orders` (migration `20260823070235_orders_soft_delete`).
+- **Nested CRUD API** — `GET/POST /corners/:cornerId/orders`, `GET/PATCH/DELETE …/:orderId`, RBAC `orders.{create,read,update,delete}`, writes via `assertWorksCorner` / reads via `findOne`. **≥1 line item** enforced at the DTO (`@ArrayMinSize(1)` + nested `@ValidateNested`/`@Type`).
+- **Replace-all line items** — editing swaps the whole set (`deleteMany` + `createMany`) in one `$transaction`; in-progress durability is the client's job (local draft). `validateItems` rejects duplicate or non-live-placement lines (400).
+- **Nested-create gotcha** (documented): `OrderItem.companyStoreId` is shared with the parent order relation, so nested `order.create → orderItems.create` attaches the placement **by relation** (`connect` on `id_companyStoreId`), not raw scalars. The e2e caught what the mocked unit test structurally could not.
+- **ADMIN authority moved into the DB.** `PermissionsService` no longer special-cases ADMIN; seed grants ADMIN every permission via `role_permissions` rows, derived from the `PERMISSIONS` list (`PERMISSIONS.map(...)`) so there's no drift. Consequence: user-level GRANT/DENY overrides now apply to ADMIN too. **39 permissions** total.
+- **148 unit tests green** + `test/orders.e2e-spec.ts` (**47 e2e green across 6 suites**).
+
+**Next — Phase 8: inventory audits.** `InventoryAudit` + `InventoryAuditItem` are already scaffolded in the schema (same corner-nested composite-FK shape as orders). An audit is a physical stock-count document; reconciling it is the natural first real caller of `InventoryService.record(..., { type: 'AUDIT', id })` (ADJUSTMENT/set per counted line). Start with `/brainstorming` → spec → plan → per-task build.
+- ⚠️ e2e reminder: `npm run test:e2e`'s `pretest` runs `prisma migrate reset --force`, blocked by Claude's Prisma AI-guard — **a human must run it**. Claude runs `npm test` fine.
+
+## Roadmap after Phase 6 (historical)
 
 Phases 0–6 are done and tested (Phase 6 blog pending). Phase 6 moves real stock through a single centralized, oversell-safe write:
 - **Stock split.** `CompanyStoreProduct` (cold placement config) now 1:1-owns `CompanyStoreProductStock` (hot balances) via a shared PK/FK (`company_store_product_id`). Splitting the hot fact from the cold dimension keeps the frequently-mutated balance rows narrow (less MVCC/WAL churn) and the placement metadata cache-stable. The stock row is created with the placement (nested `stock: { create }`) and inherits its soft-delete lifecycle.
@@ -53,13 +67,13 @@ The DB, secrets, and generated client are **not** in the repo. After `git pull`:
 3. `docker compose up -d` (postgres + redis)
 4. `npx prisma generate` (client generates into `src/generated/prisma`, which is gitignored)
 5. `npx prisma migrate deploy` then `npm run seed` (or `npx prisma migrate reset --force` which also seeds via `prisma/seed.ts`)
-6. `npm test` (unit — should be 140 green) and `npm run test:e2e` (39 green across 5 suites)
+6. `npm test` (unit — should be 148 green) and `npm run test:e2e` (47 green across 6 suites)
 
-Latest migration: `prisma/migrations/20260817105948_stock_pk_snake_case` (preceded by `20260817011208_inventory_stock_split_and_types`).
+Latest migration: `prisma/migrations/20260823070235_orders_soft_delete`.
 
 ## Key references in-repo
-- `docs/superpowers/specs/2026-08-16-phase-6-inventory-transactions-design.md` — Phase 6 design (latest)
-- `docs/superpowers/plans/2026-08-16-phase-6-inventory-transactions.md` — Phase 6 implementation plan
-- `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–5 specs & plans
-- `blog/en` + `blog/ko` — Phase 1–5 retrospectives (Phase 6 pending)
+- `docs/superpowers/specs/2026-08-23-phase-7-restock-orders-design.md` — Phase 7 design (latest)
+- `docs/superpowers/plans/2026-08-23-phase-7-restock-orders.md` — Phase 7 implementation plan
+- `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–6 specs & plans
+- `blog/en` + `blog/ko` — Phase 1–6 retrospectives (Phase 7 pending)
 - `prisma/schema.prisma` — single source of truth for the data model
