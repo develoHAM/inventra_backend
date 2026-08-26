@@ -88,6 +88,14 @@ describe('OrdersService', () => {
       }),
     );
     expect(arg.data.orderItems.create).toHaveLength(2);
+    // items attach the placement by relation (companyStoreId is shared with
+    // the parent order relation, so it can't be a raw scalar here)
+    expect(arg.data.orderItems.create[0]).toEqual({
+      productOrderQuantity: 10,
+      companyStoreProduct: {
+        connect: { id_companyStoreId: { id: 7, companyStoreId: cornerId } },
+      },
+    });
     expect(arg.include).toEqual({ orderItems: true });
   });
 

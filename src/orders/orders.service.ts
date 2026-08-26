@@ -62,9 +62,15 @@ export class OrdersService {
         createdByUserId: caller.id,
         orderItems: {
           create: orderItems.map((orderItem) => ({
-            companyStoreId: cornerId,
-            companyStoreProductId: orderItem.companyStoreProductId,
             productOrderQuantity: orderItem.productOrderQuantity,
+            companyStoreProduct: {
+              connect: {
+                id_companyStoreId: {
+                  id: orderItem.companyStoreProductId,
+                  companyStoreId: cornerId,
+                },
+              },
+            },
           })),
         },
       },

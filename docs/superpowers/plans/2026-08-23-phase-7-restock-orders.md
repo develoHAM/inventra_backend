@@ -273,6 +273,12 @@ describe('OrdersService', () => {
       }),
     );
     expect(arg.data.orderItems.create).toHaveLength(2);
+    expect(arg.data.orderItems.create[0]).toEqual({
+      productOrderQuantity: 10,
+      companyStoreProduct: {
+        connect: { id_companyStoreId: { id: 7, companyStoreId: cornerId } },
+      },
+    });
     expect(arg.include).toEqual({ orderItems: true });
   });
 
@@ -431,10 +437,19 @@ export class OrdersService {
         orderDate: new Date(dto.orderDate),
         createdByUserId: caller.id,
         orderItems: {
+          // companyStoreId is shared with the parent order relation, so the
+          // nested create can't take it (or companyStoreProductId) as a raw
+          // scalar — attach the placement by relation instead.
           create: dto.items.map((item) => ({
-            companyStoreId: cornerId,
-            companyStoreProductId: item.companyStoreProductId,
             productOrderQuantity: item.productOrderQuantity,
+            companyStoreProduct: {
+              connect: {
+                id_companyStoreId: {
+                  id: item.companyStoreProductId,
+                  companyStoreId: cornerId,
+                },
+              },
+            },
           })),
         },
       },
