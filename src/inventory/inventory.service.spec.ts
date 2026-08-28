@@ -156,6 +156,32 @@ describe('InventoryService', () => {
     ).rejects.toThrow(NotFoundException);
   });
 
+  it('recordWithinTransaction applies an ADJUSTMENT and stamps the source (runs on the passed tx)', async () => {
+    const result = await service.recordWithinTransaction(
+      transaction,
+      7,
+      { transactionType: 'ADJUSTMENT', quantity: 12 } as any,
+      'owner-1',
+      { type: 'AUDIT', id: 'audit-1' } as any,
+    );
+
+    expect(transaction.companyStoreProductStock.update).toHaveBeenCalledWith({
+      where: { companyStoreProductId: 7 },
+      data: { availableQuantity: 12 },
+    });
+    expect(transaction.inventoryTransaction.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        transactionType: 'ADJUSTMENT',
+        quantityBefore: 5,
+        quantityAfter: 12,
+        createdByUserId: 'owner-1',
+        sourceType: 'AUDIT',
+        sourceId: 'audit-1',
+      }),
+    });
+    expect(result).toEqual({ id: 100 });
+  });
+
   describe('findForPlacement', () => {
     it('returns the placement ledger newest-first', async () => {
       await service.findForPlacement(owner, 'corner-1', 7);
