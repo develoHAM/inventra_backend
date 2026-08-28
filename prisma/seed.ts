@@ -65,6 +65,11 @@ const PERMISSIONS = [
   { code: 'orders.read', name: 'Read orders' },
   { code: 'orders.update', name: 'Update orders' },
   { code: 'orders.delete', name: 'Delete orders' },
+  { code: 'audits.create', name: 'Create audits' },
+  { code: 'audits.read', name: 'Read audits' },
+  { code: 'audits.update', name: 'Update audits' },
+  { code: 'audits.delete', name: 'Delete audits' },
+  { code: 'audits.apply', name: 'Apply audits' },
 ];
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
@@ -102,6 +107,11 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'orders.read',
     'orders.update',
     'orders.delete',
+    'audits.create',
+    'audits.read',
+    'audits.update',
+    'audits.delete',
+    'audits.apply',
   ],
   MANAGER: [
     'users.create',
@@ -131,6 +141,11 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'orders.read',
     'orders.update',
     'orders.delete',
+    'audits.create',
+    'audits.read',
+    'audits.update',
+    'audits.delete',
+    'audits.apply',
   ],
   STAFF: [
     'users.read',
@@ -152,6 +167,11 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'orders.read',
     'orders.update',
     'orders.delete',
+    'audits.create',
+    'audits.read',
+    'audits.update',
+    'audits.delete',
+    'audits.apply',
   ],
 };
 
