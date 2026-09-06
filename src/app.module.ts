@@ -15,6 +15,7 @@ import { CornersModule } from './corners/corners.module';
 import { PlacementsModule } from './placements/placements.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { OrdersModule } from './orders/orders.module';
+import { AuditsModule } from './audits/audits.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { OrdersModule } from './orders/orders.module';
     PlacementsModule,
     InventoryModule,
     OrdersModule,
+    AuditsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
