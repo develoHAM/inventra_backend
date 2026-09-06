@@ -13,6 +13,7 @@ import { RequirePermissions } from '../authorization/decorators/require-permissi
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth-user';
 import { CreateAuditDto } from './dto/create-audit.dto';
+import { UpdateAuditDto } from './dto/update-audit.dto';
 
 @Controller('corners/:cornerId/audits')
 export class AuditsController {
@@ -48,12 +49,12 @@ export class AuditsController {
   }
 
   @RequirePermissions('audits.update')
-  @Patch('auditId')
+  @Patch(':auditId')
   update(
     @CurrentUser() caller: AuthUser,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('auditId', ParseUUIDPipe) auditId: string,
-    @Body() dto: CreateAuditDto,
+    @Body() dto: UpdateAuditDto,
   ) {
     return this.audits.update(caller, cornerId, auditId, dto);
   }
