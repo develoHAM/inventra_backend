@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-08-27.
+> Last updated: 2026-09-07.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -20,19 +20,19 @@
 | 5 | **Product placement** (`CompanyStoreProduct` — products on a corner's shelf) | ✅ complete (blogged) |
 | 6 | **Inventory transactions** (ledger + running balance, one atomic write) | ✅ complete (blogged) |
 | 7 | **Restock orders** (request document: header + line items, nested CRUD) | ✅ complete (blogged) |
-| 8+ | Audits, reservations | ⏳ not started |
+| 8 | **Inventory audits** (physical count doc → atomic apply reconciles stock) | ✅ complete |
+| 9+ | Purchase reservations | ⏳ not started |
 
-## Where we are right now — Phase 7 complete (restock orders)
+## Where we are right now — Phase 8 complete (inventory audits)
 
-Phases 0–7 are done, tested, and blogged. Phase 7 adds **restock-request orders** — an official document filed against a corner, listing placements + requested quantities. It records intent only; it never moves stock (the real `RESTOCK` transactions are recorded by hand when goods arrive, optionally pointing `source=ORDER` at the request — that reconciliation link is manual, deferred).
-- **Order = aggregate** (`Order` header + `OrderItem[]`), tenant-scoped through the corner (no `companyId`; ownership via `CornersService`). `deletedAt`/`deletedByUserId` added to `orders` (migration `20260823070235_orders_soft_delete`).
-- **Nested CRUD API** — `GET/POST /corners/:cornerId/orders`, `GET/PATCH/DELETE …/:orderId`, RBAC `orders.{create,read,update,delete}`, writes via `assertWorksCorner` / reads via `findOne`. **≥1 line item** enforced at the DTO (`@ArrayMinSize(1)` + nested `@ValidateNested`/`@Type`).
-- **Replace-all line items** — editing swaps the whole set (`deleteMany` + `createMany`) in one `$transaction`; in-progress durability is the client's job (local draft). `validateItems` rejects duplicate or non-live-placement lines (400).
-- **Nested-create gotcha** (documented): `OrderItem.companyStoreId` is shared with the parent order relation, so nested `order.create → orderItems.create` attaches the placement **by relation** (`connect` on `id_companyStoreId`), not raw scalars. The e2e caught what the mocked unit test structurally could not.
-- **ADMIN authority moved into the DB.** `PermissionsService` no longer special-cases ADMIN; seed grants ADMIN every permission via `role_permissions` rows, derived from the `PERMISSIONS` list (`PERMISSIONS.map(...)`) so there's no drift. Consequence: user-level GRANT/DENY overrides now apply to ADMIN too. **39 permissions** total.
-- **148 unit tests green** + `test/orders.e2e-spec.ts` (**47 e2e green across 6 suites**).
+Phases 0–8 are done and tested (Phase 8 blog pending). Phase 8 adds **inventory audits** — a physical stock-count document filed against a corner, plus a two-step reconcile. It's the first real caller of the Phase 6 engine.
+- **Audit = aggregate** (`InventoryAudit` header + `InventoryAuditItem[]`, `productQuantity` = counted number), tenant-scoped through the corner. Migration `20260828122953_audits_apply_soft_delete` added `applied_at`/`applied_by_user_id`/`deleted_at`/`deleted_by_user_id`.
+- **Two-step: count, then apply.** Building/editing the audit never touches stock. **`POST …/audits/:auditId/apply`** reconciles: per line, an `ADJUSTMENT` (source=AUDIT) **sets** `availableQuantity` to the counted number, then stamps `appliedAt`. Applied audits are **frozen** (edit/delete/re-apply → 409). `productQuantity` allows 0 (empty shelf is a valid count).
+- **Atomic apply via an extracted helper.** `InventoryService.record`'s in-transaction body was lifted into public **`recordWithinTransaction(tx, …)`** (no auth, no new tx). `record` stays a thin wrapper. `AuditsService.apply` opens **one** `$transaction` and calls the helper per line (sequential `await` — they share the one tx/connection) + stamps `appliedAt` — all-or-nothing. (Watch: the helper must NOT open its own `$transaction`; doing so silently breaks atomicity and the mock can't catch it.)
+- **Nested CRUD** mirrors orders (replace-all items via `connect`, `validateItems`, soft-delete, `assertWorksCorner`/`findOne`). RBAC `audits.{create,read,update,delete,apply}` — `audits.apply` is its own permission (count vs. commit), all granted to OWNER/MANAGER/STAFF. **44 permissions**.
+- **157 unit tests green** + `test/audits.e2e-spec.ts` (**54 e2e green across 7 suites**). The e2e caught two controller wiring bugs the unit layer can't see: a nested `$transaction` in the helper, and `@Patch('auditId')` missing its `:`.
 
-**Next — Phase 8: inventory audits.** `InventoryAudit` + `InventoryAuditItem` are already scaffolded in the schema (same corner-nested composite-FK shape as orders). An audit is a physical stock-count document; reconciling it is the natural first real caller of `InventoryService.record(..., { type: 'AUDIT', id })` (ADJUSTMENT/set per counted line). Start with `/brainstorming` → spec → plan → per-task build.
+**Next — Phase 9: purchase reservations.** `PurchaseReservation` + `ReservationStatus` (PENDING/…) are scaffolded. A reservation holds stock for a customer (the `reservedQuantity` bucket, untouched since Phase 6); fulfilling/cancelling moves it — the third `TransactionSourceType` (RESERVATION). Start with `/brainstorming` → spec → plan → per-task build.
 - ⚠️ e2e reminder: `npm run test:e2e`'s `pretest` runs `prisma migrate reset --force`, blocked by Claude's Prisma AI-guard — **a human must run it**. Claude runs `npm test` fine.
 
 ## Roadmap after Phase 6 (historical)
@@ -67,13 +67,13 @@ The DB, secrets, and generated client are **not** in the repo. After `git pull`:
 3. `docker compose up -d` (postgres + redis)
 4. `npx prisma generate` (client generates into `src/generated/prisma`, which is gitignored)
 5. `npx prisma migrate deploy` then `npm run seed` (or `npx prisma migrate reset --force` which also seeds via `prisma/seed.ts`)
-6. `npm test` (unit — should be 148 green) and `npm run test:e2e` (47 green across 6 suites)
+6. `npm test` (unit — should be 157 green) and `npm run test:e2e` (54 green across 7 suites)
 
-Latest migration: `prisma/migrations/20260823070235_orders_soft_delete`.
+Latest migration: `prisma/migrations/20260828122953_audits_apply_soft_delete`.
 
 ## Key references in-repo
-- `docs/superpowers/specs/2026-08-23-phase-7-restock-orders-design.md` — Phase 7 design (latest)
-- `docs/superpowers/plans/2026-08-23-phase-7-restock-orders.md` — Phase 7 implementation plan
-- `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–6 specs & plans
-- `blog/en` + `blog/ko` — Phase 1–7 retrospectives
+- `docs/superpowers/specs/2026-08-28-phase-8-inventory-audits-design.md` — Phase 8 design (latest)
+- `docs/superpowers/plans/2026-08-28-phase-8-inventory-audits.md` — Phase 8 implementation plan
+- `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–7 specs & plans
+- `blog/en` + `blog/ko` — Phase 1–7 retrospectives (Phase 8 pending)
 - `prisma/schema.prisma` — single source of truth for the data model
