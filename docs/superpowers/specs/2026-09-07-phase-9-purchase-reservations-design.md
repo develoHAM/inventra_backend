@@ -41,7 +41,7 @@ const reservedQuantity: Bucket = 'reservedQuantity'; // NEW const
 
 **(b) Two new effects** (guard-first, like `BREAKAGE`/`SAMPLE_ALLOCATION`):
 ```ts
-RESERVE: {
+RESERVATION_HOLD: {
   kind: 'delta',
   deltas: [
     { field: availableQuantity, sign: -1 }, // guard: can't reserve more than available
@@ -67,7 +67,7 @@ Two additions to `prisma/schema.prisma`:
 **(a) Two enum values** on `InventoryTransactionType` (with `///` doc comments, per convention):
 ```prisma
   /// Stock held for a customer reservation. available -q, reserved +q.
-  RESERVE
+  RESERVATION_HOLD
   /// A reservation hold is released back to sellable. reserved -q, available +q.
   RESERVATION_RELEASE
 ```
@@ -140,7 +140,7 @@ Injects `PrismaService`, `CornersService`, `InventoryService`. All writes in one
 - **`getReservation(cornerId, placementId, reservationId)`** — `purchaseReservation.findFirst({ id, companyStoreId: cornerId, companyStoreProductId: placementId })`; null → 404.
 - **`create(caller, cornerId, placementId, dto)`** — `assertWorksCorner`; `getPlacement`; then one tx:
   1. `reservation = tx.purchaseReservation.create({ …, companyStoreProductId: placementId, companyStoreId: cornerId, reservedQuantity: dto.reservedQuantity, status: 'RESERVED', createdByUserId: caller.id, expiresAt: dto.expiresAt ? new Date(...) : null })`
-  2. `recordWithinTransaction(tx, placementId, { transactionType: 'RESERVE', quantity: dto.reservedQuantity }, caller.id, { type: 'RESERVATION', id: reservation.id })` — guarded `available→reserved`; **insufficient available → 409**, whole tx rolls back (no orphan reservation).
+  2. `recordWithinTransaction(tx, placementId, { transactionType: 'RESERVATION_HOLD', quantity: dto.reservedQuantity }, caller.id, { type: 'RESERVATION', id: reservation.id })` — guarded `available→reserved`; **insufficient available → 409**, whole tx rolls back (no orphan reservation).
   3. return the reservation.
 - **`findAll(caller, cornerId, placementId)`** — `findOne` (read scope); `getPlacement`; `purchaseReservation.findMany({ where: { companyStoreId: cornerId, companyStoreProductId: placementId }, orderBy: { reservedAt: 'desc' } })`.
 - **`findOne(caller, cornerId, placementId, reservationId)`** — `findOne`; `getReservation`.
@@ -156,7 +156,7 @@ Injects `PrismaService`, `CornersService`, `InventoryService`. All writes in one
 | Corner or reservation absent / another tenant | 404 |
 | Caller lacks the permission | 403 |
 | Caller has the permission but doesn't work this corner | 403 |
-| **Insufficient available stock to reserve** | 409 (the `RESERVE` guard) |
+| **Insufficient available stock to reserve** | 409 (the `RESERVATION_HOLD` guard) |
 | **Fulfill or cancel a non-`RESERVED` reservation** | 409 |
 
 ## 9. Module wiring
@@ -165,8 +165,8 @@ Injects `PrismaService`, `CornersService`, `InventoryService`. All writes in one
 
 ## 10. Testing
 
-- **Unit** — `inventory-effects.spec.ts`: `RESERVE` and `RESERVATION_RELEASE` map correctly (cross-bucket, decrement-first, right `primaryBucket`); the totality + invariant tests still pass. `reservations.service.spec.ts` (mocks Prisma + Corners + Inventory): create calls `recordWithinTransaction(RESERVE)` + writes the row `RESERVED`; fulfill calls `RESERVATION_RELEASE` then `SALE` and sets `FULFILLED`; cancel calls `RESERVATION_RELEASE` and sets `CANCELLED`; fulfill/cancel on a non-`RESERVED` reservation → 409.
-- **e2e** — `test/reservations.e2e-spec.ts` (developer runs). Place a product, restock to a known available. Reserve q → available drops by q, reserved rises by q, ledger shows `RESERVE`/`source=RESERVATION`. Over-reserve → 409. Fulfill → reserved back to 0, available net-down by q, status `FULFILLED`, ledger shows `RESERVATION_RELEASE` + `SALE` (the `SALE` tagged `source=RESERVATION`). Cancel (a fresh reservation) → reserved→available restored, `CANCELLED`. Double-fulfill → 409. Foreign-corner 403, cross-tenant 404. Namespaced ids (`@rsv.test`, `2x0-…`).
+- **Unit** — `inventory-effects.spec.ts`: `RESERVATION_HOLD` and `RESERVATION_RELEASE` map correctly (cross-bucket, decrement-first, right `primaryBucket`); the totality + invariant tests still pass. `reservations.service.spec.ts` (mocks Prisma + Corners + Inventory): create calls `recordWithinTransaction(RESERVATION_HOLD)` + writes the row `RESERVED`; fulfill calls `RESERVATION_RELEASE` then `SALE` and sets `FULFILLED`; cancel calls `RESERVATION_RELEASE` and sets `CANCELLED`; fulfill/cancel on a non-`RESERVED` reservation → 409.
+- **e2e** — `test/reservations.e2e-spec.ts` (developer runs). Place a product, restock to a known available. Reserve q → available drops by q, reserved rises by q, ledger shows `RESERVATION_HOLD`/`source=RESERVATION`. Over-reserve → 409. Fulfill → reserved back to 0, available net-down by q, status `FULFILLED`, ledger shows `RESERVATION_RELEASE` + `SALE` (the `SALE` tagged `source=RESERVATION`). Cancel (a fresh reservation) → reserved→available restored, `CANCELLED`. Double-fulfill → 409. Foreign-corner 403, cross-tenant 404. Namespaced ids (`@rsv.test`, `2x0-…`).
 
 ## 11. Out of scope (future phases)
 

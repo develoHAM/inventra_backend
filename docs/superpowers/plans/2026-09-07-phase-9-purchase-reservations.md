@@ -29,7 +29,7 @@
 - `prisma/schema.prisma` — **modify**: 2 enum values on `InventoryTransactionType`; `createdByUserId` + relation on `PurchaseReservation`; `User` back-relation.
 - `prisma/migrations/<new>/migration.sql` — **human-generated**: the enum values + `created_by_user_id` column/FK.
 - `prisma/seed.ts` — **modify**: 4 `reservations.*` permissions + grants (44 → 48).
-- `src/inventory/inventory-effects.ts` — **modify**: widen `Bucket`, add `RESERVE` + `RESERVATION_RELEASE`.
+- `src/inventory/inventory-effects.ts` — **modify**: widen `Bucket`, add `RESERVATION_HOLD` + `RESERVATION_RELEASE`.
 - `src/inventory/inventory-effects.spec.ts` — **modify (tests)**: assert the two new effects.
 - `src/reservations/dto/create-reservation.dto.ts`, `cancel-reservation.dto.ts` — **create**.
 - `src/reservations/reservations.service.ts` — **create**.
@@ -50,14 +50,14 @@ Enum values and the effect map ship **together**: `EFFECTS` is a compiler-enforc
 - Human-generated: `prisma/migrations/<timestamp>_reservations_reserve_types_created_by/migration.sql`
 
 **Interfaces:**
-- Produces: `InventoryTransactionType.RESERVE` / `.RESERVATION_RELEASE`; `Bucket` includes `'reservedQuantity'`; `EFFECTS.RESERVE` / `.RESERVATION_RELEASE`; `PurchaseReservation.createdByUserId`; permissions `reservations.{create,read,fulfill,cancel}`.
+- Produces: `InventoryTransactionType.RESERVATION_HOLD` / `.RESERVATION_RELEASE`; `Bucket` includes `'reservedQuantity'`; `EFFECTS.RESERVATION_HOLD` / `.RESERVATION_RELEASE`; `PurchaseReservation.createdByUserId`; permissions `reservations.{create,read,fulfill,cancel}`.
 
 - [ ] **Step 1: Edit `prisma/schema.prisma` — two enum values**
 
 At the end of the `InventoryTransactionType` enum (before `@@map`):
 ```prisma
   /// Stock held for a customer reservation. available -q, reserved +q.
-  RESERVE
+  RESERVATION_HOLD
   /// A reservation hold is released back to sellable. reserved -q, available +q.
   RESERVATION_RELEASE
 ```
@@ -90,8 +90,8 @@ docker compose exec -T postgres psql -U inventra -d inventra -c "\d purchase_res
 
 Add two tests inside the `describe('EFFECTS', …)` block:
 ```ts
-  it('RESERVE moves available -> reserved, primary = available (guarded side)', () => {
-    expect(EFFECTS.RESERVE).toEqual({
+  it('RESERVATION_HOLD moves available -> reserved, primary = available (guarded side)', () => {
+    expect(EFFECTS.RESERVATION_HOLD).toEqual({
       kind: 'delta',
       deltas: [
         { field: 'availableQuantity', sign: -1 },
@@ -114,7 +114,7 @@ Add two tests inside the `describe('EFFECTS', …)` block:
 ```
 And extend the "decrement first" loop to cover them:
 ```ts
-    for (const t of ['BREAKAGE', 'SAMPLE_ALLOCATION', 'RESERVE', 'RESERVATION_RELEASE'] as const) {
+    for (const t of ['BREAKAGE', 'SAMPLE_ALLOCATION', 'RESERVATION_HOLD', 'RESERVATION_RELEASE'] as const) {
 ```
 
 - [ ] **Step 5: Extend `src/inventory/inventory-effects.ts`**
@@ -134,7 +134,7 @@ const damagedQuantity: Bucket = 'damagedQuantity';
 ```
 Add two entries to `EFFECTS` (anywhere in the record):
 ```ts
-  RESERVE: {
+  RESERVATION_HOLD: {
     kind: 'delta',
     deltas: [
       { field: availableQuantity, sign: -1 },
@@ -186,7 +186,7 @@ npm run build   # green again
 
 ```bash
 git add prisma/schema.prisma prisma/migrations prisma/seed.ts src/inventory/inventory-effects.ts src/inventory/inventory-effects.spec.ts
-git commit -m "feat(reservations): reserved bucket + RESERVE/RESERVATION_RELEASE effects, createdBy, reservations.* perms (48)"
+git commit -m "feat(reservations): reserved bucket + RESERVATION_HOLD/RESERVATION_RELEASE effects, createdBy, reservations.* perms (48)"
 ```
 
 ---
@@ -311,7 +311,7 @@ describe('ReservationsService', () => {
     service = new ReservationsService(prisma, corners as any, inventory as any);
   });
 
-  it('create holds stock via a guarded RESERVE and writes a RESERVED row', async () => {
+  it('create holds stock via a guarded RESERVATION_HOLD and writes a RESERVED row', async () => {
     await service.create(owner, cornerId, placementId, {
       reservedByName: 'Kim',
       reservedQuantity: 3,
@@ -332,7 +332,7 @@ describe('ReservationsService', () => {
     expect(inventory.recordWithinTransaction).toHaveBeenCalledWith(
       transaction,
       placementId,
-      { transactionType: 'RESERVE', quantity: 3 },
+      { transactionType: 'RESERVATION_HOLD', quantity: 3 },
       'owner-1',
       { type: 'RESERVATION', id: reservationId },
     );
@@ -491,7 +491,7 @@ export class ReservationsService {
         tx,
         placementId,
         {
-          transactionType: InventoryTransactionType.RESERVE,
+          transactionType: InventoryTransactionType.RESERVATION_HOLD,
           quantity: dto.reservedQuantity,
         },
         caller.id,
@@ -964,7 +964,7 @@ describe('Purchase Reservations (e2e)', () => {
   const base = () => `/corners/${cornerId}/products/${placementId}/reservations`;
   let reservationId: string;
 
-  it('reserving holds stock (available -> reserved) and logs RESERVE/source=RESERVATION', async () => {
+  it('reserving holds stock (available -> reserved) and logs RESERVATION_HOLD/source=RESERVATION', async () => {
     const res = await request(http)
       .post(base())
       .set(...auth(ownerAccess))
@@ -979,7 +979,7 @@ describe('Purchase Reservations (e2e)', () => {
       .get(`/corners/${cornerId}/products/${placementId}/transactions`)
       .set(...auth(ownerAccess))
       .expect(200);
-    expect(ledger.body[0].transactionType).toBe('RESERVE');
+    expect(ledger.body[0].transactionType).toBe('RESERVATION_HOLD');
     expect(ledger.body[0].sourceType).toBe('RESERVATION');
   });
 
@@ -1065,13 +1065,13 @@ git commit -m "test(reservations): e2e reserve/fulfill/cancel bucket moves + ove
 ## Self-Review (spec coverage)
 
 - Spec §1–§2 (hold on create, fulfill=release+SALE, all-or-nothing, expiresAt stored, no soft-delete, createdBy, reuse recordWithinTransaction, placement-nested) → Tasks 1–3. ✓
-- §3 effect-map extension (reserved bucket + RESERVE + RESERVATION_RELEASE) → Task 1 (Steps 4–6). ✓
+- §3 effect-map extension (reserved bucket + RESERVATION_HOLD + RESERVATION_RELEASE) → Task 1 (Steps 4–6). ✓
 - §4 schema (2 enum values + createdByUserId + migration) → Task 1 (Steps 1–3). ✓
 - §5 permissions (48) → Task 1 (Steps 7–8). ✓
 - §6 API (placement-nested, 4 perms, fulfill/cancel actions) → Task 3 controller + Task 2 DTOs. ✓
-- §7 service logic (getPlacement/getReservation, create holds via RESERVE, fulfill release+SALE, cancel release, state guards) → Task 2. ✓
+- §7 service logic (getPlacement/getReservation, create holds via RESERVATION_HOLD, fulfill release+SALE, cancel release, state guards) → Task 2. ✓
 - §8 errors (400 dto, 404 placement/reservation/corner, 403 perms/ownership, 409 oversell + non-RESERVED) → Task 2 (404/409) + Task 3 RBAC (403) + Corners (403/404); e2e Task 4. ✓
 - §9 wiring (imports CornersModule + InventoryModule) → Task 3. ✓
 - §10 testing (effects + service unit; e2e bucket moves + oversell + guards) → Tasks 1, 2, 4. ✓
 - §11 out-of-scope (auto-expiry, partial, PENDING, editing) → nothing implements them. ✓
-- Type consistency: `recordWithinTransaction(tx, placementId, { transactionType, quantity }, callerId, { type, id })` identical across service and tests; `RESERVE`/`RESERVATION_RELEASE`/`SALE` and `RESERVED`/`FULFILLED`/`CANCELLED` consistent; single-`id` `where` on `purchaseReservation.update`. ✓
+- Type consistency: `recordWithinTransaction(tx, placementId, { transactionType, quantity }, callerId, { type, id })` identical across service and tests; `RESERVATION_HOLD`/`RESERVATION_RELEASE`/`SALE` and `RESERVED`/`FULFILLED`/`CANCELLED` consistent; single-`id` `where` on `purchaseReservation.update`. ✓
