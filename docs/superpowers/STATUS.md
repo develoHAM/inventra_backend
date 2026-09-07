@@ -20,12 +20,12 @@
 | 5 | **Product placement** (`CompanyStoreProduct` — products on a corner's shelf) | ✅ complete (blogged) |
 | 6 | **Inventory transactions** (ledger + running balance, one atomic write) | ✅ complete (blogged) |
 | 7 | **Restock orders** (request document: header + line items, nested CRUD) | ✅ complete (blogged) |
-| 8 | **Inventory audits** (physical count doc → atomic apply reconciles stock) | ✅ complete |
+| 8 | **Inventory audits** (physical count doc → atomic apply reconciles stock) | ✅ complete (blogged) |
 | 9+ | Purchase reservations | ⏳ not started |
 
 ## Where we are right now — Phase 8 complete (inventory audits)
 
-Phases 0–8 are done and tested (Phase 8 blog pending). Phase 8 adds **inventory audits** — a physical stock-count document filed against a corner, plus a two-step reconcile. It's the first real caller of the Phase 6 engine.
+Phases 0–8 are done, tested, and blogged. Phase 8 adds **inventory audits** — a physical stock-count document filed against a corner, plus a two-step reconcile. It's the first real caller of the Phase 6 engine.
 - **Audit = aggregate** (`InventoryAudit` header + `InventoryAuditItem[]`, `productQuantity` = counted number), tenant-scoped through the corner. Migration `20260828122953_audits_apply_soft_delete` added `applied_at`/`applied_by_user_id`/`deleted_at`/`deleted_by_user_id`.
 - **Two-step: count, then apply.** Building/editing the audit never touches stock. **`POST …/audits/:auditId/apply`** reconciles: per line, an `ADJUSTMENT` (source=AUDIT) **sets** `availableQuantity` to the counted number, then stamps `appliedAt`. Applied audits are **frozen** (edit/delete/re-apply → 409). `productQuantity` allows 0 (empty shelf is a valid count).
 - **Atomic apply via an extracted helper.** `InventoryService.record`'s in-transaction body was lifted into public **`recordWithinTransaction(tx, …)`** (no auth, no new tx). `record` stays a thin wrapper. `AuditsService.apply` opens **one** `$transaction` and calls the helper per line (sequential `await` — they share the one tx/connection) + stamps `appliedAt` — all-or-nothing. (Watch: the helper must NOT open its own `$transaction`; doing so silently breaks atomicity and the mock can't catch it.)
@@ -75,5 +75,5 @@ Latest migration: `prisma/migrations/20260828122953_audits_apply_soft_delete`.
 - `docs/superpowers/specs/2026-08-28-phase-8-inventory-audits-design.md` — Phase 8 design (latest)
 - `docs/superpowers/plans/2026-08-28-phase-8-inventory-audits.md` — Phase 8 implementation plan
 - `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–7 specs & plans
-- `blog/en` + `blog/ko` — Phase 1–7 retrospectives (Phase 8 pending)
+- `blog/en` + `blog/ko` — Phase 1–8 retrospectives
 - `prisma/schema.prisma` — single source of truth for the data model
