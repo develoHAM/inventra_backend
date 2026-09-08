@@ -38,12 +38,39 @@ describe('EFFECTS', () => {
     });
   });
 
+  it('RESERVATION_HOLD moves available -> reserved, primary = available (guarded side)', () => {
+    expect(EFFECTS.RESERVATION_HOLD).toEqual({
+      kind: 'delta',
+      deltas: [
+        { field: 'availableQuantity', sign: -1 },
+        { field: 'reservedQuantity', sign: 1 },
+      ],
+      primaryBucket: 'availableQuantity',
+    });
+  });
+
+  it('RESERVATION_RELEASE moves reserved -> available, primary = reserved', () => {
+    expect(EFFECTS.RESERVATION_RELEASE).toEqual({
+      kind: 'delta',
+      deltas: [
+        { field: 'reservedQuantity', sign: -1 },
+        { field: 'availableQuantity', sign: 1 },
+      ],
+      primaryBucket: 'reservedQuantity',
+    });
+  });
+
   it('ADJUSTMENT is an absolute set on available', () => {
     expect(EFFECTS.ADJUSTMENT).toEqual({ kind: 'set', field: 'availableQuantity' });
   });
 
   it('the decrement is listed first in cross-field transfers (guard before add)', () => {
-    for (const t of ['BREAKAGE', 'SAMPLE_ALLOCATION'] as const) {
+    for (const t of [
+      'BREAKAGE',
+      'SAMPLE_ALLOCATION',
+      'RESERVATION_HOLD',
+      'RESERVATION_RELEASE',
+    ] as const) {
       const eff = EFFECTS[t];
       expect(eff.kind).toBe('delta');
       if (eff.kind === 'delta') expect(eff.deltas[0].sign).toBe(-1);

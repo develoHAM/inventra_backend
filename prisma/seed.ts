@@ -70,6 +70,10 @@ const PERMISSIONS = [
   { code: 'audits.update', name: 'Update audits' },
   { code: 'audits.delete', name: 'Delete audits' },
   { code: 'audits.apply', name: 'Apply audits' },
+  { code: 'reservations.create', name: 'Create reservations' },
+  { code: 'reservations.read', name: 'Read reservations' },
+  { code: 'reservations.fulfill', name: 'Fulfill reservations' },
+  { code: 'reservations.cancel', name: 'Cancel reservations' },
 ];
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
@@ -112,6 +116,10 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'audits.update',
     'audits.delete',
     'audits.apply',
+    'reservations.create',
+    'reservations.read',
+    'reservations.fulfill',
+    'reservations.cancel',
   ],
   MANAGER: [
     'users.create',
@@ -146,6 +154,10 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'audits.update',
     'audits.delete',
     'audits.apply',
+    'reservations.create',
+    'reservations.read',
+    'reservations.fulfill',
+    'reservations.cancel',
   ],
   STAFF: [
     'users.read',
@@ -172,6 +184,10 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'audits.update',
     'audits.delete',
     'audits.apply',
+    'reservations.create',
+    'reservations.read',
+    'reservations.fulfill',
+    'reservations.cancel',
   ],
 };
 

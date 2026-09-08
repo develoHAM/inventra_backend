@@ -42,10 +42,14 @@ model User {
   deletedStores           Store[]               @relation("StoreDeletedBy")
   deletedCompanyStores    CompanyStore[]        @relation("CompanyStoreDeletedBy")
   deletedPlacements       CompanyStoreProduct[] @relation("CompanyStoreProductDeletedBy")
-  createdOrders           Order[]
-  createdAudits           InventoryAudit[]
+  createdOrders           Order[]               @relation("OrdersCreatedBy")
+  deletedOrders           Order[]               @relation("OrdersDeletedBy")
+  createdAudits           InventoryAudit[]      @relation("AuditsCreatedBy")
+  appliedAudits           InventoryAudit[]      @relation("AuditsAppliedBy")
+  deletedAudits           InventoryAudit[]      @relation("AuditsDeletedBy")
   createdTransactions     InventoryTransaction[]
   refreshTokens           RefreshToken[]
+  createdReservations     PurchaseReservation[] @relation("ReservationsCreatedBy")
 
   @@index([companyId], map: "IDX_users_company")
   @@map("users")
@@ -345,9 +349,12 @@ model Order {
   createdByUserId String      @map("created_by_user_id") @db.Uuid
   createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedByUserId  String?   @map("deleted_by_user_id") @db.Uuid
 
   companyStore  CompanyStore  @relation(fields: [companyStoreId], references: [id])
-  createdByUser User          @relation(fields: [createdByUserId], references: [id])
+  createdByUser User          @relation("OrdersCreatedBy", fields: [createdByUserId], references: [id])
+  deletedByUser User?         @relation("OrdersDeletedBy", fields: [deletedByUserId], references: [id])
   orderItems    OrderItem[]
 
   @@id([id, companyStoreId])
@@ -380,9 +387,16 @@ model InventoryAudit {
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  appliedAt       DateTime? @map("applied_at") @db.Timestamptz(6)
+  appliedByUserId String?   @map("applied_by_user_id") @db.Uuid
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedByUserId String?   @map("deleted_by_user_id") @db.Uuid
 
   companyStore        CompanyStore         @relation(fields: [companyStoreId], references: [id])
-  createdByUser       User                 @relation(fields: [createdByUserId], references: [id])
+  createdByUser       User                 @relation("AuditsCreatedBy",fields: [createdByUserId], references: [id])
+  appliedByUser       User?                 @relation("AuditsAppliedBy", fields: [appliedByUserId], references: [id])
+  deletedByUser       User?                 @relation("AuditsDeletedBy", fields: [deletedByUserId], references: [id])
+
   inventoryAuditItems InventoryAuditItem[]
 
   @@id([id, companyStoreId])
@@ -469,6 +483,10 @@ enum InventoryTransactionType {
   SAMPLE_RETURN
   /// A sample is used up or thrown away. sample -q.
   SAMPLE_DISPOSAL
+  /// Stock held for a customer reservation. available -q, reserved +q.
+  RESERVATION_HOLD
+  /// A reservation hold is released back to sellable. reserved -q, available +q.
+  RESERVATION_RELEASE
 
   @@map("inventory_transaction_type")
 }
@@ -489,8 +507,11 @@ model PurchaseReservation {
   cancelReason          String?           @map("cancel_reason") @db.Text
   reservedAt            DateTime          @default(now()) @map("reserved_at") @db.Timestamptz(6)
   updatedAt             DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdByUserId       String            @map("created_by_user_id") @db.Uuid
+
 
   companyStoreProduct CompanyStoreProduct @relation(fields: [companyStoreProductId, companyStoreId], references: [id, companyStoreId])
+  createdByUser       User @relation("ReservationsCreatedBy", fields: [createdByUserId], references: [id])
 
   @@map("purchase_reservations")
 }
