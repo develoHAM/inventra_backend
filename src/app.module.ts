@@ -16,6 +16,7 @@ import { PlacementsModule } from './placements/placements.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { OrdersModule } from './orders/orders.module';
 import { AuditsModule } from './audits/audits.module';
+import { ReservationsModule } from './reservations/reservations.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { AuditsModule } from './audits/audits.module';
     InventoryModule,
     OrdersModule,
     AuditsModule,
+    ReservationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
