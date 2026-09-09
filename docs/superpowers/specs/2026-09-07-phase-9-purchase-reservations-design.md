@@ -105,25 +105,34 @@ Four new codes in `prisma/seed.ts` (**44 → 48**), all granted to OWNER/MANAGER
 
 ## 6. API surface
 
-Placement-nested (mirrors the transactions controller); `:cornerId` UUID, `:placementId` **int** (`ParseIntPipe` — placement ids are autoincrement), `:reservationId` UUID.
+**Corner-level** (a reservation is a corner-scoped record that references a placement; the counter's primary view is corner-wide). `:cornerId` and `:reservationId` are UUIDs; `companyStoreProductId` (int) rides in the create body and as an optional list filter.
 
-| Method | Path | Permission | Body |
-|--------|------|------------|------|
-| POST | `/corners/:cornerId/products/:placementId/reservations` | `reservations.create` | customer + quantity |
-| GET | `…/reservations` | `reservations.read` | — |
-| GET | `…/reservations/:reservationId` | `reservations.read` | — |
-| POST | `…/reservations/:reservationId/fulfill` | `reservations.fulfill` | — |
-| POST | `…/reservations/:reservationId/cancel` | `reservations.cancel` | `{ cancelReason? }` |
+| Method | Path | Permission | Body / Query |
+|--------|------|------------|--------------|
+| POST | `/corners/:cornerId/reservations` | `reservations.create` | `companyStoreProductId` + customer + quantity |
+| GET | `/corners/:cornerId/reservations` | `reservations.read` | `?companyStoreProductId=` `?status=` (both optional) |
+| GET | `/corners/:cornerId/reservations/:reservationId` | `reservations.read` | — |
+| POST | `/corners/:cornerId/reservations/:reservationId/fulfill` | `reservations.fulfill` | — |
+| POST | `/corners/:cornerId/reservations/:reservationId/cancel` | `reservations.cancel` | `{ cancelReason? }` |
+
+The corner-wide `GET` is the base case (all reservations for the corner, newest first); the optional filters narrow to one placement and/or one status (e.g. `?status=RESERVED` for the active pickup list).
 
 ### DTOs
 ```ts
 // create-reservation.dto.ts
 export class CreateReservationDto {
+  @IsInt() companyStoreProductId!: number;
   @IsString() @IsNotEmpty() @MaxLength(100) reservedByName!: string;
   @IsOptional() @IsString() @MaxLength(20) reservedByPhone?: string;
   @IsInt() @Min(1) reservedQuantity!: number;
   @IsOptional() @IsString() remark?: string;
   @IsOptional() @IsDateString() expiresAt?: string;
+}
+
+// list-reservations.query.dto.ts — optional query filters (transform strings from the query string)
+export class ListReservationsQueryDto {
+  @IsOptional() @Type(() => Number) @IsInt() companyStoreProductId?: number;
+  @IsOptional() @IsEnum(ReservationStatus) status?: ReservationStatus;
 }
 
 // cancel-reservation.dto.ts
@@ -136,16 +145,16 @@ export class CancelReservationDto {
 
 Injects `PrismaService`, `CornersService`, `InventoryService`. All writes in one `$transaction`.
 
-- **`getPlacement(cornerId, placementId)`** — `companyStoreProduct.findFirst({ id, companyStoreId, deletedAt: null })`; null → 404 (the reservation's placement must be a live placement on the corner).
-- **`getReservation(cornerId, placementId, reservationId)`** — `purchaseReservation.findFirst({ id, companyStoreId: cornerId, companyStoreProductId: placementId })`; null → 404.
-- **`create(caller, cornerId, placementId, dto)`** — `assertWorksCorner`; `getPlacement`; then one tx:
-  1. `reservation = tx.purchaseReservation.create({ …, companyStoreProductId: placementId, companyStoreId: cornerId, reservedQuantity: dto.reservedQuantity, status: 'RESERVED', createdByUserId: caller.id, expiresAt: dto.expiresAt ? new Date(...) : null })`
-  2. `recordWithinTransaction(tx, placementId, { transactionType: 'RESERVATION_HOLD', quantity: dto.reservedQuantity }, caller.id, { type: 'RESERVATION', id: reservation.id })` — guarded `available→reserved`; **insufficient available → 409**, whole tx rolls back (no orphan reservation).
+- **`getPlacement(cornerId, placementId)`** — `companyStoreProduct.findFirst({ id, companyStoreId, deletedAt: null })`; null → 404 (the reserved placement must be a live placement on the corner).
+- **`getReservation(cornerId, reservationId)`** — `purchaseReservation.findFirst({ id, companyStoreId: cornerId })`; null → 404.
+- **`create(caller, cornerId, dto)`** — `assertWorksCorner`; `getPlacement(cornerId, dto.companyStoreProductId)`; then one tx:
+  1. `reservation = tx.purchaseReservation.create({ …, companyStoreProductId: dto.companyStoreProductId, companyStoreId: cornerId, reservedQuantity: dto.reservedQuantity, status: 'RESERVED', createdByUserId: caller.id, expiresAt: dto.expiresAt ? new Date(...) : null })`
+  2. `recordWithinTransaction(tx, dto.companyStoreProductId, { transactionType: 'RESERVATION_HOLD', quantity: dto.reservedQuantity }, caller.id, { type: 'RESERVATION', id: reservation.id })` — guarded `available→reserved`; **insufficient available → 409**, whole tx rolls back (no orphan reservation).
   3. return the reservation.
-- **`findAll(caller, cornerId, placementId)`** — `findOne` (read scope); `getPlacement`; `purchaseReservation.findMany({ where: { companyStoreId: cornerId, companyStoreProductId: placementId }, orderBy: { reservedAt: 'desc' } })`.
-- **`findOne(caller, cornerId, placementId, reservationId)`** — `findOne`; `getReservation`.
-- **`fulfill(caller, cornerId, placementId, reservationId)`** — `assertWorksCorner`; `getReservation`; if `status !== 'RESERVED'` → **409**; one tx: `recordWithinTransaction(RESERVATION_RELEASE)` then `recordWithinTransaction(SALE)` (both `source = RESERVATION`, quantity = `reservation.reservedQuantity`), then `update({ status: 'FULFILLED', fulfilledAt: new Date() })`.
-- **`cancel(caller, cornerId, placementId, reservationId, dto)`** — `assertWorksCorner`; `getReservation`; if `status !== 'RESERVED'` → **409**; one tx: `recordWithinTransaction(RESERVATION_RELEASE)`, then `update({ status: 'CANCELLED', cancelledAt: new Date(), cancelReason: dto.cancelReason ?? null })`.
+- **`findAll(caller, cornerId, query)`** — `findOne` (read scope); `purchaseReservation.findMany({ where: { companyStoreId: cornerId, ...(query.companyStoreProductId ? { companyStoreProductId } : {}), ...(query.status ? { status } : {}) }, orderBy: { reservedAt: 'desc' } })` — corner-wide, optionally filtered.
+- **`findOne(caller, cornerId, reservationId)`** — `findOne`; `getReservation`.
+- **`fulfill(caller, cornerId, reservationId)`** — `assertWorksCorner`; `getReservation`; if `status !== 'RESERVED'` → **409**; one tx (using `reservation.companyStoreProductId`): `recordWithinTransaction(RESERVATION_RELEASE)` then `recordWithinTransaction(SALE)` (both `source = RESERVATION`, quantity = `reservation.reservedQuantity`), then `update({ status: 'FULFILLED', fulfilledAt: new Date() })`.
+- **`cancel(caller, cornerId, reservationId, dto)`** — `assertWorksCorner`; `getReservation`; if `status !== 'RESERVED'` → **409**; one tx: `recordWithinTransaction(RESERVATION_RELEASE)` on `reservation.companyStoreProductId`, then `update({ status: 'CANCELLED', cancelledAt: new Date(), cancelReason: dto.cancelReason ?? null })`.
 
 ## 8. Validation & errors
 

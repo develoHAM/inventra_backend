@@ -4,7 +4,9 @@
 
 **Goal:** Add customer **purchase reservations** — hold stock of one placement (`available → reserved`) on create, convert the hold to a `SALE` on fulfill, release it on cancel — extending the Phase 6 effect map to the `reserved` bucket.
 
-**Architecture:** A new `ReservationsModule` (placement-nested controller + service). Every stock move runs through `InventoryService.recordWithinTransaction(tx, …)` inside one `$transaction` per action, `source = RESERVATION`. Fulfill = `RESERVATION_RELEASE` + `SALE` (every purchase is a `SALE`). Reservations use status transitions, not soft-delete.
+**Architecture:** A new `ReservationsModule` (corner-level controller + service). Every stock move runs through `InventoryService.recordWithinTransaction(tx, …)` inside one `$transaction` per action, `source = RESERVATION`. Fulfill = `RESERVATION_RELEASE` + `SALE` (every purchase is a `SALE`). Reservations use status transitions, not soft-delete.
+
+> **Design revision (corner-level).** After Task 1, the resource moved from placement-nested to **corner-level** — routes are `/corners/:cornerId/reservations`, `companyStoreProductId` rides in the create body, `GET` is corner-wide with optional `?companyStoreProductId`/`?status` filters, and fulfill/cancel take only `reservationId` (the reservation knows its placement). The **spec §6–§7 is the corrected source of truth**; the Task 2–4 code blocks below predate the revision — follow the spec (and the per-task reference given in-session) for the corner-level signatures.
 
 **Tech Stack:** NestJS 11, Prisma 7 (client in `src/generated/prisma`), PostgreSQL, class-validator, Jest + supertest.
 
