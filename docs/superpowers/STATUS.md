@@ -21,12 +21,12 @@
 | 6 | **Inventory transactions** (ledger + running balance, one atomic write) | ✅ complete (blogged) |
 | 7 | **Restock orders** (request document: header + line items, nested CRUD) | ✅ complete (blogged) |
 | 8 | **Inventory audits** (physical count doc → atomic apply reconciles stock) | ✅ complete (blogged) |
-| 9 | **Purchase reservations** (hold stock for a customer; fulfill = release + sale) | ✅ complete |
+| 9 | **Purchase reservations** (hold stock for a customer; fulfill = release + sale) | ✅ complete (blogged) |
 | 10+ | Cross-cutting concerns (auto-expiry sweep, jobs), Redis caching | ⏳ not started |
 
 ## Where we are right now — Phase 9 complete (purchase reservations)
 
-Phases 0–9 are done and tested (Phase 9 blog pending). Phase 9 adds **purchase reservations** — hold a customer's stock, convert the hold to a sale on pickup. It's the first phase to *extend* the Phase 6 effect map (the `reserved` bucket) and the third `recordWithinTransaction` caller.
+Phases 0–9 are done, tested, and blogged. Phase 9 adds **purchase reservations** — hold a customer's stock, convert the hold to a sale on pickup. It's the first phase to *extend* the Phase 6 effect map (the `reserved` bucket) and the third `recordWithinTransaction` caller.
 - **Reservation = single row** (`PurchaseReservation`: one placement + `reservedQuantity` + customer `reservedByName`/`Phone`), corner-scoped. Migration `20260908124337_reservations_reserve_types_created_by` added `created_by_user_id` + the two enum values.
 - **Hold on create.** Creating a reservation moves stock `available → reserved` (guarded `RESERVATION_HOLD`; **insufficient available → 409**) and starts it `RESERVED`. **Fulfill** = `RESERVATION_RELEASE` + `SALE` → `FULFILLED` (so *every* purchase is a `SALE`; reserved-origin ones tagged `source=RESERVATION`). **Cancel** = `RESERVATION_RELEASE` → `CANCELLED`. Fulfill/cancel on a non-`RESERVED` reservation → 409. `PENDING`/`EXPIRED` defined but unused (deferred).
 - **Effect map extended.** `Bucket` gained `reservedQuantity`; two new cross-bucket, guard-first effects `RESERVATION_HOLD` (available→reserved) / `RESERVATION_RELEASE` (reserved→available), reusing `SALE`. Invariant: the `reserved` bucket = sum of active reservations.
@@ -76,5 +76,5 @@ Latest migration: `prisma/migrations/20260908124337_reservations_reserve_types_c
 - `docs/superpowers/specs/2026-09-07-phase-9-purchase-reservations-design.md` — Phase 9 design (latest)
 - `docs/superpowers/plans/2026-09-07-phase-9-purchase-reservations.md` — Phase 9 implementation plan
 - `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–8 specs & plans
-- `blog/en` + `blog/ko` — Phase 1–8 retrospectives (Phase 9 pending)
+- `blog/en` + `blog/ko` — Phase 1–9 retrospectives
 - `prisma/schema.prisma` — single source of truth for the data model
