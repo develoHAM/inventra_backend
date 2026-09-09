@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-09-07.
+> Last updated: 2026-09-09.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -21,18 +21,19 @@
 | 6 | **Inventory transactions** (ledger + running balance, one atomic write) | ✅ complete (blogged) |
 | 7 | **Restock orders** (request document: header + line items, nested CRUD) | ✅ complete (blogged) |
 | 8 | **Inventory audits** (physical count doc → atomic apply reconciles stock) | ✅ complete (blogged) |
-| 9+ | Purchase reservations | ⏳ not started |
+| 9 | **Purchase reservations** (hold stock for a customer; fulfill = release + sale) | ✅ complete |
+| 10+ | Cross-cutting concerns (auto-expiry sweep, jobs), Redis caching | ⏳ not started |
 
-## Where we are right now — Phase 8 complete (inventory audits)
+## Where we are right now — Phase 9 complete (purchase reservations)
 
-Phases 0–8 are done, tested, and blogged. Phase 8 adds **inventory audits** — a physical stock-count document filed against a corner, plus a two-step reconcile. It's the first real caller of the Phase 6 engine.
-- **Audit = aggregate** (`InventoryAudit` header + `InventoryAuditItem[]`, `productQuantity` = counted number), tenant-scoped through the corner. Migration `20260828122953_audits_apply_soft_delete` added `applied_at`/`applied_by_user_id`/`deleted_at`/`deleted_by_user_id`.
-- **Two-step: count, then apply.** Building/editing the audit never touches stock. **`POST …/audits/:auditId/apply`** reconciles: per line, an `ADJUSTMENT` (source=AUDIT) **sets** `availableQuantity` to the counted number, then stamps `appliedAt`. Applied audits are **frozen** (edit/delete/re-apply → 409). `productQuantity` allows 0 (empty shelf is a valid count).
-- **Atomic apply via an extracted helper.** `InventoryService.record`'s in-transaction body was lifted into public **`recordWithinTransaction(tx, …)`** (no auth, no new tx). `record` stays a thin wrapper. `AuditsService.apply` opens **one** `$transaction` and calls the helper per line (sequential `await` — they share the one tx/connection) + stamps `appliedAt` — all-or-nothing. (Watch: the helper must NOT open its own `$transaction`; doing so silently breaks atomicity and the mock can't catch it.)
-- **Nested CRUD** mirrors orders (replace-all items via `connect`, `validateItems`, soft-delete, `assertWorksCorner`/`findOne`). RBAC `audits.{create,read,update,delete,apply}` — `audits.apply` is its own permission (count vs. commit), all granted to OWNER/MANAGER/STAFF. **44 permissions**.
-- **157 unit tests green** + `test/audits.e2e-spec.ts` (**54 e2e green across 7 suites**). The e2e caught two controller wiring bugs the unit layer can't see: a nested `$transaction` in the helper, and `@Patch('auditId')` missing its `:`.
+Phases 0–9 are done and tested (Phase 9 blog pending). Phase 9 adds **purchase reservations** — hold a customer's stock, convert the hold to a sale on pickup. It's the first phase to *extend* the Phase 6 effect map (the `reserved` bucket) and the third `recordWithinTransaction` caller.
+- **Reservation = single row** (`PurchaseReservation`: one placement + `reservedQuantity` + customer `reservedByName`/`Phone`), corner-scoped. Migration `20260908124337_reservations_reserve_types_created_by` added `created_by_user_id` + the two enum values.
+- **Hold on create.** Creating a reservation moves stock `available → reserved` (guarded `RESERVATION_HOLD`; **insufficient available → 409**) and starts it `RESERVED`. **Fulfill** = `RESERVATION_RELEASE` + `SALE` → `FULFILLED` (so *every* purchase is a `SALE`; reserved-origin ones tagged `source=RESERVATION`). **Cancel** = `RESERVATION_RELEASE` → `CANCELLED`. Fulfill/cancel on a non-`RESERVED` reservation → 409. `PENDING`/`EXPIRED` defined but unused (deferred).
+- **Effect map extended.** `Bucket` gained `reservedQuantity`; two new cross-bucket, guard-first effects `RESERVATION_HOLD` (available→reserved) / `RESERVATION_RELEASE` (reserved→available), reusing `SALE`. Invariant: the `reserved` bucket = sum of active reservations.
+- **Corner-level resource** (revised from placement-nested mid-build): `POST/GET /corners/:cornerId/reservations` (companyStoreProductId in the create body; GET corner-wide with optional `?companyStoreProductId`/`?status` filters — the counter's pickup view), `…/:reservationId/fulfill|cancel`. RBAC `reservations.{create,read,fulfill,cancel}`, all to OWNER/MANAGER/STAFF. **48 permissions**. No soft-delete (terminal statuses instead). `createdByUserId` added; transition-actors live in the ledger (source=RESERVATION).
+- **166 unit tests green** + `test/reservations.e2e-spec.ts` (**62 e2e green across 8 suites**) — passed first run.
 
-**Next — Phase 9: purchase reservations.** `PurchaseReservation` + `ReservationStatus` (PENDING/…) are scaffolded. A reservation holds stock for a customer (the `reservedQuantity` bucket, untouched since Phase 6); fulfilling/cancelling moves it — the third `TransactionSourceType` (RESERVATION). Start with `/brainstorming` → spec → plan → per-task build.
+**Next — Phase 10: cross-cutting concerns.** The deferred **reservation auto-expiry sweep** (a scheduled job releasing `RESERVED` holds past `expiresAt` → `EXPIRED`, via `recordWithinTransaction(RESERVATION_RELEASE)`) is the natural first job — introduces `@nestjs/schedule`. Then Redis caching (only when a measured need appears). Start with `/brainstorming` → spec → plan → per-task build.
 - ⚠️ e2e reminder: `npm run test:e2e`'s `pretest` runs `prisma migrate reset --force`, blocked by Claude's Prisma AI-guard — **a human must run it**. Claude runs `npm test` fine.
 
 ## Roadmap after Phase 6 (historical)
@@ -67,13 +68,13 @@ The DB, secrets, and generated client are **not** in the repo. After `git pull`:
 3. `docker compose up -d` (postgres + redis)
 4. `npx prisma generate` (client generates into `src/generated/prisma`, which is gitignored)
 5. `npx prisma migrate deploy` then `npm run seed` (or `npx prisma migrate reset --force` which also seeds via `prisma/seed.ts`)
-6. `npm test` (unit — should be 157 green) and `npm run test:e2e` (54 green across 7 suites)
+6. `npm test` (unit — should be 166 green) and `npm run test:e2e` (62 green across 8 suites)
 
-Latest migration: `prisma/migrations/20260828122953_audits_apply_soft_delete`.
+Latest migration: `prisma/migrations/20260908124337_reservations_reserve_types_created_by`.
 
 ## Key references in-repo
-- `docs/superpowers/specs/2026-08-28-phase-8-inventory-audits-design.md` — Phase 8 design (latest)
-- `docs/superpowers/plans/2026-08-28-phase-8-inventory-audits.md` — Phase 8 implementation plan
-- `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–7 specs & plans
-- `blog/en` + `blog/ko` — Phase 1–8 retrospectives
+- `docs/superpowers/specs/2026-09-07-phase-9-purchase-reservations-design.md` — Phase 9 design (latest)
+- `docs/superpowers/plans/2026-09-07-phase-9-purchase-reservations.md` — Phase 9 implementation plan
+- `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–8 specs & plans
+- `blog/en` + `blog/ko` — Phase 1–8 retrospectives (Phase 9 pending)
 - `prisma/schema.prisma` — single source of truth for the data model
