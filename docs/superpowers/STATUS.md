@@ -22,12 +22,12 @@
 | 7 | **Restock orders** (request document: header + line items, nested CRUD) | ✅ complete (blogged) |
 | 8 | **Inventory audits** (physical count doc → atomic apply reconciles stock) | ✅ complete (blogged) |
 | 9 | **Purchase reservations** (hold stock for a customer; fulfill = release + sale) | ✅ complete (blogged) |
-| 10a | **Reservation auto-expiry sweep** (`@nestjs/schedule` cron releases expired holds) | ✅ complete |
+| 10a | **Reservation auto-expiry sweep** (`@nestjs/schedule` cron releases expired holds) | ✅ complete (blogged) |
 | 10b+ | More cross-cutting concerns / Redis caching (only when measured) | ⏳ not started |
 
 ## Where we are right now — Phase 10a complete (reservation auto-expiry sweep)
 
-Phases 0–9 done, tested, blogged. Phase 10a (first slice of cross-cutting concerns) done + tested (blog pending). It closes the loop Phase 9 left open: `expiresAt` was stored but nothing released expired holds.
+Phases 0–9 done, tested, blogged. Phase 10a (first slice of cross-cutting concerns) done, tested, and blogged. It closes the loop Phase 9 left open: `expiresAt` was stored but nothing released expired holds.
 - **`@nestjs/schedule`** added; `ScheduleModule.forRoot()` in `AppModule`. A **`ReservationExpiryService`** (in the reservations module) runs `@Cron(EVERY_MINUTE) sweepExpired()`.
 - **Claim-then-release, safe by construction.** For each `RESERVED` reservation past `expiresAt`, in its own `$transaction`: a **guarded `updateMany`** claim (`status: RESERVED → EXPIRED`, stamps new `expiredAt` column) — `count === 0` means a concurrent sweep/fulfill/cancel already handled it, skip; else `recordWithinTransaction(RESERVATION_RELEASE)` (reserved→available), actor = `reservation.createdByUserId` (source=RESERVATION + EXPIRED status disambiguate it from a manual release). One bad row can't stall the rest.
 - Migration `20260909162034_reservation_expired_at` added `expired_at`. No new permissions (background job, no HTTP surface). `sweepExpired()` is directly callable — the e2e invokes it via `app.get(...)`.
@@ -89,5 +89,5 @@ Latest migration: `prisma/migrations/20260909162034_reservation_expired_at`. **K
 - `docs/superpowers/specs/2026-09-07-phase-9-purchase-reservations-design.md` — Phase 9 design (latest full spec; Phase 10a was built directly from an in-session design, no spec file)
 - `docs/superpowers/plans/2026-09-07-phase-9-purchase-reservations.md` — Phase 9 implementation plan
 - `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–9 specs & plans
-- `blog/en` + `blog/ko` — Phase 1–9 retrospectives (Phase 10a pending)
+- `blog/en` + `blog/ko` — Phase 1–9 + 10a retrospectives
 - `prisma/schema.prisma` — single source of truth for the data model
