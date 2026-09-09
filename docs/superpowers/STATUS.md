@@ -22,19 +22,32 @@
 | 7 | **Restock orders** (request document: header + line items, nested CRUD) | ✅ complete (blogged) |
 | 8 | **Inventory audits** (physical count doc → atomic apply reconciles stock) | ✅ complete (blogged) |
 | 9 | **Purchase reservations** (hold stock for a customer; fulfill = release + sale) | ✅ complete (blogged) |
-| 10+ | Cross-cutting concerns (auto-expiry sweep, jobs), Redis caching | ⏳ not started |
+| 10a | **Reservation auto-expiry sweep** (`@nestjs/schedule` cron releases expired holds) | ✅ complete |
+| 10b+ | More cross-cutting concerns / Redis caching (only when measured) | ⏳ not started |
 
-## Where we are right now — Phase 9 complete (purchase reservations)
+## Where we are right now — Phase 10a complete (reservation auto-expiry sweep)
 
-Phases 0–9 are done, tested, and blogged. Phase 9 adds **purchase reservations** — hold a customer's stock, convert the hold to a sale on pickup. It's the first phase to *extend* the Phase 6 effect map (the `reserved` bucket) and the third `recordWithinTransaction` caller.
+Phases 0–9 done, tested, blogged. Phase 10a (first slice of cross-cutting concerns) done + tested (blog pending). It closes the loop Phase 9 left open: `expiresAt` was stored but nothing released expired holds.
+- **`@nestjs/schedule`** added; `ScheduleModule.forRoot()` in `AppModule`. A **`ReservationExpiryService`** (in the reservations module) runs `@Cron(EVERY_MINUTE) sweepExpired()`.
+- **Claim-then-release, safe by construction.** For each `RESERVED` reservation past `expiresAt`, in its own `$transaction`: a **guarded `updateMany`** claim (`status: RESERVED → EXPIRED`, stamps new `expiredAt` column) — `count === 0` means a concurrent sweep/fulfill/cancel already handled it, skip; else `recordWithinTransaction(RESERVATION_RELEASE)` (reserved→available), actor = `reservation.createdByUserId` (source=RESERVATION + EXPIRED status disambiguate it from a manual release). One bad row can't stall the rest.
+- Migration `20260909162034_reservation_expired_at` added `expired_at`. No new permissions (background job, no HTTP surface). `sweepExpired()` is directly callable — the e2e invokes it via `app.get(...)`.
+- **⚠️ Prisma/ESM gotchas** (both resolved, worth remembering): (1) briefly upgraded the `prisma` CLI to an **8.0.0-rc** while `@prisma/client` stayed 7 — a CLI/client major mismatch; reverted to matched **v7**. (2) `@nestjs/schedule` v12 is **ESM-only**, so the **unit** jest config transforms it to CJS (`transformIgnorePatterns: ["node_modules/(?!@nestjs/schedule)"]`, no vm-modules), while the **e2e** loads it as native ESM under `--experimental-vm-modules` (which Prisma 7's WASM query compiler also needs) — opposite handling in the two jest configs.
+- **170 unit tests green** + `test/reservations.e2e-spec.ts` extended (**63 e2e green across 8 suites**).
+
+## Historical — Phase 9 (purchase reservations)
+
+Phase 9 adds **purchase reservations** — hold a customer's stock, convert the hold to a sale on pickup. It's the first phase to *extend* the Phase 6 effect map (the `reserved` bucket) and the third `recordWithinTransaction` caller.
 - **Reservation = single row** (`PurchaseReservation`: one placement + `reservedQuantity` + customer `reservedByName`/`Phone`), corner-scoped. Migration `20260908124337_reservations_reserve_types_created_by` added `created_by_user_id` + the two enum values.
 - **Hold on create.** Creating a reservation moves stock `available → reserved` (guarded `RESERVATION_HOLD`; **insufficient available → 409**) and starts it `RESERVED`. **Fulfill** = `RESERVATION_RELEASE` + `SALE` → `FULFILLED` (so *every* purchase is a `SALE`; reserved-origin ones tagged `source=RESERVATION`). **Cancel** = `RESERVATION_RELEASE` → `CANCELLED`. Fulfill/cancel on a non-`RESERVED` reservation → 409. `PENDING`/`EXPIRED` defined but unused (deferred).
 - **Effect map extended.** `Bucket` gained `reservedQuantity`; two new cross-bucket, guard-first effects `RESERVATION_HOLD` (available→reserved) / `RESERVATION_RELEASE` (reserved→available), reusing `SALE`. Invariant: the `reserved` bucket = sum of active reservations.
 - **Corner-level resource** (revised from placement-nested mid-build): `POST/GET /corners/:cornerId/reservations` (companyStoreProductId in the create body; GET corner-wide with optional `?companyStoreProductId`/`?status` filters — the counter's pickup view), `…/:reservationId/fulfill|cancel`. RBAC `reservations.{create,read,fulfill,cancel}`, all to OWNER/MANAGER/STAFF. **48 permissions**. No soft-delete (terminal statuses instead). `createdByUserId` added; transition-actors live in the ledger (source=RESERVATION).
 - **166 unit tests green** + `test/reservations.e2e-spec.ts` (**62 e2e green across 8 suites**) — passed first run.
 
-**Next — Phase 10: cross-cutting concerns.** The deferred **reservation auto-expiry sweep** (a scheduled job releasing `RESERVED` holds past `expiresAt` → `EXPIRED`, via `recordWithinTransaction(RESERVATION_RELEASE)`) is the natural first job — introduces `@nestjs/schedule`. Then Redis caching (only when a measured need appears). Start with `/brainstorming` → spec → plan → per-task build.
+The reservation auto-expiry sweep (Phase 10a, above) was Phase 9's deferred job.
+
+**Next — Phase 10b onward: remaining cross-cutting concerns.** No concrete forced next slice — the domain feature set is complete. Candidates: Redis caching (roadmap says *only when a measured need appears* — don't build speculatively), rate limiting, observability/metrics, API docs (OpenAPI). Pick based on an actual need. Start any new slice with `/brainstorming` → spec → plan → per-task build.
 - ⚠️ e2e reminder: `npm run test:e2e`'s `pretest` runs `prisma migrate reset --force`, blocked by Claude's Prisma AI-guard — **a human must run it**. Claude runs `npm test` fine.
+- ⚠️ Two jest configs handle the ESM-only `@nestjs/schedule` differently — see Phase 10a notes above before touching test config.
 
 ## Roadmap after Phase 6 (historical)
 
@@ -68,13 +81,13 @@ The DB, secrets, and generated client are **not** in the repo. After `git pull`:
 3. `docker compose up -d` (postgres + redis)
 4. `npx prisma generate` (client generates into `src/generated/prisma`, which is gitignored)
 5. `npx prisma migrate deploy` then `npm run seed` (or `npx prisma migrate reset --force` which also seeds via `prisma/seed.ts`)
-6. `npm test` (unit — should be 166 green) and `npm run test:e2e` (62 green across 8 suites)
+6. `npm test` (unit — should be 170 green) and `npm run test:e2e` (63 green across 8 suites)
 
-Latest migration: `prisma/migrations/20260908124337_reservations_reserve_types_created_by`.
+Latest migration: `prisma/migrations/20260909162034_reservation_expired_at`. **Keep the `prisma` CLI + `@prisma/client` + `@prisma/adapter-pg` all on the same major (v7); don't bump to the v8 RC.**
 
 ## Key references in-repo
-- `docs/superpowers/specs/2026-09-07-phase-9-purchase-reservations-design.md` — Phase 9 design (latest)
+- `docs/superpowers/specs/2026-09-07-phase-9-purchase-reservations-design.md` — Phase 9 design (latest full spec; Phase 10a was built directly from an in-session design, no spec file)
 - `docs/superpowers/plans/2026-09-07-phase-9-purchase-reservations.md` — Phase 9 implementation plan
-- `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–8 specs & plans
-- `blog/en` + `blog/ko` — Phase 1–9 retrospectives
+- `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–9 specs & plans
+- `blog/en` + `blog/ko` — Phase 1–9 retrospectives (Phase 10a pending)
 - `prisma/schema.prisma` — single source of truth for the data model
