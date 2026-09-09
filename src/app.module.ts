@@ -17,6 +17,7 @@ import { InventoryModule } from './inventory/inventory.module';
 import { OrdersModule } from './orders/orders.module';
 import { AuditsModule } from './audits/audits.module';
 import { ReservationsModule } from './reservations/reservations.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { ReservationsModule } from './reservations/reservations.module';
       isGlobal: true,
       validate: validateEnv,
     }),
+    ScheduleModule.forRoot(),
     PrismaModule,
     AuthModule,
     AuthorizationModule,

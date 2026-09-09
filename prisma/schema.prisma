@@ -502,6 +502,7 @@ model PurchaseReservation {
   status                ReservationStatus @default(PENDING)
   remark                String?           @db.Text
   expiresAt             DateTime?         @map("expires_at") @db.Timestamptz(6)
+  expiredAt             DateTime?         @map("expired_at") @db.Timestamptz(6)
   fulfilledAt           DateTime?         @map("fulfilled_at") @db.Timestamptz(6)
   cancelledAt           DateTime?         @map("cancelled_at") @db.Timestamptz(6)
   cancelReason          String?           @map("cancel_reason") @db.Text

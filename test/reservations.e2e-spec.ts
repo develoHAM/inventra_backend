@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { ReservationExpiryService } from '../src/reservations/reservation-expiry.service';
 
 describe('Purchase Reservations (e2e)', () => {
   let app: INestApplication;
@@ -291,5 +292,37 @@ describe('Purchase Reservations (e2e)', () => {
       .get(base())
       .set(...auth(owner2Access))
       .expect(404);
+  });
+
+  it('the auto-expiry sweep releases a past-due reservation (reserved -> available, EXPIRED)', async () => {
+    const res = await request(http)
+      .post(base())
+      .set(...auth(ownerAccess))
+      .send({
+        companyStoreProductId: placementId,
+        reservedByName: 'Park',
+        reservedQuantity: 2,
+        expiresAt: '2020-01-01T00:00:00.000Z', // already past
+      })
+      .expect(201);
+
+    // run the sweep directly (no HTTP surface); asserting end-state keeps this
+    // robust to the real @Cron possibly firing during the test window
+    await app.get(ReservationExpiryService).sweepExpired();
+
+    expect(await stockOf()).toEqual({ available: 7, reserved: 0 }); // released
+    const one = await request(http)
+      .get(`${base()}/${res.body.id}`)
+      .set(...auth(ownerAccess))
+      .expect(200);
+    expect(one.body.status).toBe('EXPIRED');
+    expect(one.body.expiredAt).not.toBeNull();
+
+    const ledger = await request(http)
+      .get(`/corners/${cornerId}/products/${placementId}/transactions`)
+      .set(...auth(ownerAccess))
+      .expect(200);
+    expect(ledger.body[0].transactionType).toBe('RESERVATION_RELEASE');
+    expect(ledger.body[0].sourceType).toBe('RESERVATION');
   });
 });
