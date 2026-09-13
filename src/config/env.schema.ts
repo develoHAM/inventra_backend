@@ -25,6 +25,13 @@ export const envSchema = z.object({
   // -- Seed (initial platform admin) --
   SEED_ADMIN_EMAIL: z.email(),
   SEED_ADMIN_PASSWORD: z.string().min(8),
+  // -- Storage (S3 / MinIO) --
+  S3_ENDPOINT: z.url(),
+  S3_REGION: z.string().default('us-east-1'),
+  S3_ACCESS_KEY: z.string().min(1),
+  S3_SECRET_KEY: z.string().min(1),
+  S3_BUCKET: z.string().min(1),
+  S3_PRESIGN_EXPIRY_SECONDS: z.coerce.number().int().positive().default(300),
 });
 
 export type Env = z.infer<typeof envSchema>;

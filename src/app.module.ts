@@ -18,6 +18,7 @@ import { OrdersModule } from './orders/orders.module';
 import { AuditsModule } from './audits/audits.module';
 import { ReservationsModule } from './reservations/reservations.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     }),
     ScheduleModule.forRoot(),
     PrismaModule,
+    StorageModule,
     AuthModule,
     AuthorizationModule,
     UsersModule,
