@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-09-09.
+> Last updated: 2026-09-14.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -24,8 +24,22 @@
 | 9 | **Purchase reservations** (hold stock for a customer; fulfill = release + sale) | ✅ complete (blogged) |
 | 10a | **Reservation auto-expiry sweep** (`@nestjs/schedule` cron releases expired holds) | ✅ complete (blogged) |
 | 10b+ | More cross-cutting concerns / Redis caching (only when measured) | ⏳ not started |
+| Files | **File uploads** (MinIO/S3 storage foundation + product image → brand/user → order/audit) | 🔨 Slice 1 complete |
 
-## Where we are right now — Phase 10a complete (reservation auto-expiry sweep)
+## Where we are right now — File uploads, Slice 1 complete
+
+New parallel track (from the two-item todo: *Prisma 8 migration* + *file uploads*). **Prisma 8 is blocked upstream** — no GA client/adapter yet (only `8.0.0-rc` / dev); revisit when a stable `@prisma/client` + `@prisma/adapter-pg` v8 ship together. So the file-upload subsystem went first.
+
+**MinIO** (self-hosted, S3-compatible object store) added as a Docker service; the app talks to it via the AWS SDK v3 (`@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner`). A **`@Global() StorageModule`** exposes **`StorageService`** (`src/storage/`): `putObject`, `presignPutUrl`, `presignGetUrl`, `objectExists`, `deleteObject`, plus an `onModuleInit` bucket-ensure (HeadBucket → CreateBucket on miss). Env (Zod-validated): `S3_ENDPOINT / S3_REGION / S3_ACCESS_KEY / S3_SECRET_KEY / S3_BUCKET / S3_PRESIGN_EXPIRY_SECONDS`.
+
+**Slice 1 — product image** ✅. Object keys are `products/<productId>/<uuid>.<ext>`; the DB stores the **key**, and reads **presign-on-read** (return a fresh presigned GET URL each time). Two upload paths: **proxied** (`POST /products/:id/image`, multer `FileInterceptor` + `ParseFilePipe` — 5 MB + jpeg/png/webp) and **presigned** (`…/image/presign` → client PUTs bytes straight to MinIO → `…/image/confirm` validates key-prefix + object-exists). All gated `products.update`; old image deleted on replace. Single `imageUrl` for now (multi-image = future `ProductImage` child table).
+- ⚠️ **MinIO creds gotcha (cost an entire e2e run):** `docker compose` reads `${MINIO_ROOT_*}` from **`.env`** (its default env file), so that's what the container boots with; the e2e process signs with **`.env.test`**'s `S3_*`. If those secrets diverge → `SignatureDoesNotMatch` at `onModuleInit` in **every** e2e suite (StorageService is `@Global()`, so it boots app-wide, not just in the uploads suite). Keep the two files' MinIO secret aligned.
+- **`.env.test` uses its own bucket** `inventra-files-test` (isolated from dev's `inventra-files`); `onModuleInit` auto-creates it on first boot.
+- **176 unit tests green** (20 suites) + `test/uploads.e2e-spec.ts` (4 tests) — full e2e green.
+
+**Next — Slice 2: brand logo + user avatar** (reuse `StorageService`; same key/presign-on-read pattern). Then **Slice 3: order file + audit file** (private + presign-on-read + audit-frozen guard). Spec: `docs/superpowers/specs/2026-09-10-file-uploads-storage-product-image-design.md`; plan: `docs/superpowers/plans/2026-09-10-file-uploads-storage-product-image.md`.
+
+## Prior — Phase 10a complete (reservation auto-expiry sweep)
 
 Phases 0–9 done, tested, blogged. Phase 10a (first slice of cross-cutting concerns) done, tested, and blogged. It closes the loop Phase 9 left open: `expiresAt` was stored but nothing released expired holds.
 - **`@nestjs/schedule`** added; `ScheduleModule.forRoot()` in `AppModule`. A **`ReservationExpiryService`** (in the reservations module) runs `@Cron(EVERY_MINUTE) sweepExpired()`.
@@ -77,11 +91,11 @@ Orders → audits → purchase reservations → cross-cutting concerns → Redis
 ## Resume on a new machine
 The DB, secrets, and generated client are **not** in the repo. After `git pull`:
 1. `npm install`
-2. Recreate the gitignored env files (copy from the other laptop): **`.env`** and **`.env.test`**. `DATABASE_URL` must **not** include `sslmode=require` for the local container.
-3. `docker compose up -d` (postgres + redis)
+2. Recreate the gitignored env files (copy from the other laptop): **`.env`** and **`.env.test`** (both now carry the `MINIO_*` + `S3_*` block). `DATABASE_URL` must **not** include `sslmode=require` for the local container. Keep each file's `MINIO_ROOT_PASSWORD` and `S3_SECRET_KEY` equal — a mismatch triggers `SignatureDoesNotMatch` on boot.
+3. `docker compose up -d` (postgres + redis + **minio** — MinIO console at `localhost:${MINIO_CONSOLE_PORT}`)
 4. `npx prisma generate` (client generates into `src/generated/prisma`, which is gitignored)
 5. `npx prisma migrate deploy` then `npm run seed` (or `npx prisma migrate reset --force` which also seeds via `prisma/seed.ts`)
-6. `npm test` (unit — should be 170 green) and `npm run test:e2e` (63 green across 8 suites)
+6. `npm test` (unit — should be 176 green across 20 suites) and `npm run test:e2e` (all green, incl. `test/uploads.e2e-spec.ts`)
 
 Latest migration: `prisma/migrations/20260909162034_reservation_expired_at`. **Keep the `prisma` CLI + `@prisma/client` + `@prisma/adapter-pg` all on the same major (v7); don't bump to the v8 RC.**
 
