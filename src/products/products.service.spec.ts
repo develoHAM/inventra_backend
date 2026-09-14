@@ -21,6 +21,13 @@ describe('ProductsService', () => {
   };
   let categories: { findActive: jest.Mock };
   let brands: { findInCompany: jest.Mock };
+  let storage: {
+    putObject: jest.Mock;
+    presignPutUrl: jest.Mock;
+    presignGetUrl: jest.Mock;
+    objectExists: jest.Mock;
+    deleteObject: jest.Mock;
+  };
 
   const owner: AuthUser = {
     id: 'owner-1', companyId: 'company-1', roleId: 2,
@@ -50,12 +57,20 @@ describe('ProductsService', () => {
     };
     categories = { findActive: jest.fn().mockResolvedValue({ id: 10 }) };
     brands = { findInCompany: jest.fn().mockResolvedValue({ id: 20 }) };
-    // constructor order: (prisma, ownership, categories, brands)
+    storage = {
+      putObject: jest.fn().mockResolvedValue(undefined),
+      presignPutUrl: jest.fn().mockResolvedValue('https://minio/presigned-put'),
+      presignGetUrl: jest.fn().mockResolvedValue('https://minio/presigned-get'),
+      objectExists: jest.fn().mockResolvedValue(true),
+      deleteObject: jest.fn().mockResolvedValue(undefined),
+    };
+    // constructor order: (prisma, ownership, categories, brands, storage)
     service = new ProductsService(
       prisma as any,
       new OwnershipService(),
       categories as any,
       brands as any,
+      storage as any,
     );
   });
 
@@ -198,6 +213,123 @@ describe('ProductsService', () => {
     it('returns null when absent / other company / deleted', async () => {
       prisma.product.findFirst.mockResolvedValue(null);
       expect(await service.findInCompany('p1', 'company-1')).toBeNull();
+    });
+  });
+
+  describe('image upload', () => {
+    const productId = '33333333-3333-3333-3333-333333333333';
+
+    it('uploadImage stores under products/<id>/<uuid>.<ext>, deletes the old, sets imageUrl', async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: productId,
+        companyId: 'company-1',
+        imageUrl: 'products/old.jpg',
+      });
+      prisma.product.update.mockResolvedValue({ id: productId, imageUrl: 'k' });
+
+      await service.uploadImage(owner, productId, {
+        buffer: Buffer.from('x'),
+        mimetype: 'image/png',
+      } as any);
+
+      const putKey = storage.putObject.mock.calls[0][0];
+      expect(putKey).toMatch(
+        new RegExp(`^products/${productId}/[0-9a-f-]+\\.png$`),
+      );
+      expect(storage.putObject).toHaveBeenCalledWith(
+        putKey,
+        expect.any(Buffer),
+        'image/png',
+      );
+      expect(storage.deleteObject).toHaveBeenCalledWith('products/old.jpg');
+      expect(prisma.product.update).toHaveBeenCalledWith({
+        where: { id: productId },
+        data: { imageUrl: putKey },
+      });
+    });
+
+    it('presignImageUpload returns an upload URL + key without touching the product', async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: productId,
+        companyId: 'company-1',
+        imageUrl: null,
+      });
+
+      const res = await service.presignImageUpload(owner, productId, {
+        contentType: 'image/jpeg',
+      } as any);
+
+      expect(res.key).toMatch(
+        new RegExp(`^products/${productId}/[0-9a-f-]+\\.jpg$`),
+      );
+      expect(res.uploadUrl).toBe('https://minio/presigned-put');
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it('confirmImage rejects a key not under this product (400)', async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: productId,
+        companyId: 'company-1',
+        imageUrl: null,
+      });
+
+      await expect(
+        service.confirmImage(owner, productId, {
+          key: 'products/other/x.jpg',
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(storage.objectExists).not.toHaveBeenCalled();
+    });
+
+    it('confirmImage rejects a key whose object is missing (400)', async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: productId,
+        companyId: 'company-1',
+        imageUrl: null,
+      });
+      storage.objectExists.mockResolvedValue(false);
+
+      await expect(
+        service.confirmImage(owner, productId, {
+          key: `products/${productId}/x.jpg`,
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it('confirmImage sets imageUrl and returns a presented (presigned) product', async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: productId,
+        companyId: 'company-1',
+        imageUrl: null,
+      });
+      prisma.product.update.mockResolvedValue({
+        id: productId,
+        imageUrl: `products/${productId}/x.jpg`,
+      });
+
+      const res = await service.confirmImage(owner, productId, {
+        key: `products/${productId}/x.jpg`,
+      } as any);
+
+      expect(prisma.product.update).toHaveBeenCalledWith({
+        where: { id: productId },
+        data: { imageUrl: `products/${productId}/x.jpg` },
+      });
+      expect(res.imageUrl).toBe('https://minio/presigned-get');
+    });
+
+    it('findOne presents the stored key as a presigned URL', async () => {
+      prisma.product.findFirst.mockResolvedValue({
+        id: productId,
+        companyId: 'company-1',
+        imageUrl: 'products/k.jpg',
+      });
+
+      const res = await service.findOne(owner, productId);
+
+      expect(res.imageUrl).toBe('https://minio/presigned-get');
+      expect(storage.presignGetUrl).toHaveBeenCalledWith('products/k.jpg');
     });
   });
 });

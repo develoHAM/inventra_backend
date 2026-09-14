@@ -12,6 +12,16 @@ import { CategoriesService } from '../categories/categories.service';
 import { BrandsService } from '../brands/brands.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { StorageService } from '../storage/storage.service';
+import { randomUUID } from 'node:crypto';
+import { ConfirmImageDto } from './dto/confirm-image.dto';
+import { PresignImageDto } from './dto/presign-image.dto';
+
+const IMAGE_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
 
 @Injectable()
 export class ProductsService {
@@ -20,6 +30,7 @@ export class ProductsService {
     private readonly ownership: OwnershipService,
     private readonly categories: CategoriesService,
     private readonly brands: BrandsService,
+    private readonly storage: StorageService,
   ) {}
 
   private async assertBarcodeAvailable(barcode: string, excludeId?: string) {
@@ -28,6 +39,34 @@ export class ProductsService {
     });
 
     if (dup) throw new ConflictException('Barcode already exists');
+  }
+
+  private imageKey(productId: string, contentType: string): string {
+    const ext = IMAGE_EXT[contentType] ?? 'bin';
+    return `products/${productId}/${randomUUID()}.${ext}`;
+  }
+
+  private async present<T extends { imageUrl: string | null }>(
+    product: T,
+  ): Promise<T> {
+    if (!product.imageUrl) return product;
+    return {
+      ...product,
+      imageUrl: await this.storage.presignGetUrl(product.imageUrl),
+    };
+  }
+
+  private async findOneRaw(caller: AuthUser, id: string) {
+    const product = await this.prisma.product.findFirst({
+      where: {
+        id: id,
+        ...this.ownership.scopeToCompany(caller),
+        deletedAt: null,
+      },
+    });
+
+    if (!product) throw new NotFoundException('Product not found');
+    return product;
   }
 
   async create(caller: AuthUser, dto: CreateProductDto) {
@@ -51,22 +90,15 @@ export class ProductsService {
     });
   }
 
-  findAll(caller: AuthUser) {
-    return this.prisma.product.findMany({
+  async findAll(caller: AuthUser) {
+    const products = await this.prisma.product.findMany({
       where: { ...this.ownership.scopeToCompany(caller), deletedAt: null },
     });
+    return Promise.all(products.map((p) => this.present(p)));
   }
 
   async findOne(caller: AuthUser, id: string) {
-    const product = await this.prisma.product.findFirst({
-      where: {
-        id,
-        ...this.ownership.scopeToCompany(caller),
-        deletedAt: null,
-      },
-    });
-    if (!product) throw new NotFoundException('Product not found');
-    return product;
+    return this.present(await this.findOneRaw(caller, id));
   }
 
   findInCompany(productId: string, companyId: string) {
@@ -76,7 +108,7 @@ export class ProductsService {
   }
 
   async update(caller: AuthUser, id: string, dto: UpdateProductDto) {
-    const product = await this.findOne(caller, id);
+    const product = await this.findOneRaw(caller, id);
 
     if (dto.brandId !== undefined) {
       const brand = await this.brands.findInCompany(
@@ -96,7 +128,7 @@ export class ProductsService {
   }
 
   async remove(caller: AuthUser, id: string) {
-    const product = await this.findOne(caller, id);
+    const product = await this.findOneRaw(caller, id);
     if (
       caller.roleCode === 'MANAGER' &&
       product.createdByUserId !== caller.id
@@ -107,5 +139,38 @@ export class ProductsService {
       where: { id },
       data: { deletedAt: new Date(), deletedByUserId: caller.id },
     });
+  }
+
+  async uploadImage(caller: AuthUser, id: string, file: Express.Multer.File) {
+    const product = await this.findOneRaw(caller, id);
+    const key = this.imageKey(id, file.mimetype);
+    await this.storage.putObject(key, file.buffer, file.mimetype);
+    if (product.imageUrl) await this.storage.deleteObject(product.imageUrl);
+    const updated = await this.prisma.product.update({
+      where: { id },
+      data: { imageUrl: key },
+    });
+    return this.present(updated);
+  }
+
+  async presignImageUpload(caller: AuthUser, id: string, dto: PresignImageDto) {
+    await this.findOneRaw(caller, id);
+    const key = this.imageKey(id, dto.contentType);
+    const uploadUrl = await this.storage.presignPutUrl(key, dto.contentType);
+    return { uploadUrl, key };
+  }
+
+  async confirmImage(caller: AuthUser, id: string, dto: ConfirmImageDto) {
+    const product = await this.findOneRaw(caller, id);
+    if (!dto.key.startsWith(`products/${id}/`))
+      throw new BadRequestException('Key does not belong to this product');
+    if (!(await this.storage.objectExists(dto.key)))
+      throw new BadRequestException('Uploaded object not found');
+    if (product.imageUrl) await this.storage.deleteObject(product.imageUrl);
+    const updated = await this.prisma.product.update({
+      where: { id },
+      data: { imageUrl: dto.key },
+    });
+    return this.present(updated);
   }
 }

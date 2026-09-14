@@ -8,12 +8,20 @@ import {
   Patch,
   Post,
   Get,
+  FileTypeValidator,
+  MaxFileSizeValidator,
+  ParseFilePipe,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth-user';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ConfirmImageDto } from './dto/confirm-image.dto';
+import { PresignImageDto } from './dto/presign-image.dto';
 
 @Controller('products')
 export class ProductsController {
@@ -57,5 +65,44 @@ export class ProductsController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.products.remove(caller, id);
+  }
+
+  @RequirePermissions('products.update')
+  @Post(':id/image')
+  @UseInterceptors(FileInterceptor('file'))
+  uploadImage(
+    @CurrentUser() caller: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }),
+          new FileTypeValidator({ fileType: /^image\/(jpeg|png|webp)$/ }),
+        ],
+      }),
+    )
+    file: Express.Multer.File,
+  ) {
+    return this.products.uploadImage(caller, id, file);
+  }
+
+  @RequirePermissions('products.update')
+  @Post(':id/image/presign')
+  presignImage(
+    @CurrentUser() caller: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: PresignImageDto,
+  ) {
+    return this.products.presignImageUpload(caller, id, dto);
+  }
+
+  @RequirePermissions('products.update')
+  @Post(':id/image/confirm')
+  confirmImage(
+    @CurrentUser() caller: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ConfirmImageDto,
+  ) {
+    return this.products.confirmImage(caller, id, dto);
   }
 }
