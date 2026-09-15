@@ -34,20 +34,22 @@ describe('Stores & Corners (e2e)', () => {
       .post('/auth/register')
       .send({
         companyName: `SC Co ${n}`,
-        taxId,
+        taxId: taxId,
         ownerName: `Owner ${n}`,
         ownerEmail: email,
         ownerPassword: password,
       })
       .expect(201);
-    const company = await prisma.company.findUnique({ where: { taxId } });
+    const company = await prisma.company.findUnique({
+      where: { taxId: taxId },
+    });
     await request(http)
       .patch(`/companies/${company!.id}/approve`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
     const login = await request(http)
       .post('/auth/login')
-      .send({ email, password })
+      .send({ email: email, password: password })
       .expect(201);
     return {
       access: login.body.accessToken as string,
@@ -67,10 +69,10 @@ describe('Stores & Corners (e2e)', () => {
     const password = 'password123';
     await request(http)
       .post('/auth/register/member')
-      .send({ joinCode, email, password, name: tag })
+      .send({ joinCode: joinCode, email: email, password: password, name: tag })
       .expect(201);
     const user = await prisma.user.findFirst({
-      where: { loginMethods: { some: { email } } },
+      where: { loginMethods: { some: { email: email } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
@@ -80,7 +82,7 @@ describe('Stores & Corners (e2e)', () => {
       .expect(200);
     const login = await request(http)
       .post('/auth/login')
-      .send({ email, password })
+      .send({ email: email, password: password })
       .expect(201);
     return {
       access: login.body.accessToken as string,
@@ -117,11 +119,21 @@ describe('Stores & Corners (e2e)', () => {
     ownerAccess = c1.access;
     company1Id = c1.companyId;
 
-    const mgr = await registerMember(c1.joinCode, ownerAccess, 'MANAGER', 'manager');
+    const mgr = await registerMember(
+      c1.joinCode,
+      ownerAccess,
+      'MANAGER',
+      'manager',
+    );
     managerAccess = mgr.access;
     managerUserId = mgr.userId;
 
-    const staff = await registerMember(c1.joinCode, ownerAccess, 'STAFF', 'staff');
+    const staff = await registerMember(
+      c1.joinCode,
+      ownerAccess,
+      'STAFF',
+      'staff',
+    );
     staffUserId = staff.userId;
 
     const other = await registerMember(
@@ -159,7 +171,7 @@ describe('Stores & Corners (e2e)', () => {
     const res = await request(http)
       .post('/corners')
       .set('Authorization', `Bearer ${ownerAccess}`)
-      .send({ storeId, name: 'A-1' })
+      .send({ storeId: storeId, name: 'A-1' })
       .expect(201);
     cornerId = res.body.id;
 
@@ -224,7 +236,7 @@ describe('Stores & Corners (e2e)', () => {
     await request(http)
       .post('/corners')
       .set('Authorization', `Bearer ${adminAccess}`)
-      .send({ storeId, name: 'admin-made', companyId: company1Id })
+      .send({ storeId: storeId, name: 'admin-made', companyId: company1Id })
       .expect(201);
   });
 });

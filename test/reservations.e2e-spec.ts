@@ -34,20 +34,22 @@ describe('Purchase Reservations (e2e)', () => {
       .post('/auth/register')
       .send({
         companyName: `RSV Co ${n}`,
-        taxId,
+        taxId: taxId,
         ownerName: `Owner ${n}`,
         ownerEmail: email,
         ownerPassword: password,
       })
       .expect(201);
-    const company = await prisma.company.findUnique({ where: { taxId } });
+    const company = await prisma.company.findUnique({
+      where: { taxId: taxId },
+    });
     await request(http)
       .patch(`/companies/${company!.id}/approve`)
       .set(...auth(adminAccess))
       .expect(200);
     const login = await request(http)
       .post('/auth/login')
-      .send({ email, password })
+      .send({ email: email, password: password })
       .expect(201);
     return {
       access: login.body.accessToken as string,
@@ -65,10 +67,10 @@ describe('Purchase Reservations (e2e)', () => {
     const password = 'password123';
     await request(http)
       .post('/auth/register/member')
-      .send({ joinCode, email, password, name: tag })
+      .send({ joinCode: joinCode, email: email, password: password, name: tag })
       .expect(201);
     const user = await prisma.user.findFirst({
-      where: { loginMethods: { some: { email } } },
+      where: { loginMethods: { some: { email: email } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
@@ -78,7 +80,7 @@ describe('Purchase Reservations (e2e)', () => {
       .expect(200);
     const login = await request(http)
       .post('/auth/login')
-      .send({ email, password })
+      .send({ email: email, password: password })
       .expect(201);
     return {
       access: login.body.accessToken as string,
@@ -86,7 +88,10 @@ describe('Purchase Reservations (e2e)', () => {
     };
   };
 
-  const stockOf = async (): Promise<{ available: number; reserved: number }> => {
+  const stockOf = async (): Promise<{
+    available: number;
+    reserved: number;
+  }> => {
     const res = await request(http)
       .get(`/corners/${cornerId}/products/${placementId}`)
       .set(...auth(ownerAccess))
@@ -124,10 +129,20 @@ describe('Purchase Reservations (e2e)', () => {
 
     const company1 = await registerCompany(1);
     ownerAccess = company1.access;
-    const staff = await registerMember(company1.joinCode, ownerAccess, 'STAFF', 'staff');
+    const staff = await registerMember(
+      company1.joinCode,
+      ownerAccess,
+      'STAFF',
+      'staff',
+    );
     staffAccess = staff.access;
     staffUserId = staff.userId;
-    const otherManager = await registerMember(company1.joinCode, ownerAccess, 'MANAGER', 'othermgr');
+    const otherManager = await registerMember(
+      company1.joinCode,
+      ownerAccess,
+      'MANAGER',
+      'othermgr',
+    );
     otherManagerAccess = otherManager.access;
 
     const storeId = (
@@ -141,7 +156,7 @@ describe('Purchase Reservations (e2e)', () => {
       await request(http)
         .post('/corners')
         .set(...auth(ownerAccess))
-        .send({ storeId, name: 'RSV Corner' })
+        .send({ storeId: storeId, name: 'RSV Corner' })
         .expect(201)
     ).body.id;
     await request(http)
@@ -168,14 +183,20 @@ describe('Purchase Reservations (e2e)', () => {
       await request(http)
         .post('/products')
         .set(...auth(ownerAccess))
-        .send({ name: 'RSV P1', barcode: 'RSV-BC-1', categoryId, brandId, priceKrw: 1000 })
+        .send({
+          name: 'RSV P1',
+          barcode: 'RSV-BC-1',
+          categoryId: categoryId,
+          brandId: brandId,
+          priceKrw: 1000,
+        })
         .expect(201)
     ).body.id;
     placementId = (
       await request(http)
         .post(`/corners/${cornerId}/products`)
         .set(...auth(ownerAccess))
-        .send({ productId, targetStockQuantity: 10 })
+        .send({ productId: productId, targetStockQuantity: 10 })
         .expect(201)
     ).body.id;
     await request(http)
@@ -199,7 +220,11 @@ describe('Purchase Reservations (e2e)', () => {
     const res = await request(http)
       .post(base())
       .set(...auth(ownerAccess))
-      .send({ companyStoreProductId: placementId, reservedByName: 'Kim', reservedQuantity: 3 })
+      .send({
+        companyStoreProductId: placementId,
+        reservedByName: 'Kim',
+        reservedQuantity: 3,
+      })
       .expect(201);
     reservationId = res.body.id;
     expect(res.body.status).toBe('RESERVED');
@@ -233,7 +258,11 @@ describe('Purchase Reservations (e2e)', () => {
     await request(http)
       .post(base())
       .set(...auth(ownerAccess))
-      .send({ companyStoreProductId: placementId, reservedByName: 'Greedy', reservedQuantity: 999 })
+      .send({
+        companyStoreProductId: placementId,
+        reservedByName: 'Greedy',
+        reservedQuantity: 999,
+      })
       .expect(409);
     expect(await stockOf()).toEqual({ available: 7, reserved: 3 }); // unchanged
   });
@@ -251,7 +280,10 @@ describe('Purchase Reservations (e2e)', () => {
       .set(...auth(ownerAccess))
       .expect(200);
     // both land in the same transaction (same createdAt) — assert order-independently
-    const types = ledger.body.slice(0, 2).map((t: any) => t.transactionType).sort();
+    const types = ledger.body
+      .slice(0, 2)
+      .map((t: any) => t.transactionType)
+      .sort();
     expect(types).toEqual(['RESERVATION_RELEASE', 'SALE']);
     expect(ledger.body[0].sourceType).toBe('RESERVATION');
   });
@@ -267,7 +299,11 @@ describe('Purchase Reservations (e2e)', () => {
     const res = await request(http)
       .post(base())
       .set(...auth(staffAccess))
-      .send({ companyStoreProductId: placementId, reservedByName: 'Lee', reservedQuantity: 2 })
+      .send({
+        companyStoreProductId: placementId,
+        reservedByName: 'Lee',
+        reservedQuantity: 2,
+      })
       .expect(201);
     expect(await stockOf()).toEqual({ available: 5, reserved: 2 });
 
@@ -283,7 +319,11 @@ describe('Purchase Reservations (e2e)', () => {
     await request(http)
       .post(base())
       .set(...auth(otherManagerAccess))
-      .send({ companyStoreProductId: placementId, reservedByName: 'X', reservedQuantity: 1 })
+      .send({
+        companyStoreProductId: placementId,
+        reservedByName: 'X',
+        reservedQuantity: 1,
+      })
       .expect(403);
   });
 

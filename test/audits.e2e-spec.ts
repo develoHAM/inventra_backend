@@ -35,20 +35,22 @@ describe('Inventory Audits (e2e)', () => {
       .post('/auth/register')
       .send({
         companyName: `AUD Co ${n}`,
-        taxId,
+        taxId: taxId,
         ownerName: `Owner ${n}`,
         ownerEmail: email,
         ownerPassword: password,
       })
       .expect(201);
-    const company = await prisma.company.findUnique({ where: { taxId } });
+    const company = await prisma.company.findUnique({
+      where: { taxId: taxId },
+    });
     await request(http)
       .patch(`/companies/${company!.id}/approve`)
       .set(...auth(adminAccess))
       .expect(200);
     const login = await request(http)
       .post('/auth/login')
-      .send({ email, password })
+      .send({ email: email, password: password })
       .expect(201);
     return {
       access: login.body.accessToken as string,
@@ -66,10 +68,10 @@ describe('Inventory Audits (e2e)', () => {
     const password = 'password123';
     await request(http)
       .post('/auth/register/member')
-      .send({ joinCode, email, password, name: tag })
+      .send({ joinCode: joinCode, email: email, password: password, name: tag })
       .expect(201);
     const user = await prisma.user.findFirst({
-      where: { loginMethods: { some: { email } } },
+      where: { loginMethods: { some: { email: email } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
@@ -79,7 +81,7 @@ describe('Inventory Audits (e2e)', () => {
       .expect(200);
     const login = await request(http)
       .post('/auth/login')
-      .send({ email, password })
+      .send({ email: email, password: password })
       .expect(201);
     return {
       access: login.body.accessToken as string,
@@ -109,14 +111,20 @@ describe('Inventory Audits (e2e)', () => {
       await request(http)
         .post('/products')
         .set(...auth(ownerAccess))
-        .send({ name: `P-${barcode}`, barcode, categoryId, brandId, priceKrw: 1000 })
+        .send({
+          name: `P-${barcode}`,
+          barcode: barcode,
+          categoryId: categoryId,
+          brandId: brandId,
+          priceKrw: 1000,
+        })
         .expect(201)
     ).body.id;
     const placementId = (
       await request(http)
         .post(`/corners/${cornerId}/products`)
         .set(...auth(ownerAccess))
-        .send({ productId, targetStockQuantity: 10 })
+        .send({ productId: productId, targetStockQuantity: 10 })
         .expect(201)
     ).body.id;
     // seed some starting stock so the audit produces a visible variance
@@ -163,12 +171,27 @@ describe('Inventory Audits (e2e)', () => {
 
     const company1 = await registerCompany(1);
     ownerAccess = company1.access;
-    const manager = await registerMember(company1.joinCode, ownerAccess, 'MANAGER', 'manager');
+    const manager = await registerMember(
+      company1.joinCode,
+      ownerAccess,
+      'MANAGER',
+      'manager',
+    );
     managerUserId = manager.userId;
-    const staff = await registerMember(company1.joinCode, ownerAccess, 'STAFF', 'staff');
+    const staff = await registerMember(
+      company1.joinCode,
+      ownerAccess,
+      'STAFF',
+      'staff',
+    );
     staffAccess = staff.access;
     staffUserId = staff.userId;
-    const otherManager = await registerMember(company1.joinCode, ownerAccess, 'MANAGER', 'othermgr');
+    const otherManager = await registerMember(
+      company1.joinCode,
+      ownerAccess,
+      'MANAGER',
+      'othermgr',
+    );
     otherManagerAccess = otherManager.access;
 
     const storeId = (
@@ -182,7 +205,7 @@ describe('Inventory Audits (e2e)', () => {
       await request(http)
         .post('/corners')
         .set(...auth(ownerAccess))
-        .send({ storeId, name: 'AUD Corner' })
+        .send({ storeId: storeId, name: 'AUD Corner' })
         .expect(201)
     ).body.id;
     await request(http)
@@ -235,7 +258,7 @@ describe('Inventory Audits (e2e)', () => {
       .expect(201);
 
     expect(await stockOf(placementAId)).toBe(12); // was 5, counted 12
-    expect(await stockOf(placementBId)).toBe(0);  // was 5, counted 0
+    expect(await stockOf(placementBId)).toBe(0); // was 5, counted 0
 
     const ledger = await request(http)
       .get(`/corners/${cornerId}/products/${placementAId}/transactions`)

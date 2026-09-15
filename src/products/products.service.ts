@@ -35,7 +35,10 @@ export class ProductsService {
 
   private async assertBarcodeAvailable(barcode: string, excludeId?: string) {
     const dup = await this.prisma.product.findFirst({
-      where: { barcode, ...(excludeId ? { id: { not: excludeId } } : {}) },
+      where: {
+        barcode: barcode,
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
     });
 
     if (dup) throw new ConflictException('Barcode already exists');
@@ -124,7 +127,7 @@ export class ProductsService {
     if (dto.barcode !== undefined)
       await this.assertBarcodeAvailable(dto.barcode, id);
 
-    return this.prisma.product.update({ where: { id }, data: dto });
+    return this.prisma.product.update({ where: { id: id }, data: dto });
   }
 
   async remove(caller: AuthUser, id: string) {
@@ -136,7 +139,7 @@ export class ProductsService {
       throw new ForbiddenException('You can only delete products you created');
     }
     return this.prisma.product.update({
-      where: { id },
+      where: { id: id },
       data: { deletedAt: new Date(), deletedByUserId: caller.id },
     });
   }
@@ -147,7 +150,7 @@ export class ProductsService {
     await this.storage.putObject(key, file.buffer, file.mimetype);
     if (product.imageUrl) await this.storage.deleteObject(product.imageUrl);
     const updated = await this.prisma.product.update({
-      where: { id },
+      where: { id: id },
       data: { imageUrl: key },
     });
     return this.present(updated);
@@ -157,7 +160,7 @@ export class ProductsService {
     await this.findOneRaw(caller, id);
     const key = this.imageKey(id, dto.contentType);
     const uploadUrl = await this.storage.presignPutUrl(key, dto.contentType);
-    return { uploadUrl, key };
+    return { uploadUrl: uploadUrl, key: key };
   }
 
   async confirmImage(caller: AuthUser, id: string, dto: ConfirmImageDto) {
@@ -168,7 +171,7 @@ export class ProductsService {
       throw new BadRequestException('Uploaded object not found');
     if (product.imageUrl) await this.storage.deleteObject(product.imageUrl);
     const updated = await this.prisma.product.update({
-      where: { id },
+      where: { id: id },
       data: { imageUrl: dto.key },
     });
     return this.present(updated);

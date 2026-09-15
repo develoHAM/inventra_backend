@@ -87,7 +87,7 @@ export class BrandsService {
 
   async update(caller: AuthUser, id: number, dto: UpdateBrandDto) {
     await this.findOne(caller, id); // scoped 404
-    return this.prisma.brand.update({ where: { id }, data: dto });
+    return this.prisma.brand.update({ where: { id: id }, data: dto });
   }
 
   async remove(caller: AuthUser, id: number) {

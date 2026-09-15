@@ -125,7 +125,7 @@ export class UsersService {
     await this.findSelf(caller);
     const key = this.avatarKey(caller.id, dto.contentType);
     const uploadUrl = await this.storage.presignPutUrl(key, dto.contentType);
-    return { uploadUrl, key };
+    return { uploadUrl: uploadUrl, key: key };
   }
 
   async confirmAvatar(caller: AuthUser, dto: ConfirmUploadDto) {

@@ -47,7 +47,7 @@ describe('OrdersService', () => {
         // back exactly the ids the service asked for.
         findMany: jest.fn().mockImplementation(async ({ where }: any) => {
           const requestedIds: number[] = where.id.in;
-          return requestedIds.map((id) => ({ id }));
+          return requestedIds.map((id) => ({ id: id }));
         }),
       },
       order: {
@@ -133,9 +133,9 @@ describe('OrdersService', () => {
 
   it('findOne 404s an absent/soft-deleted order', async () => {
     prisma.order.findFirst.mockResolvedValue(null);
-    await expect(
-      service.findOne(owner, cornerId, orderId),
-    ).rejects.toThrow(NotFoundException);
+    await expect(service.findOne(owner, cornerId, orderId)).rejects.toThrow(
+      NotFoundException,
+    );
   });
 
   it('update swaps the item set inside a transaction', async () => {

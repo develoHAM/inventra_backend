@@ -59,7 +59,11 @@ export class CornersService {
     if (managerUserId) await this.resolveManager(managerUserId, companyId);
 
     return this.prisma.companyStore.create({
-      data: { ...data, companyId, managerUserId: managerUserId ?? null },
+      data: {
+        ...data,
+        companyId: companyId,
+        managerUserId: managerUserId ?? null,
+      },
     });
   }
 
@@ -71,7 +75,11 @@ export class CornersService {
 
   async findOne(caller: AuthUser, id: string) {
     const corner = await this.prisma.companyStore.findFirst({
-      where: { id, ...this.ownership.scopeToCompany(caller), deletedAt: null },
+      where: {
+        id: id,
+        ...this.ownership.scopeToCompany(caller),
+        deletedAt: null,
+      },
     });
     if (!corner) throw new NotFoundException('Corner not found');
     return corner;
@@ -79,13 +87,13 @@ export class CornersService {
 
   async update(caller: AuthUser, id: string, dto: UpdateCornerDto) {
     await this.findOne(caller, id);
-    return this.prisma.companyStore.update({ where: { id }, data: dto });
+    return this.prisma.companyStore.update({ where: { id: id }, data: dto });
   }
 
   async remove(caller: AuthUser, id: string) {
     await this.findOne(caller, id);
     return this.prisma.companyStore.update({
-      where: { id },
+      where: { id: id },
       data: { deletedAt: new Date(), deletedByUserId: caller.id },
     });
   }

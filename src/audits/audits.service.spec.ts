@@ -61,7 +61,7 @@ describe('AuditsService', () => {
       companyStoreProduct: {
         findMany: jest.fn().mockImplementation(async ({ where }: any) => {
           const requestedIds: number[] = where.id.in;
-          return requestedIds.map((id) => ({ id }));
+          return requestedIds.map((id) => ({ id: id }));
         }),
       },
       inventoryAudit: {
@@ -82,7 +82,9 @@ describe('AuditsService', () => {
         .mockResolvedValue({ id: cornerId, companyId: 'company-1' }),
       findOne: jest.fn().mockResolvedValue({ id: cornerId }),
     };
-    inventory = { recordWithinTransaction: jest.fn().mockResolvedValue({ id: 1 }) };
+    inventory = {
+      recordWithinTransaction: jest.fn().mockResolvedValue({ id: 1 }),
+    };
     service = new AuditsService(prisma, corners as any, inventory as any);
   });
 
@@ -109,9 +111,9 @@ describe('AuditsService', () => {
 
   it('findOne 404s an absent audit', async () => {
     prisma.inventoryAudit.findFirst.mockResolvedValue(null);
-    await expect(
-      service.findOne(owner, cornerId, auditId),
-    ).rejects.toThrow(NotFoundException);
+    await expect(service.findOne(owner, cornerId, auditId)).rejects.toThrow(
+      NotFoundException,
+    );
   });
 
   it('update checks corner authority and swaps the item set while unapplied', async () => {

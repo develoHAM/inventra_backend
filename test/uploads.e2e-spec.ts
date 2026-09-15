@@ -58,19 +58,24 @@ describe('File Uploads (e2e)', () => {
       .post('/auth/register')
       .send({
         companyName: 'UPL Co',
-        taxId,
+        taxId: taxId,
         ownerName: 'Owner',
         ownerEmail: email,
         ownerPassword: password,
       })
       .expect(201);
-    const company = await prisma.company.findUnique({ where: { taxId } });
+    const company = await prisma.company.findUnique({
+      where: { taxId: taxId },
+    });
     await request(http)
       .patch(`/companies/${company!.id}/approve`)
       .set(...auth(adminAccess))
       .expect(200);
     ownerAccess = (
-      await request(http).post('/auth/login').send({ email, password }).expect(201)
+      await request(http)
+        .post('/auth/login')
+        .send({ email: email, password: password })
+        .expect(201)
     ).body.accessToken;
 
     const categoryId = (
@@ -94,8 +99,8 @@ describe('File Uploads (e2e)', () => {
         .send({
           name: 'UPL P1',
           barcode: 'UPL-BC-1',
-          categoryId,
-          brandId,
+          categoryId: categoryId,
+          brandId: brandId,
           priceKrw: 1000,
         })
         .expect(201)

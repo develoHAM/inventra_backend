@@ -116,7 +116,7 @@ describe('Auth & Authorization (e2e)', () => {
   it('6. a member self-registers with the join code (PENDING, role-less)', async () => {
     const res = await request(http)
       .post('/auth/register/member')
-      .send({ ...member, joinCode })
+      .send({ ...member, joinCode: joinCode })
       .expect(201);
 
     expect(res.body.user.status).toBe('PENDING_APPROVAL');

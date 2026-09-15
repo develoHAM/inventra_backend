@@ -42,20 +42,22 @@ describe('Product Placement (e2e)', () => {
       .post('/auth/register')
       .send({
         companyName: `PL Co ${n}`,
-        taxId,
+        taxId: taxId,
         ownerName: `Owner ${n}`,
         ownerEmail: email,
         ownerPassword: password,
       })
       .expect(201);
-    const company = await prisma.company.findUnique({ where: { taxId } });
+    const company = await prisma.company.findUnique({
+      where: { taxId: taxId },
+    });
     await request(http)
       .patch(`/companies/${company!.id}/approve`)
       .set(...auth(adminAccess))
       .expect(200);
     const login = await request(http)
       .post('/auth/login')
-      .send({ email, password })
+      .send({ email: email, password: password })
       .expect(201);
     return {
       access: login.body.accessToken as string,
@@ -74,10 +76,10 @@ describe('Product Placement (e2e)', () => {
     const password = 'password123';
     await request(http)
       .post('/auth/register/member')
-      .send({ joinCode, email, password, name: tag })
+      .send({ joinCode: joinCode, email: email, password: password, name: tag })
       .expect(201);
     const user = await prisma.user.findFirst({
-      where: { loginMethods: { some: { email } } },
+      where: { loginMethods: { some: { email: email } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
@@ -87,7 +89,7 @@ describe('Product Placement (e2e)', () => {
       .expect(200);
     const login = await request(http)
       .post('/auth/login')
-      .send({ email, password })
+      .send({ email: email, password: password })
       .expect(201);
     return {
       access: login.body.accessToken as string,
@@ -123,9 +125,19 @@ describe('Product Placement (e2e)', () => {
     // company 1: owner + a manager + a staff + a second (unrelated) manager
     const c1 = await registerCompany(1);
     ownerAccess = c1.access;
-    const mgr = await registerMember(c1.joinCode, ownerAccess, 'MANAGER', 'manager');
+    const mgr = await registerMember(
+      c1.joinCode,
+      ownerAccess,
+      'MANAGER',
+      'manager',
+    );
     managerUserId = mgr.userId;
-    const stf = await registerMember(c1.joinCode, ownerAccess, 'STAFF', 'staff');
+    const stf = await registerMember(
+      c1.joinCode,
+      ownerAccess,
+      'STAFF',
+      'staff',
+    );
     staffAccess = stf.access;
     staffUserId = stf.userId;
     const other = await registerMember(
@@ -155,14 +167,26 @@ describe('Product Placement (e2e)', () => {
       await request(http)
         .post('/products')
         .set(...auth(ownerAccess))
-        .send({ name: 'P1', barcode: 'PL-BC-1', categoryId, brandId, priceKrw: 1000 })
+        .send({
+          name: 'P1',
+          barcode: 'PL-BC-1',
+          categoryId: categoryId,
+          brandId: brandId,
+          priceKrw: 1000,
+        })
         .expect(201)
     ).body.id;
     product2Id = (
       await request(http)
         .post('/products')
         .set(...auth(ownerAccess))
-        .send({ name: 'P2', barcode: 'PL-BC-2', categoryId, brandId, priceKrw: 2000 })
+        .send({
+          name: 'P2',
+          barcode: 'PL-BC-2',
+          categoryId: categoryId,
+          brandId: brandId,
+          priceKrw: 2000,
+        })
         .expect(201)
     ).body.id;
 
@@ -178,7 +202,7 @@ describe('Product Placement (e2e)', () => {
       await request(http)
         .post('/corners')
         .set(...auth(ownerAccess))
-        .send({ storeId, name: 'PL Corner' })
+        .send({ storeId: storeId, name: 'PL Corner' })
         .expect(201)
     ).body.id;
     await request(http)
@@ -206,7 +230,13 @@ describe('Product Placement (e2e)', () => {
       await request(http)
         .post('/products')
         .set(...auth(owner2Access))
-        .send({ name: 'P2C2', barcode: 'PL-BC-9', categoryId, brandId: brand2Id, priceKrw: 500 })
+        .send({
+          name: 'P2C2',
+          barcode: 'PL-BC-9',
+          categoryId: categoryId,
+          brandId: brand2Id,
+          priceKrw: 500,
+        })
         .expect(201)
     ).body.id;
   });
@@ -219,14 +249,14 @@ describe('Product Placement (e2e)', () => {
     const res = await request(http)
       .post(`/corners/${cornerId}/products`)
       .set(...auth(ownerAccess))
-      .send({ productId, targetStockQuantity: 10 })
+      .send({ productId: productId, targetStockQuantity: 10 })
       .expect(201);
     placementId = res.body.id;
 
     await request(http)
       .post(`/corners/${cornerId}/products`)
       .set(...auth(ownerAccess))
-      .send({ productId })
+      .send({ productId: productId })
       .expect(409);
   });
 
@@ -268,7 +298,7 @@ describe('Product Placement (e2e)', () => {
     const res = await request(http)
       .post(`/corners/${cornerId}/products`)
       .set(...auth(ownerAccess))
-      .send({ productId, targetStockQuantity: 7 })
+      .send({ productId: productId, targetStockQuantity: 7 })
       .expect(201);
     expect(res.body.id).toBe(placementId); // revived, not a new row
   });

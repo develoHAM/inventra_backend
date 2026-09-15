@@ -29,20 +29,22 @@ describe('Product Catalog (e2e)', () => {
       .post('/auth/register')
       .send({
         companyName: `Cat Co ${n}`,
-        taxId,
+        taxId: taxId,
         ownerName: `Owner ${n}`,
         ownerEmail: email,
         ownerPassword: password,
       })
       .expect(201);
-    const company = await prisma.company.findUnique({ where: { taxId } });
+    const company = await prisma.company.findUnique({
+      where: { taxId: taxId },
+    });
     await request(http)
       .patch(`/companies/${company!.id}/approve`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
     const login = await request(http)
       .post('/auth/login')
-      .send({ email, password })
+      .send({ email: email, password: password })
       .expect(201);
     return {
       access: login.body.accessToken as string,
@@ -62,10 +64,10 @@ describe('Product Catalog (e2e)', () => {
     const password = 'password123';
     await request(http)
       .post('/auth/register/member')
-      .send({ joinCode, email, password, name: tag })
+      .send({ joinCode: joinCode, email: email, password: password, name: tag })
       .expect(201);
     const user = await prisma.user.findFirst({
-      where: { loginMethods: { some: { email } } },
+      where: { loginMethods: { some: { email: email } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
@@ -75,7 +77,7 @@ describe('Product Catalog (e2e)', () => {
       .expect(200);
     const login = await request(http)
       .post('/auth/login')
-      .send({ email, password })
+      .send({ email: email, password: password })
       .expect(201);
     return login.body.accessToken as string;
   };
@@ -108,7 +110,12 @@ describe('Product Catalog (e2e)', () => {
     const c1 = await registerCompany(1);
     ownerAccess = c1.access;
     company1Id = c1.companyId;
-    staffAccess = await registerMember(c1.joinCode, ownerAccess, 'STAFF', 'staff');
+    staffAccess = await registerMember(
+      c1.joinCode,
+      ownerAccess,
+      'STAFF',
+      'staff',
+    );
     managerAccess = await registerMember(
       c1.joinCode,
       ownerAccess,
@@ -150,7 +157,13 @@ describe('Product Catalog (e2e)', () => {
     const product = await request(http)
       .post('/products')
       .set('Authorization', `Bearer ${ownerAccess}`)
-      .send({ name: 'Cola', barcode: 'CAT-BC-1', categoryId, brandId, priceKrw: 1500 })
+      .send({
+        name: 'Cola',
+        barcode: 'CAT-BC-1',
+        categoryId: categoryId,
+        brandId: brandId,
+        priceKrw: 1500,
+      })
       .expect(201);
     productId = product.body.id;
   });
@@ -160,7 +173,13 @@ describe('Product Catalog (e2e)', () => {
     await request(http)
       .post('/products')
       .set('Authorization', `Bearer ${owner2Access}`)
-      .send({ name: 'Fake', barcode: 'CAT-BC-2', categoryId, brandId, priceKrw: 100 })
+      .send({
+        name: 'Fake',
+        barcode: 'CAT-BC-2',
+        categoryId: categoryId,
+        brandId: brandId,
+        priceKrw: 100,
+      })
       .expect(400);
   });
 
@@ -168,7 +187,13 @@ describe('Product Catalog (e2e)', () => {
     await request(http)
       .post('/products')
       .set('Authorization', `Bearer ${ownerAccess}`)
-      .send({ name: 'Dup', barcode: 'CAT-BC-1', categoryId, brandId, priceKrw: 200 })
+      .send({
+        name: 'Dup',
+        barcode: 'CAT-BC-1',
+        categoryId: categoryId,
+        brandId: brandId,
+        priceKrw: 200,
+      })
       .expect(409);
   });
 
@@ -181,7 +206,13 @@ describe('Product Catalog (e2e)', () => {
     await request(http)
       .post('/products')
       .set('Authorization', `Bearer ${staffAccess}`)
-      .send({ name: 'Nope', barcode: 'CAT-BC-3', categoryId, brandId, priceKrw: 100 })
+      .send({
+        name: 'Nope',
+        barcode: 'CAT-BC-3',
+        categoryId: categoryId,
+        brandId: brandId,
+        priceKrw: 100,
+      })
       .expect(403);
   });
 
@@ -213,8 +244,8 @@ describe('Product Catalog (e2e)', () => {
       .send({
         name: 'AdminMade',
         barcode: 'CAT-BC-9',
-        categoryId,
-        brandId,
+        categoryId: categoryId,
+        brandId: brandId,
         companyId: company1Id,
         priceKrw: 500,
       })

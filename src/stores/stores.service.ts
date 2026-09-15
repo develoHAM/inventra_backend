@@ -29,18 +29,18 @@ export class StoresService {
   }
 
   async findActive(id: string) {
-    return this.prisma.store.findFirst({ where: { id, deletedAt: null } });
+    return this.prisma.store.findFirst({ where: { id: id, deletedAt: null } });
   }
 
   async update(id: string, dto: UpdateStoreDto) {
     await this.findOne(id);
-    return this.prisma.store.update({ where: { id }, data: dto });
+    return this.prisma.store.update({ where: { id: id }, data: dto });
   }
 
   async remove(caller: AuthUser, id: string) {
     await this.findOne(id);
     return this.prisma.store.update({
-      where: { id },
+      where: { id: id },
       data: { deletedAt: new Date(), deletedByUserId: caller.id },
     });
   }

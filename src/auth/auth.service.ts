@@ -35,13 +35,13 @@ export class AuthService {
 
     await this.prisma.refreshToken.create({
       data: {
-        userId,
+        userId: userId,
         tokenHash: this.tokenService.hashToken(refreshToken),
-        expiresAt,
+        expiresAt: expiresAt,
       },
     });
 
-    return { accessToken, refreshToken };
+    return { accessToken: accessToken, refreshToken: refreshToken };
   }
 
   async register(dto: RegisterDto): Promise<{
@@ -144,7 +144,7 @@ export class AuthService {
     if (emailTaken) throw new ConflictException('Email already registered');
 
     const company = await this.prisma.company.findUnique({
-      where: { joinCode },
+      where: { joinCode: joinCode },
     });
     if (!company) throw new NotFoundException('Invalid join code');
 
@@ -152,7 +152,7 @@ export class AuthService {
 
     const user = await this.prisma.user.create({
       data: {
-        name,
+        name: name,
         companyId: company.id,
         roleId: null, // role assigned by the owner at approval
         status: UserStatus.PENDING_APPROVAL,
@@ -232,7 +232,7 @@ export class AuthService {
 
     const tokenHash = this.tokenService.hashToken(dto.refreshToken);
     const stored = await this.prisma.refreshToken.findUnique({
-      where: { tokenHash },
+      where: { tokenHash: tokenHash },
     });
     if (!stored) throw new UnauthorizedException('Invalid refresh token');
 
@@ -245,7 +245,7 @@ export class AuthService {
     }
 
     await this.prisma.refreshToken.update({
-      where: { tokenHash },
+      where: { tokenHash: tokenHash },
       data: { revokedAt: new Date() },
     });
     const tokens = await this.issueTokens(stored.userId);
@@ -258,7 +258,7 @@ export class AuthService {
   async logout(userId: string, dto: RefreshDto) {
     const tokenHash = this.tokenService.hashToken(dto.refreshToken);
     await this.prisma.refreshToken.updateMany({
-      where: { tokenHash, userId, revokedAt: null },
+      where: { tokenHash: tokenHash, userId: userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
   }
