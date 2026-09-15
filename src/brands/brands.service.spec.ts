@@ -14,6 +14,13 @@ describe('BrandsService', () => {
       update: jest.Mock;
     };
   };
+  let storage: {
+    putObject: jest.Mock;
+    presignPutUrl: jest.Mock;
+    presignGetUrl: jest.Mock;
+    objectExists: jest.Mock;
+    deleteObject: jest.Mock;
+  };
 
   const owner: AuthUser = {
     id: 'owner-1',
@@ -39,8 +46,19 @@ describe('BrandsService', () => {
         update: jest.fn().mockResolvedValue({}),
       },
     };
-    // OwnershipService is pure — use a real one
-    service = new BrandsService(prisma as any, new OwnershipService());
+    storage = {
+      putObject: jest.fn().mockResolvedValue(undefined),
+      presignPutUrl: jest.fn().mockResolvedValue('https://minio/presigned-put'),
+      presignGetUrl: jest.fn().mockResolvedValue('https://minio/presigned-get'),
+      objectExists: jest.fn().mockResolvedValue(true),
+      deleteObject: jest.fn().mockResolvedValue(undefined),
+    };
+    // OwnershipService is pure — use a real one; constructor: (prisma, ownership, storage)
+    service = new BrandsService(
+      prisma as any,
+      new OwnershipService(),
+      storage as any,
+    );
   });
 
   it('create sets createdByCompanyId to the caller company', async () => {
@@ -95,6 +113,117 @@ describe('BrandsService', () => {
     expect(prisma.brand.update).toHaveBeenCalledWith({
       where: { id: 5 },
       data: { deletedAt: expect.any(Date), deletedByUserId: 'owner-1' },
+    });
+  });
+
+  describe('logo upload', () => {
+    const brandId = 7;
+
+    it('uploadLogo stores under brands/<id>/<uuid>.<ext>, deletes the old, sets logoUrl', async () => {
+      prisma.brand.findFirst.mockResolvedValue({
+        id: brandId,
+        createdByCompanyId: 'company-1',
+        logoUrl: 'brands/old.jpg',
+      });
+      prisma.brand.update.mockResolvedValue({ id: brandId, logoUrl: 'k' });
+
+      await service.uploadLogo(owner, brandId, {
+        buffer: Buffer.from('x'),
+        mimetype: 'image/png',
+      } as any);
+
+      const putKey = storage.putObject.mock.calls[0][0];
+      expect(putKey).toMatch(new RegExp(`^brands/${brandId}/[0-9a-f-]+\\.png$`));
+      expect(storage.putObject).toHaveBeenCalledWith(
+        putKey,
+        expect.any(Buffer),
+        'image/png',
+      );
+      expect(storage.deleteObject).toHaveBeenCalledWith('brands/old.jpg');
+      expect(prisma.brand.update).toHaveBeenCalledWith({
+        where: { id: brandId },
+        data: { logoUrl: putKey },
+      });
+    });
+
+    it('presignLogoUpload returns an upload URL + key without touching the brand', async () => {
+      prisma.brand.findFirst.mockResolvedValue({
+        id: brandId,
+        createdByCompanyId: 'company-1',
+        logoUrl: null,
+      });
+
+      const res = await service.presignLogoUpload(owner, brandId, {
+        contentType: 'image/jpeg',
+      } as any);
+
+      expect(res.key).toMatch(new RegExp(`^brands/${brandId}/[0-9a-f-]+\\.jpg$`));
+      expect(res.uploadUrl).toBe('https://minio/presigned-put');
+      expect(prisma.brand.update).not.toHaveBeenCalled();
+    });
+
+    it('confirmLogo rejects a key not under this brand (400)', async () => {
+      prisma.brand.findFirst.mockResolvedValue({
+        id: brandId,
+        createdByCompanyId: 'company-1',
+        logoUrl: null,
+      });
+
+      await expect(
+        service.confirmLogo(owner, brandId, { key: 'brands/8/x.jpg' } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(storage.objectExists).not.toHaveBeenCalled();
+    });
+
+    it('confirmLogo rejects a key whose object is missing (400)', async () => {
+      prisma.brand.findFirst.mockResolvedValue({
+        id: brandId,
+        createdByCompanyId: 'company-1',
+        logoUrl: null,
+      });
+      storage.objectExists.mockResolvedValue(false);
+
+      await expect(
+        service.confirmLogo(owner, brandId, {
+          key: `brands/${brandId}/x.jpg`,
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.brand.update).not.toHaveBeenCalled();
+    });
+
+    it('confirmLogo sets logoUrl and returns a presented (presigned) brand', async () => {
+      prisma.brand.findFirst.mockResolvedValue({
+        id: brandId,
+        createdByCompanyId: 'company-1',
+        logoUrl: null,
+      });
+      prisma.brand.update.mockResolvedValue({
+        id: brandId,
+        logoUrl: `brands/${brandId}/x.jpg`,
+      });
+
+      const res = await service.confirmLogo(owner, brandId, {
+        key: `brands/${brandId}/x.jpg`,
+      } as any);
+
+      expect(prisma.brand.update).toHaveBeenCalledWith({
+        where: { id: brandId },
+        data: { logoUrl: `brands/${brandId}/x.jpg` },
+      });
+      expect(res.logoUrl).toBe('https://minio/presigned-get');
+    });
+
+    it('findOne presents the stored key as a presigned URL', async () => {
+      prisma.brand.findFirst.mockResolvedValue({
+        id: brandId,
+        createdByCompanyId: 'company-1',
+        logoUrl: 'brands/k.jpg',
+      });
+
+      const res = await service.findOne(owner, brandId);
+
+      expect(res.logoUrl).toBe('https://minio/presigned-get');
+      expect(storage.presignGetUrl).toHaveBeenCalledWith('brands/k.jpg');
     });
   });
 });
