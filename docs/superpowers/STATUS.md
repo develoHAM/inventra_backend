@@ -24,9 +24,9 @@
 | 9 | **Purchase reservations** (hold stock for a customer; fulfill = release + sale) | ✅ complete (blogged) |
 | 10a | **Reservation auto-expiry sweep** (`@nestjs/schedule` cron releases expired holds) | ✅ complete (blogged) |
 | 10b+ | More cross-cutting concerns / Redis caching (only when measured) | ⏳ not started |
-| Files | **File uploads** (MinIO/S3 storage foundation + product image → brand/user → order/audit) | 🔨 Slice 1 complete |
+| Files | **File uploads** (MinIO/S3 storage foundation + product image → brand/user → order/audit) | 🔨 Slices 1–2 complete |
 
-## Where we are right now — File uploads, Slice 1 complete
+## Where we are right now — File uploads, Slice 2 complete
 
 New parallel track (from the two-item todo: *Prisma 8 migration* + *file uploads*). **Prisma 8 is blocked upstream** — no GA client/adapter yet (only `8.0.0-rc` / dev); revisit when a stable `@prisma/client` + `@prisma/adapter-pg` v8 ship together. So the file-upload subsystem went first.
 
@@ -35,9 +35,10 @@ New parallel track (from the two-item todo: *Prisma 8 migration* + *file uploads
 **Slice 1 — product image** ✅. Object keys are `products/<productId>/<uuid>.<ext>`; the DB stores the **key**, and reads **presign-on-read** (return a fresh presigned GET URL each time). Two upload paths: **proxied** (`POST /products/:id/image`, multer `FileInterceptor` + `ParseFilePipe` — 5 MB + jpeg/png/webp) and **presigned** (`…/image/presign` → client PUTs bytes straight to MinIO → `…/image/confirm` validates key-prefix + object-exists). All gated `products.update`; old image deleted on replace. Single `imageUrl` for now (multi-image = future `ProductImage` child table).
 - ⚠️ **MinIO creds gotcha (cost an entire e2e run):** `docker compose` reads `${MINIO_ROOT_*}` from **`.env`** (its default env file), so that's what the container boots with; the e2e process signs with **`.env.test`**'s `S3_*`. If those secrets diverge → `SignatureDoesNotMatch` at `onModuleInit` in **every** e2e suite (StorageService is `@Global()`, so it boots app-wide, not just in the uploads suite). Keep the two files' MinIO secret aligned.
 - **`.env.test` uses its own bucket** `inventra-files-test` (isolated from dev's `inventra-files`); `onModuleInit` auto-creates it on first boot.
-- **176 unit tests green** (20 suites) + `test/uploads.e2e-spec.ts` (4 tests) — full e2e green.
+**Slice 2 — brand logo + user avatar** ✅. Same pattern reused. **Brand logo** (`BrandsService`/`BrandsController`, gated `brands.update`, integer id via `ParseIntPipe`, key `brands/<id>/<uuid>.<ext>`). **User avatar is self-service**: `POST /users/me/avatar[/presign|/confirm]` with **no `@RequirePermissions`** — the target is always `caller.id` (no `:id` param), so editing another user is *unrepresentable*; the global `JwtAuthGuard` (`APP_GUARD` in `auth.module.ts`) still authenticates. The presign/confirm DTOs were extracted to shared `src/storage/dto/` (`PresignUploadDto`, `ConfirmUploadDto`); products keeps its local copies (optional later retrofit). No migration/seed/permission changes — `logoUrl` / `profileImageUrl` columns and the `*.update` perms already existed.
+- **187 unit tests green** (20 suites) + `test/uploads.e2e-spec.ts` (now product + brand + avatar) — full e2e green.
 
-**Next — Slice 2: brand logo + user avatar** (reuse `StorageService`; same key/presign-on-read pattern). Then **Slice 3: order file + audit file** (private + presign-on-read + audit-frozen guard). Spec: `docs/superpowers/specs/2026-09-10-file-uploads-storage-product-image-design.md`; plan: `docs/superpowers/plans/2026-09-10-file-uploads-storage-product-image.md`.
+**Next — Slice 3: order file + audit file** (private + presign-on-read + an **audit-frozen guard** — can't attach a file to an already-applied audit). Specs/plans: slices 1–2 in `docs/superpowers/{specs,plans}/2026-09-10-*` and `…/2026-09-15-file-uploads-brand-logo-user-avatar.*`.
 
 ## Prior — Phase 10a complete (reservation auto-expiry sweep)
 
@@ -95,7 +96,7 @@ The DB, secrets, and generated client are **not** in the repo. After `git pull`:
 3. `docker compose up -d` (postgres + redis + **minio** — MinIO console at `localhost:${MINIO_CONSOLE_PORT}`)
 4. `npx prisma generate` (client generates into `src/generated/prisma`, which is gitignored)
 5. `npx prisma migrate deploy` then `npm run seed` (or `npx prisma migrate reset --force` which also seeds via `prisma/seed.ts`)
-6. `npm test` (unit — should be 176 green across 20 suites) and `npm run test:e2e` (all green, incl. `test/uploads.e2e-spec.ts`)
+6. `npm test` (unit — should be 187 green across 20 suites) and `npm run test:e2e` (all green, incl. `test/uploads.e2e-spec.ts` — product + brand + avatar)
 
 Latest migration: `prisma/migrations/20260909162034_reservation_expired_at`. **Keep the `prisma` CLI + `@prisma/client` + `@prisma/adapter-pg` all on the same major (v7); don't bump to the v8 RC.**
 
