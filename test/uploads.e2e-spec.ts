@@ -4,7 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 
-describe('File Uploads — product image (e2e)', () => {
+describe('File Uploads (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let http: any;
@@ -12,6 +12,7 @@ describe('File Uploads — product image (e2e)', () => {
   let adminAccess: string;
   let ownerAccess: string;
   let productId: string;
+  let brandId: number;
 
   const auth = (token: string): [string, string] => [
     'Authorization',
@@ -79,7 +80,7 @@ describe('File Uploads — product image (e2e)', () => {
         .send({ name: 'UPL Cat' })
         .expect(201)
     ).body.id;
-    const brandId = (
+    brandId = (
       await request(http)
         .post('/brands')
         .set(...auth(ownerAccess))
@@ -156,6 +157,92 @@ describe('File Uploads — product image (e2e)', () => {
       .post(`/products/${productId}/image/confirm`)
       .set(...auth(ownerAccess))
       .send({ key: 'products/other/x.png' })
+      .expect(400);
+  });
+
+  // ── Brand logo ──
+  it('brand logo: proxied upload sets a presigned logoUrl; a later read re-presigns', async () => {
+    const res = await request(http)
+      .post(`/brands/${brandId}/logo`)
+      .set(...auth(ownerAccess))
+      .attach('file', PNG, 'logo.png')
+      .expect(201);
+    expect(res.body.logoUrl).toContain('X-Amz-Signature');
+
+    const read = await request(http)
+      .get(`/brands/${brandId}`)
+      .set(...auth(ownerAccess))
+      .expect(200);
+    expect(read.body.logoUrl).toContain('X-Amz-Signature');
+  });
+
+  it('brand logo: presign -> PUT to storage -> confirm sets logoUrl', async () => {
+    const presign = await request(http)
+      .post(`/brands/${brandId}/logo/presign`)
+      .set(...auth(ownerAccess))
+      .send({ contentType: 'image/png' })
+      .expect(201);
+
+    const put = await fetch(presign.body.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'image/png' },
+      body: PNG,
+    });
+    expect(put.ok).toBe(true);
+
+    const confirm = await request(http)
+      .post(`/brands/${brandId}/logo/confirm`)
+      .set(...auth(ownerAccess))
+      .send({ key: presign.body.key })
+      .expect(201);
+    expect(confirm.body.logoUrl).toContain('X-Amz-Signature');
+  });
+
+  it('brand logo: confirm rejects a key that is not under this brand (400)', async () => {
+    await request(http)
+      .post(`/brands/${brandId}/logo/confirm`)
+      .set(...auth(ownerAccess))
+      .send({ key: 'brands/999999/x.png' })
+      .expect(400);
+  });
+
+  // ── User avatar (self-service) ──
+  it('avatar: proxied upload sets a presigned profileImageUrl', async () => {
+    const res = await request(http)
+      .post('/users/me/avatar')
+      .set(...auth(ownerAccess))
+      .attach('file', PNG, 'me.png')
+      .expect(201);
+    expect(res.body.profileImageUrl).toContain('X-Amz-Signature');
+  });
+
+  it('avatar: presign -> PUT to storage -> confirm sets profileImageUrl', async () => {
+    const presign = await request(http)
+      .post('/users/me/avatar/presign')
+      .set(...auth(ownerAccess))
+      .send({ contentType: 'image/png' })
+      .expect(201);
+
+    const put = await fetch(presign.body.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'image/png' },
+      body: PNG,
+    });
+    expect(put.ok).toBe(true);
+
+    const confirm = await request(http)
+      .post('/users/me/avatar/confirm')
+      .set(...auth(ownerAccess))
+      .send({ key: presign.body.key })
+      .expect(201);
+    expect(confirm.body.profileImageUrl).toContain('X-Amz-Signature');
+  });
+
+  it('avatar: confirm rejects a key not under the caller (400)', async () => {
+    await request(http)
+      .post('/users/me/avatar/confirm')
+      .set(...auth(ownerAccess))
+      .send({ key: 'users/not-me/x.png' })
       .expect(400);
   });
 });
