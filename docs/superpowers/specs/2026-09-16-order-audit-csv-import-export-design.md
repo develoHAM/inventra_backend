@@ -49,6 +49,7 @@ The user's mental model is "the order + order-details query as a spreadsheet." A
 | `auditedDate` | `audit.auditedDate` (ISO 8601) |
 | `userName` | `audit.createdByUser.name` |
 | `createdAt` | `audit.createdAt` (ISO 8601) |
+| `appliedAt` | `audit.appliedAt` (ISO 8601; empty cell if not yet applied) |
 | `companyStoreName` | `audit.companyStore.name` |
 | `productBarcode` | `item.companyStoreProduct.product.barcode` |
 | `productName` | `item.companyStoreProduct.product.name` |
