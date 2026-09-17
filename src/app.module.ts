@@ -19,6 +19,7 @@ import { AuditsModule } from './audits/audits.module';
 import { ReservationsModule } from './reservations/reservations.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { StorageModule } from './storage/storage.module';
+import { SpreadsheetModule } from './spreadsheet/spreadsheet.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { StorageModule } from './storage/storage.module';
     ScheduleModule.forRoot(),
     PrismaModule,
     StorageModule,
+    SpreadsheetModule,
     AuthModule,
     AuthorizationModule,
     UsersModule,
