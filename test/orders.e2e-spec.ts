@@ -319,4 +319,68 @@ describe('Restock Orders (e2e)', () => {
       .set(...auth(ownerAccess))
       .expect(404);
   });
+
+  describe('CSV/xlsx export', () => {
+    let exportOrderId: string;
+
+    beforeAll(async () => {
+      exportOrderId = (
+        await request(http)
+          .post(base())
+          .set(...auth(ownerAccess))
+          .send({
+            title: 'Export order',
+            orderDate: '2026-08-23',
+            items: [
+              { companyStoreProductId: placementAId, productOrderQuantity: 7 },
+            ],
+          })
+          .expect(201)
+      ).body.id;
+    });
+
+    const firstLine = (text: string) =>
+      text.replace(/^﻿/, '').split(/\r?\n/)[0];
+
+    it('defaults to CSV with the EN header row and the product barcode', async () => {
+      const res = await request(http)
+        .get(`${base()}/${exportOrderId}/export`)
+        .set(...auth(ownerAccess))
+        .expect(200);
+      expect(res.headers['content-type']).toContain('text/csv');
+      expect(firstLine(res.text)).toBe(
+        'Order ID,Title,Description,Order Date,Created By,Created At,Corner,Barcode,Product,Order Quantity',
+      );
+      expect(res.text).toContain('ORD-BC-A');
+    });
+
+    it('lang=ko returns the Korean header row', async () => {
+      const res = await request(http)
+        .get(`${base()}/${exportOrderId}/export?lang=ko`)
+        .set(...auth(ownerAccess))
+        .expect(200);
+      expect(firstLine(res.text)).toBe(
+        '주문 ID,제목,설명,주문일자,작성자,생성일시,코너,바코드,상품명,주문 수량',
+      );
+    });
+
+    it('format=xlsx returns a spreadsheet content-type', async () => {
+      const res = await request(http)
+        .get(`${base()}/${exportOrderId}/export?format=xlsx`)
+        .set(...auth(ownerAccess))
+        .expect(200);
+      expect(res.headers['content-type']).toContain('spreadsheetml.sheet');
+    });
+
+    it('rejects a bad format or lang (400)', async () => {
+      await request(http)
+        .get(`${base()}/${exportOrderId}/export?format=pdf`)
+        .set(...auth(ownerAccess))
+        .expect(400);
+      await request(http)
+        .get(`${base()}/${exportOrderId}/export?lang=fr`)
+        .set(...auth(ownerAccess))
+        .expect(400);
+    });
+  });
 });

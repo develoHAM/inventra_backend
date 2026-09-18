@@ -329,4 +329,68 @@ describe('Inventory Audits (e2e)', () => {
       .set(...auth(owner2Access))
       .expect(404);
   });
+
+  describe('CSV/xlsx export', () => {
+    let exportAuditId: string;
+
+    beforeAll(async () => {
+      exportAuditId = (
+        await request(http)
+          .post(base())
+          .set(...auth(ownerAccess))
+          .send({
+            title: 'Export count',
+            auditedDate: '2026-08-28',
+            items: [
+              { companyStoreProductId: placementAId, productQuantity: 9 },
+            ],
+          })
+          .expect(201)
+      ).body.id;
+    });
+
+    const firstLine = (text: string) =>
+      text.replace(/^﻿/, '').split(/\r?\n/)[0];
+
+    it('defaults to CSV with the EN header row (incl. Applied At) and the barcode', async () => {
+      const res = await request(http)
+        .get(`${base()}/${exportAuditId}/export`)
+        .set(...auth(ownerAccess))
+        .expect(200);
+      expect(res.headers['content-type']).toContain('text/csv');
+      expect(firstLine(res.text)).toBe(
+        'Audit ID,Title,Description,Audit Date,Created By,Created At,Applied At,Corner,Barcode,Product,Counted Quantity',
+      );
+      expect(res.text).toContain('AUD-BC-A');
+    });
+
+    it('lang=ko returns the Korean header row', async () => {
+      const res = await request(http)
+        .get(`${base()}/${exportAuditId}/export?lang=ko`)
+        .set(...auth(ownerAccess))
+        .expect(200);
+      expect(firstLine(res.text)).toBe(
+        '실사 ID,제목,설명,실사일자,작성자,생성일시,적용일시,코너,바코드,상품명,실사 수량',
+      );
+    });
+
+    it('format=xlsx returns a spreadsheet content-type', async () => {
+      const res = await request(http)
+        .get(`${base()}/${exportAuditId}/export?format=xlsx`)
+        .set(...auth(ownerAccess))
+        .expect(200);
+      expect(res.headers['content-type']).toContain('spreadsheetml.sheet');
+    });
+
+    it('rejects a bad format or lang (400)', async () => {
+      await request(http)
+        .get(`${base()}/${exportAuditId}/export?format=pdf`)
+        .set(...auth(ownerAccess))
+        .expect(400);
+      await request(http)
+        .get(`${base()}/${exportAuditId}/export?lang=fr`)
+        .set(...auth(ownerAccess))
+        .expect(400);
+    });
+  });
 });
