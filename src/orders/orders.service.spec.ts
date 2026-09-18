@@ -8,6 +8,7 @@ describe('OrdersService', () => {
   let prisma: any;
   let corners: { assertWorksCorner: jest.Mock; findOne: jest.Mock };
   let transaction: any;
+  let spreadsheet: { toBuffer: jest.Mock };
 
   const owner: AuthUser = {
     id: 'owner-1',
@@ -68,7 +69,10 @@ describe('OrdersService', () => {
         .mockResolvedValue({ id: cornerId, companyId: 'company-1' }),
       findOne: jest.fn().mockResolvedValue({ id: cornerId }),
     };
-    service = new OrdersService(prisma, corners as any);
+    spreadsheet = {
+      toBuffer: jest.fn().mockResolvedValue(Buffer.from('bytes')),
+    };
+    service = new OrdersService(prisma, corners as any, spreadsheet as any);
   });
 
   it('create checks corner authority, validates items, and writes order + items', async () => {
@@ -180,6 +184,102 @@ describe('OrdersService', () => {
     expect(prisma.order.update).toHaveBeenCalledWith({
       where: { id_companyStoreId: { id: orderId, companyStoreId: cornerId } },
       data: { deletedAt: expect.any(Date), deletedByUserId: 'owner-1' },
+    });
+  });
+
+  describe('exportOrder', () => {
+    const orderRecord = {
+      id: orderId,
+      title: 'Weekend restock',
+      description: null,
+      orderDate: new Date('2026-08-23T00:00:00.000Z'),
+      createdAt: new Date('2026-08-20T00:00:00.000Z'),
+      createdByUser: { name: 'Owner One' },
+      companyStore: { name: 'Corner A' },
+      orderItems: [
+        {
+          productOrderQuantity: 10,
+          companyStoreProduct: { product: { barcode: 'BC-1', name: 'Widget' } },
+        },
+        {
+          productOrderQuantity: 4,
+          companyStoreProduct: { product: { barcode: 'BC-2', name: 'Gadget' } },
+        },
+      ],
+    };
+
+    it('scopes via the corner, builds one row per item (header repeated), EN headers + csv by default', async () => {
+      prisma.order.findFirst.mockResolvedValue(orderRecord);
+
+      const result = await service.exportOrder(owner, cornerId, orderId);
+
+      expect(corners.findOne).toHaveBeenCalledWith(owner, cornerId);
+
+      const [format, columns, rows] = spreadsheet.toBuffer.mock.calls[0];
+      expect(format).toBe('csv');
+      expect(columns).toHaveLength(10);
+      expect(columns[0]).toEqual({ header: 'Order ID', key: 'orderId' });
+      expect(columns[columns.length - 1]).toEqual({
+        header: 'Order Quantity',
+        key: 'productOrderQuantity',
+      });
+
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toEqual({
+        orderId: orderId,
+        title: 'Weekend restock',
+        description: '',
+        orderDate: '2026-08-23T00:00:00.000Z',
+        userName: 'Owner One',
+        createdAt: '2026-08-20T00:00:00.000Z',
+        companyStoreName: 'Corner A',
+        productBarcode: 'BC-1',
+        productName: 'Widget',
+        productOrderQuantity: 10,
+      });
+      // header fields repeat on every item row
+      expect(rows[1].orderId).toBe(orderId);
+      expect(rows[1].title).toBe('Weekend restock');
+      expect(rows[1].productBarcode).toBe('BC-2');
+      expect(rows[1].productOrderQuantity).toBe(4);
+
+      expect(result.filename).toBe(`order-${orderId}.csv`);
+      expect(result.contentType).toBe('text/csv');
+      expect(result.buffer).toEqual(Buffer.from('bytes'));
+    });
+
+    it('resolves Korean headers when lang=ko (keys stay stable)', async () => {
+      prisma.order.findFirst.mockResolvedValue(orderRecord);
+
+      await service.exportOrder(owner, cornerId, orderId, 'csv', 'ko');
+
+      const columns = spreadsheet.toBuffer.mock.calls[0][1];
+      expect(columns[0]).toEqual({ header: '주문 ID', key: 'orderId' });
+      expect(columns[columns.length - 1]).toEqual({
+        header: '주문 수량',
+        key: 'productOrderQuantity',
+      });
+    });
+
+    it('format=xlsx sets the xlsx filename + content-type', async () => {
+      prisma.order.findFirst.mockResolvedValue(orderRecord);
+
+      const result = await service.exportOrder(owner, cornerId, orderId, 'xlsx');
+
+      expect(spreadsheet.toBuffer.mock.calls[0][0]).toBe('xlsx');
+      expect(result.filename).toBe(`order-${orderId}.xlsx`);
+      expect(result.contentType).toBe(
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+    });
+
+    it('404s an absent / cross-tenant order and generates nothing', async () => {
+      prisma.order.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.exportOrder(owner, cornerId, orderId),
+      ).rejects.toThrow(NotFoundException);
+      expect(spreadsheet.toBuffer).not.toHaveBeenCalled();
     });
   });
 });

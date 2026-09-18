@@ -7,6 +7,8 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
+  StreamableFile,
 } from '@nestjs/common';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -14,6 +16,7 @@ import type { AuthUser } from '../auth/types/auth-user';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
+import { ExportQueryDto } from '../spreadsheet/dto/export-query.dto';
 
 @Controller('corners/:cornerId/orders')
 export class OrdersController {
@@ -67,5 +70,26 @@ export class OrdersController {
     @Param('orderId', ParseUUIDPipe) orderId: string,
   ) {
     return this.orders.remove(caller, cornerId, orderId);
+  }
+
+  @RequirePermissions('orders.read')
+  @Get(':orderId/export')
+  async export(
+    @CurrentUser() caller: AuthUser,
+    @Param('cornerId', ParseUUIDPipe) cornerId: string,
+    @Param('orderId', ParseUUIDPipe) orderId: string,
+    @Query() query: ExportQueryDto,
+  ): Promise<StreamableFile> {
+    const { buffer, filename, contentType } = await this.orders.exportOrder(
+      caller,
+      cornerId,
+      orderId,
+      query.format,
+      query.lang,
+    );
+    return new StreamableFile(buffer, {
+      type: contentType,
+      disposition: `attachment; filename="${filename}"`,
+    });
   }
 }

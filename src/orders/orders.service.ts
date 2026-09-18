@@ -9,13 +9,31 @@ import { OrderItemDto } from './dto/order-item.dto';
 import { AuthUser } from '../auth/types/auth-user';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
+import { SpreadsheetService } from '../spreadsheet/spreadsheet.service';
 
 @Injectable()
 export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly corners: CornersService,
+    private readonly spreadsheet: SpreadsheetService,
   ) {}
+
+  private readonly ORDER_EXPORT_COLUMNS = [
+    { key: 'orderId', label: { en: 'Order ID', ko: '주문 ID' } },
+    { key: 'title', label: { en: 'Title', ko: '제목' } },
+    { key: 'description', label: { en: 'Description', ko: '설명' } },
+    { key: 'orderDate', label: { en: 'Order Date', ko: '주문일자' } },
+    { key: 'userName', label: { en: 'Created By', ko: '작성자' } },
+    { key: 'createdAt', label: { en: 'Created At', ko: '생성일시' } },
+    { key: 'companyStoreName', label: { en: 'Corner', ko: '코너' } },
+    { key: 'productBarcode', label: { en: 'Barcode', ko: '바코드' } },
+    { key: 'productName', label: { en: 'Product', ko: '상품명' } },
+    {
+      key: 'productOrderQuantity',
+      label: { en: 'Order Quantity', ko: '주문 수량' },
+    },
+  ];
 
   private async validateItems(cornerId: string, items: OrderItemDto[]) {
     const placementIds = items.map((item) => item.companyStoreProductId);
@@ -144,5 +162,57 @@ export class OrdersService {
       where: { id_companyStoreId: { id: orderId, companyStoreId: cornerId } },
       data: { deletedAt: new Date(), deletedByUserId: caller.id },
     });
+  }
+
+  async exportOrder(
+    caller: AuthUser,
+    cornerId: string,
+    orderId: string,
+    format: 'csv' | 'xlsx' = 'csv',
+    lang: 'en' | 'ko' = 'en',
+  ) {
+    await this.corners.findOne(caller, cornerId);
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, companyStoreId: cornerId, deletedAt: null },
+      include: {
+        createdByUser: { select: { name: true } },
+        companyStore: { select: { name: true } },
+        orderItems: {
+          include: {
+            companyStoreProduct: {
+              include: { product: { select: { barcode: true, name: true } } },
+            },
+          },
+        },
+      },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    const rows = order.orderItems.map((item) => ({
+      orderId: order.id,
+      title: order.title,
+      description: order.description ?? '',
+      orderDate: order.orderDate.toISOString(),
+      userName: order.createdByUser.name,
+      createdAt: order.createdAt.toISOString(),
+      companyStoreName: order.companyStore.name,
+      productBarcode: item.companyStoreProduct.product.barcode,
+      productName: item.companyStoreProduct.product.name,
+      productOrderQuantity: item.productOrderQuantity,
+    }));
+
+    const columns = this.ORDER_EXPORT_COLUMNS.map((column) => ({
+      header: column.label[lang],
+      key: column.key,
+    }));
+    const buffer = await this.spreadsheet.toBuffer(format, columns, rows);
+    return {
+      buffer: buffer,
+      filename: `order-${order.id}.${format}`,
+      contentType:
+        format === 'csv'
+          ? 'text/csv'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    };
   }
 }
