@@ -10,6 +10,7 @@
 
 ## Global Constraints
 - CSV is the default; `?format=xlsx` opts into Excel; any other value → 400 (via `@IsIn`).
+- **Localized headers:** `?lang=en|ko`, default `en`, any other value → 400. Columns are `{ key, label: { en, ko } }`; the service resolves `label[lang]` → the exceljs `header`. `key` stays stable/language-independent. `SpreadsheetService` never sees languages.
 - Flat denormalized layout: one row per line item, header fields repeated. Columns exactly per spec.
 - Export is a **read** — gate `orders.read` / `audits.read`, scope via `corners.findOne` then a corner-scoped record lookup.
 - Timestamps as ISO 8601 strings; nullable fields (`description`, audit `appliedAt`) → empty string.
@@ -81,10 +82,16 @@ export class SpreadsheetModule {}
 ```ts
 import { IsIn, IsOptional } from 'class-validator';
 
+export type ExportLanguage = 'en' | 'ko';
+
 export class ExportQueryDto {
   @IsOptional()
   @IsIn(['csv', 'xlsx'])
   format?: 'csv' | 'xlsx';
+
+  @IsOptional()
+  @IsIn(['en', 'ko'])
+  lang?: ExportLanguage;
 }
 ```
 
@@ -128,16 +135,19 @@ import { SpreadsheetService } from '../spreadsheet/spreadsheet.service';
 //   ) {}
 
   private readonly ORDER_EXPORT_COLUMNS = [
-    { header: 'orderId', key: 'orderId' },
-    { header: 'title', key: 'title' },
-    { header: 'description', key: 'description' },
-    { header: 'orderDate', key: 'orderDate' },
-    { header: 'userName', key: 'userName' },
-    { header: 'createdAt', key: 'createdAt' },
-    { header: 'companyStoreName', key: 'companyStoreName' },
-    { header: 'productBarcode', key: 'productBarcode' },
-    { header: 'productName', key: 'productName' },
-    { header: 'productOrderQuantity', key: 'productOrderQuantity' },
+    { key: 'orderId', label: { en: 'Order ID', ko: '주문 ID' } },
+    { key: 'title', label: { en: 'Title', ko: '제목' } },
+    { key: 'description', label: { en: 'Description', ko: '설명' } },
+    { key: 'orderDate', label: { en: 'Order Date', ko: '주문일자' } },
+    { key: 'userName', label: { en: 'Created By', ko: '작성자' } },
+    { key: 'createdAt', label: { en: 'Created At', ko: '생성일시' } },
+    { key: 'companyStoreName', label: { en: 'Corner', ko: '코너' } },
+    { key: 'productBarcode', label: { en: 'Barcode', ko: '바코드' } },
+    { key: 'productName', label: { en: 'Product', ko: '상품명' } },
+    {
+      key: 'productOrderQuantity',
+      label: { en: 'Order Quantity', ko: '주문 수량' },
+    },
   ];
 
   async exportOrder(
@@ -145,6 +155,7 @@ import { SpreadsheetService } from '../spreadsheet/spreadsheet.service';
     cornerId: string,
     orderId: string,
     format: 'csv' | 'xlsx' = 'csv',
+    lang: 'en' | 'ko' = 'en',
   ) {
     await this.corners.findOne(caller, cornerId);
     const order = await this.prisma.order.findFirst({
@@ -176,11 +187,11 @@ import { SpreadsheetService } from '../spreadsheet/spreadsheet.service';
       productOrderQuantity: item.productOrderQuantity,
     }));
 
-    const buffer = await this.spreadsheet.toBuffer(
-      format,
-      this.ORDER_EXPORT_COLUMNS,
-      rows,
-    );
+    const columns = this.ORDER_EXPORT_COLUMNS.map((column) => ({
+      header: column.label[lang],
+      key: column.key,
+    }));
+    const buffer = await this.spreadsheet.toBuffer(format, columns, rows);
     return {
       buffer: buffer,
       filename: `order-${order.id}.${format}`,
@@ -210,6 +221,7 @@ import { SpreadsheetService } from '../spreadsheet/spreadsheet.service';
       cornerId,
       orderId,
       query.format,
+      query.lang,
     );
     return new StreamableFile(buffer, {
       type: contentType,
@@ -227,6 +239,7 @@ import { SpreadsheetService } from '../spreadsheet/spreadsheet.service';
 **File:** `src/orders/orders.service.spec.ts` — add a `spreadsheet` mock (`toBuffer: jest.fn().mockResolvedValue(Buffer.from('x'))`) as the 3rd constructor arg; add `describe('exportOrder')`:
 - Builds one row per item with header fields repeated + barcode/name/qty mapped, ISO timestamps, `description` null → `''`; asserts the `columns` + `rows` passed to `toBuffer`.
 - Default format → `filename` ends `.csv`, `contentType` `text/csv`; `format: 'xlsx'` → `.xlsx` + spreadsheet content-type.
+- Default `lang` → EN headers passed to `toBuffer` (`header: 'Order ID'`, `key: 'orderId'`); `lang: 'ko'` → KO headers (`header: '주문 ID'`), same `key`s.
 - Absent/other-tenant order → `NotFoundException`.
 
 - [ ] Write + `npm test` green.
@@ -240,17 +253,20 @@ Same shape as Task 2, on `AuditsService`/`AuditsController`, gated `audits.read`
 **Reference — additions to `audits.service.ts`** (inject `SpreadsheetService` as the 4th arg — after prisma, corners, inventory):
 ```ts
   private readonly AUDIT_EXPORT_COLUMNS = [
-    { header: 'auditId', key: 'auditId' },
-    { header: 'title', key: 'title' },
-    { header: 'description', key: 'description' },
-    { header: 'auditedDate', key: 'auditedDate' },
-    { header: 'userName', key: 'userName' },
-    { header: 'createdAt', key: 'createdAt' },
-    { header: 'appliedAt', key: 'appliedAt' },
-    { header: 'companyStoreName', key: 'companyStoreName' },
-    { header: 'productBarcode', key: 'productBarcode' },
-    { header: 'productName', key: 'productName' },
-    { header: 'productQuantity', key: 'productQuantity' },
+    { key: 'auditId', label: { en: 'Audit ID', ko: '실사 ID' } },
+    { key: 'title', label: { en: 'Title', ko: '제목' } },
+    { key: 'description', label: { en: 'Description', ko: '설명' } },
+    { key: 'auditedDate', label: { en: 'Audit Date', ko: '실사일자' } },
+    { key: 'userName', label: { en: 'Created By', ko: '작성자' } },
+    { key: 'createdAt', label: { en: 'Created At', ko: '생성일시' } },
+    { key: 'appliedAt', label: { en: 'Applied At', ko: '적용일시' } },
+    { key: 'companyStoreName', label: { en: 'Corner', ko: '코너' } },
+    { key: 'productBarcode', label: { en: 'Barcode', ko: '바코드' } },
+    { key: 'productName', label: { en: 'Product', ko: '상품명' } },
+    {
+      key: 'productQuantity',
+      label: { en: 'Counted Quantity', ko: '실사 수량' },
+    },
   ];
 
   async exportAudit(
@@ -258,6 +274,7 @@ Same shape as Task 2, on `AuditsService`/`AuditsController`, gated `audits.read`
     cornerId: string,
     auditId: string,
     format: 'csv' | 'xlsx' = 'csv',
+    lang: 'en' | 'ko' = 'en',
   ) {
     await this.corners.findOne(caller, cornerId);
     const audit = await this.prisma.inventoryAudit.findFirst({
@@ -290,11 +307,11 @@ Same shape as Task 2, on `AuditsService`/`AuditsController`, gated `audits.read`
       productQuantity: item.productQuantity,
     }));
 
-    const buffer = await this.spreadsheet.toBuffer(
-      format,
-      this.AUDIT_EXPORT_COLUMNS,
-      rows,
-    );
+    const columns = this.AUDIT_EXPORT_COLUMNS.map((column) => ({
+      header: column.label[lang],
+      key: column.key,
+    }));
+    const buffer = await this.spreadsheet.toBuffer(format, columns, rows);
     return {
       buffer: buffer,
       filename: `audit-${audit.id}.${format}`,
@@ -325,8 +342,8 @@ Same shape as Task 2, on `AuditsService`/`AuditsController`, gated `audits.read`
 `test/*.e2e-spec.ts` (extend the orders + audits suites, or add a small `exports.e2e-spec.ts`):
 - `GET …/orders/:id/export` (default) → 200, `Content-Type` starts `text/csv`, body's first line equals the order header contract and body contains a seeded product barcode.
 - `?format=xlsx` → `Content-Type` is the spreadsheet type; body starts with `PK`.
-- `?format=bogus` → 400.
-- Same three for audit export.
+- `?lang=ko` → the first line is the KO header row; `?format=bogus` / `?lang=bogus` → 400.
+- Same for audit export.
 
 - [ ] Write; **human runs `npm run test:e2e`**. On green: commit (`feat(orders,audits): CSV/xlsx export`) + push; update STATUS (relabel Files track, 3a done, 3b next).
 
