@@ -13,6 +13,7 @@ describe('AuditsService', () => {
   let corners: { assertWorksCorner: jest.Mock; findOne: jest.Mock };
   let inventory: { recordWithinTransaction: jest.Mock };
   let transaction: any;
+  let spreadsheet: { toBuffer: jest.Mock };
 
   const owner: AuthUser = {
     id: 'owner-1',
@@ -85,7 +86,15 @@ describe('AuditsService', () => {
     inventory = {
       recordWithinTransaction: jest.fn().mockResolvedValue({ id: 1 }),
     };
-    service = new AuditsService(prisma, corners as any, inventory as any);
+    spreadsheet = {
+      toBuffer: jest.fn().mockResolvedValue(Buffer.from('bytes')),
+    };
+    service = new AuditsService(
+      prisma,
+      corners as any,
+      inventory as any,
+      spreadsheet as any,
+    );
   });
 
   it('create validates items and writes the audit + items by relation', async () => {
@@ -183,5 +192,114 @@ describe('AuditsService', () => {
       ConflictException,
     );
     expect(inventory.recordWithinTransaction).not.toHaveBeenCalled();
+  });
+
+  describe('exportAudit', () => {
+    const auditRecord = {
+      id: auditId,
+      title: 'Monthly count',
+      description: null,
+      auditedDate: new Date('2026-08-28T00:00:00.000Z'),
+      createdAt: new Date('2026-08-25T00:00:00.000Z'),
+      appliedAt: null as Date | null,
+      createdByUser: { name: 'Owner One' },
+      companyStore: { name: 'Corner A' },
+      inventoryAuditItems: [
+        {
+          productQuantity: 12,
+          companyStoreProduct: { product: { barcode: 'BC-1', name: 'Widget' } },
+        },
+        {
+          productQuantity: 0,
+          companyStoreProduct: { product: { barcode: 'BC-2', name: 'Gadget' } },
+        },
+      ],
+    };
+
+    it('scopes via the corner, builds one row per item (header repeated), EN + csv, appliedAt empty when unapplied', async () => {
+      prisma.inventoryAudit.findFirst.mockResolvedValue(auditRecord);
+
+      const result = await service.exportAudit(owner, cornerId, auditId);
+
+      expect(corners.findOne).toHaveBeenCalledWith(owner, cornerId);
+
+      const [format, columns, rows] = spreadsheet.toBuffer.mock.calls[0];
+      expect(format).toBe('csv');
+      expect(columns).toHaveLength(11);
+      expect(columns[0]).toEqual({ header: 'Audit ID', key: 'auditId' });
+      expect(columns[6]).toEqual({ header: 'Applied At', key: 'appliedAt' });
+      expect(columns[columns.length - 1]).toEqual({
+        header: 'Counted Quantity',
+        key: 'productQuantity',
+      });
+
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toEqual({
+        auditId: auditId,
+        title: 'Monthly count',
+        description: '',
+        auditedDate: '2026-08-28T00:00:00.000Z',
+        userName: 'Owner One',
+        createdAt: '2026-08-25T00:00:00.000Z',
+        appliedAt: '',
+        companyStoreName: 'Corner A',
+        productBarcode: 'BC-1',
+        productName: 'Widget',
+        productQuantity: 12,
+      });
+      expect(rows[1].auditId).toBe(auditId);
+      expect(rows[1].productBarcode).toBe('BC-2');
+      expect(rows[1].productQuantity).toBe(0);
+
+      expect(result.filename).toBe(`audit-${auditId}.csv`);
+      expect(result.contentType).toBe('text/csv');
+    });
+
+    it('fills appliedAt (ISO) when the audit is applied', async () => {
+      prisma.inventoryAudit.findFirst.mockResolvedValue({
+        ...auditRecord,
+        appliedAt: new Date('2026-08-30T00:00:00.000Z'),
+      });
+
+      await service.exportAudit(owner, cornerId, auditId);
+
+      const rows = spreadsheet.toBuffer.mock.calls[0][2];
+      expect(rows[0].appliedAt).toBe('2026-08-30T00:00:00.000Z');
+    });
+
+    it('resolves Korean headers when lang=ko (keys stay stable)', async () => {
+      prisma.inventoryAudit.findFirst.mockResolvedValue(auditRecord);
+
+      await service.exportAudit(owner, cornerId, auditId, 'csv', 'ko');
+
+      const columns = spreadsheet.toBuffer.mock.calls[0][1];
+      expect(columns[0]).toEqual({ header: '실사 ID', key: 'auditId' });
+      expect(columns[6]).toEqual({ header: '적용일시', key: 'appliedAt' });
+      expect(columns[columns.length - 1]).toEqual({
+        header: '실사 수량',
+        key: 'productQuantity',
+      });
+    });
+
+    it('format=xlsx sets the xlsx filename + content-type', async () => {
+      prisma.inventoryAudit.findFirst.mockResolvedValue(auditRecord);
+
+      const result = await service.exportAudit(owner, cornerId, auditId, 'xlsx');
+
+      expect(spreadsheet.toBuffer.mock.calls[0][0]).toBe('xlsx');
+      expect(result.filename).toBe(`audit-${auditId}.xlsx`);
+      expect(result.contentType).toBe(
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+    });
+
+    it('404s an absent / cross-tenant audit and generates nothing', async () => {
+      prisma.inventoryAudit.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.exportAudit(owner, cornerId, auditId),
+      ).rejects.toThrow(NotFoundException);
+      expect(spreadsheet.toBuffer).not.toHaveBeenCalled();
+    });
   });
 });

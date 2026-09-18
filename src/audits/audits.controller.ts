@@ -7,6 +7,8 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
+  StreamableFile,
 } from '@nestjs/common';
 import { AuditsService } from './audits.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
@@ -14,6 +16,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth-user';
 import { CreateAuditDto } from './dto/create-audit.dto';
 import { UpdateAuditDto } from './dto/update-audit.dto';
+import { ExportQueryDto } from '../spreadsheet/dto/export-query.dto';
 
 @Controller('corners/:cornerId/audits')
 export class AuditsController {
@@ -77,5 +80,26 @@ export class AuditsController {
     @Param('auditId', ParseUUIDPipe) auditId: string,
   ) {
     return this.audits.apply(caller, cornerId, auditId);
+  }
+
+  @RequirePermissions('audits.read')
+  @Get(':auditId/export')
+  async export(
+    @CurrentUser() caller: AuthUser,
+    @Param('cornerId', ParseUUIDPipe) cornerId: string,
+    @Param('auditId', ParseUUIDPipe) auditId: string,
+    @Query() query: ExportQueryDto,
+  ): Promise<StreamableFile> {
+    const { buffer, filename, contentType } = await this.audits.exportAudit(
+      caller,
+      cornerId,
+      auditId,
+      query.format,
+      query.lang,
+    );
+    return new StreamableFile(buffer, {
+      type: contentType,
+      disposition: `attachment; filename="${filename}"`,
+    });
   }
 }

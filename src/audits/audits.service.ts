@@ -15,6 +15,7 @@ import {
   InventoryTransactionType,
   TransactionSourceType,
 } from '../generated/prisma/enums';
+import { SpreadsheetService } from '../spreadsheet/spreadsheet.service';
 
 @Injectable()
 export class AuditsService {
@@ -22,7 +23,25 @@ export class AuditsService {
     private readonly prisma: PrismaService,
     private readonly corners: CornersService,
     private readonly inventory: InventoryService,
+    private readonly spreadsheet: SpreadsheetService,
   ) {}
+
+  private readonly AUDIT_EXPORT_COLUMNS = [
+    { key: 'auditId', label: { en: 'Audit ID', ko: '실사 ID' } },
+    { key: 'title', label: { en: 'Title', ko: '제목' } },
+    { key: 'description', label: { en: 'Description', ko: '설명' } },
+    { key: 'auditedDate', label: { en: 'Audit Date', ko: '실사일자' } },
+    { key: 'userName', label: { en: 'Created By', ko: '작성자' } },
+    { key: 'createdAt', label: { en: 'Created At', ko: '생성일시' } },
+    { key: 'appliedAt', label: { en: 'Applied At', ko: '적용일시' } },
+    { key: 'companyStoreName', label: { en: 'Corner', ko: '코너' } },
+    { key: 'productBarcode', label: { en: 'Barcode', ko: '바코드' } },
+    { key: 'productName', label: { en: 'Product', ko: '상품명' } },
+    {
+      key: 'productQuantity',
+      label: { en: 'Counted Quantity', ko: '실사 수량' },
+    },
+  ];
 
   private async validateItems(
     cornerId: string,
@@ -198,5 +217,58 @@ export class AuditsService {
         include: { inventoryAuditItems: true },
       });
     });
+  }
+
+  async exportAudit(
+    caller: AuthUser,
+    cornerId: string,
+    auditId: string,
+    format: 'csv' | 'xlsx' = 'csv',
+    lang: 'en' | 'ko' = 'en',
+  ) {
+    await this.corners.findOne(caller, cornerId);
+    const audit = await this.prisma.inventoryAudit.findFirst({
+      where: { id: auditId, companyStoreId: cornerId, deletedAt: null },
+      include: {
+        createdByUser: { select: { name: true } },
+        companyStore: { select: { name: true } },
+        inventoryAuditItems: {
+          include: {
+            companyStoreProduct: {
+              include: { product: { select: { barcode: true, name: true } } },
+            },
+          },
+        },
+      },
+    });
+    if (!audit) throw new NotFoundException('Audit not found');
+
+    const rows = audit.inventoryAuditItems.map((item) => ({
+      auditId: audit.id,
+      title: audit.title,
+      description: audit.description ?? '',
+      auditedDate: audit.auditedDate.toISOString(),
+      userName: audit.createdByUser.name,
+      createdAt: audit.createdAt.toISOString(),
+      appliedAt: audit.appliedAt ? audit.appliedAt.toISOString() : '',
+      companyStoreName: audit.companyStore.name,
+      productBarcode: item.companyStoreProduct.product.barcode,
+      productName: item.companyStoreProduct.product.name,
+      productQuantity: item.productQuantity,
+    }));
+
+    const columns = this.AUDIT_EXPORT_COLUMNS.map((column) => ({
+      header: column.label[lang],
+      key: column.key,
+    }));
+    const buffer = await this.spreadsheet.toBuffer(format, columns, rows);
+    return {
+      buffer: buffer,
+      filename: `audit-${audit.id}.${format}`,
+      contentType:
+        format === 'csv'
+          ? 'text/csv'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    };
   }
 }
