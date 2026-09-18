@@ -24,9 +24,9 @@
 | 9 | **Purchase reservations** (hold stock for a customer; fulfill = release + sale) | ✅ complete (blogged) |
 | 10a | **Reservation auto-expiry sweep** (`@nestjs/schedule` cron releases expired holds) | ✅ complete (blogged) |
 | 10b+ | More cross-cutting concerns / Redis caching (only when measured) | ⏳ not started |
-| Files | **File uploads** (MinIO/S3 storage foundation + product image → brand/user → order/audit) | 🔨 Slices 1–2 complete |
+| Files | **File uploads** (product/brand/avatar images) + **data export** (order/audit CSV·xlsx) | 🔨 Slices 1–2 + 3a done; 3b (import) next |
 
-## Where we are right now — File uploads, Slice 2 complete
+## Where we are right now — Order/audit CSV export (Slice 3a) complete
 
 New parallel track (from the two-item todo: *Prisma 8 migration* + *file uploads*). **Prisma 8 is blocked upstream** — no GA client/adapter yet (only `8.0.0-rc` / dev); revisit when a stable `@prisma/client` + `@prisma/adapter-pg` v8 ship together. So the file-upload subsystem went first.
 
@@ -36,9 +36,12 @@ New parallel track (from the two-item todo: *Prisma 8 migration* + *file uploads
 - ⚠️ **MinIO creds gotcha (cost an entire e2e run):** `docker compose` reads `${MINIO_ROOT_*}` from **`.env`** (its default env file), so that's what the container boots with; the e2e process signs with **`.env.test`**'s `S3_*`. If those secrets diverge → `SignatureDoesNotMatch` at `onModuleInit` in **every** e2e suite (StorageService is `@Global()`, so it boots app-wide, not just in the uploads suite). Keep the two files' MinIO secret aligned.
 - **`.env.test` uses its own bucket** `inventra-files-test` (isolated from dev's `inventra-files`); `onModuleInit` auto-creates it on first boot.
 **Slice 2 — brand logo + user avatar** ✅. Same pattern reused. **Brand logo** (`BrandsService`/`BrandsController`, gated `brands.update`, integer id via `ParseIntPipe`, key `brands/<id>/<uuid>.<ext>`). **User avatar is self-service**: `POST /users/me/avatar[/presign|/confirm]` with **no `@RequirePermissions`** — the target is always `caller.id` (no `:id` param), so editing another user is *unrepresentable*; the global `JwtAuthGuard` (`APP_GUARD` in `auth.module.ts`) still authenticates. The presign/confirm DTOs were extracted to shared `src/storage/dto/` (`PresignUploadDto`, `ConfirmUploadDto`); products keeps its local copies (optional later retrofit). No migration/seed/permission changes — `logoUrl` / `profileImageUrl` columns and the `*.update` perms already existed.
-- **187 unit tests green** (20 suites) + `test/uploads.e2e-spec.ts` (now product + brand + avatar) — full e2e green.
+- Slice 2 shipped with full e2e green (`test/uploads.e2e-spec.ts` covers product + brand + avatar).
 
-**Next — Slice 3: order file + audit file** (private + presign-on-read + an **audit-frozen guard** — can't attach a file to an already-applied audit). Specs/plans: slices 1–2 in `docs/superpowers/{specs,plans}/2026-09-10-*` and `…/2026-09-15-file-uploads-brand-logo-user-avatar.*`.
+**Slice 3a — order/audit CSV·xlsx export** ✅. **Reframed:** the "order/audit file" turned out to be **data interchange, not a stored attachment** — it does *not* use `StorageService`/presign/`fileUrl`. `GET /corners/:cornerId/{orders/:orderId,audits/:auditId}/export?format=csv|xlsx&lang=en|ko` (default csv+en, gated `*.read`, corner-scoped) streams a flat denormalized sheet (one row per line item, header repeated) via `StreamableFile`. A shared **`@Global() SpreadsheetService`** (`exceljs`, `src/spreadsheet/`) emits both formats from one workbook. **Localized headers** (EN/KO): columns are `{ key, label: { en, ko } }`; the stable `key` is the import anchor. Audit export includes `appliedAt`. No migration/seed/permission changes.
+- **198 unit tests green** (21 suites) + order/audit export e2e (csv default, `lang=ko`, xlsx, bad-format/lang → 400) — full e2e green.
+
+**Next — Slice 3b: order/audit import.** Parse an uploaded CSV/xlsx in the 3a column layout, key rows by **column order** (language-agnostic — headers are localized), resolve `productBarcode` → the placement on the corner, and create/replace the order/audit + items with per-row validation + error reporting. Spec (both directions): `docs/superpowers/specs/2026-09-16-order-audit-csv-import-export-design.md`; 3a plan: `…/plans/2026-09-16-order-audit-export.md`.
 
 ## Prior — Phase 10a complete (reservation auto-expiry sweep)
 
@@ -96,7 +99,7 @@ The DB, secrets, and generated client are **not** in the repo. After `git pull`:
 3. `docker compose up -d` (postgres + redis + **minio** — MinIO console at `localhost:${MINIO_CONSOLE_PORT}`)
 4. `npx prisma generate` (client generates into `src/generated/prisma`, which is gitignored)
 5. `npx prisma migrate deploy` then `npm run seed` (or `npx prisma migrate reset --force` which also seeds via `prisma/seed.ts`)
-6. `npm test` (unit — should be 187 green across 20 suites) and `npm run test:e2e` (all green, incl. `test/uploads.e2e-spec.ts` — product + brand + avatar)
+6. `npm test` (unit — should be 198 green across 21 suites) and `npm run test:e2e` (all green, incl. `test/uploads.e2e-spec.ts` + order/audit CSV·xlsx export)
 
 Latest migration: `prisma/migrations/20260909162034_reservation_expired_at`. **Keep the `prisma` CLI + `@prisma/client` + `@prisma/adapter-pg` all on the same major (v7); don't bump to the v8 RC.**
 
