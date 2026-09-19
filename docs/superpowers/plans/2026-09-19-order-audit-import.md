@@ -116,6 +116,23 @@ Extend `spreadsheet.service.spec.ts`:
     if (!orderDate || Number.isNaN(Date.parse(orderDate)))
       errors.push({ row: 2, error: 'Invalid order date' });
 
+    // one file = one order: every later data row must repeat the same header cells
+    dataRows.slice(1).forEach((dataRow, index) => {
+      const line = index + 3; // rows 3..N (first data row was line 2)
+      if ((dataRow[titleIdx] ?? '').trim() !== title)
+        errors.push({ row: line, error: 'Title differs from the first data row' });
+      if ((dataRow[descIdx] ?? '').trim() !== descriptionRaw)
+        errors.push({
+          row: line,
+          error: 'Description differs from the first data row',
+        });
+      if ((dataRow[dateIdx] ?? '').trim() !== orderDate)
+        errors.push({
+          row: line,
+          error: 'Order Date differs from the first data row',
+        });
+    });
+
     const barcodes = dataRows.map((dataRow) => (dataRow[barcodeIdx] ?? '').trim());
     const products = await this.prisma.product.findMany({
       where: {

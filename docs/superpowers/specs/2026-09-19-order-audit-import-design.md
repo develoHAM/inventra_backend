@@ -32,7 +32,7 @@
 
 ## Row validation (collect ALL errors)
 
-Header fields are read from the **first data row** (they repeat on every row): `title` (required, ≤255), `description` (optional; blank → omitted), and the date (`orderDate`/`auditedDate`, must parse as a valid date). Item fields per row: `productBarcode` + quantity (`productOrderQuantity` ≥ 1 for orders / `productQuantity` ≥ 0 for audits, integer).
+Header fields are read from the **first data row**: `title` (required, ≤255), `description` (optional; blank → omitted), and the date (`orderDate`/`auditedDate`, must parse as a valid date). Because the flat layout repeats those on every row, **each later row's header cells must match the first row's** (one file = one order/audit) — a mismatch on any row is a `{ row, error }`, not silently ignored. Item fields per row: `productBarcode` + quantity (`productOrderQuantity` ≥ 1 for orders / `productQuantity` ≥ 0 for audits, integer).
 
 Resolution is **batched** (not per-row queries): collect all barcodes → `product.findMany({ where: { barcode: { in }, deletedAt: null } })` → `companyStoreProduct.findMany({ where: { companyStoreId: cornerId, productId: { in }, deletedAt: null } })`. Then per row:
 - blank/unknown barcode → error;
