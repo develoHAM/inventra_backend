@@ -37,4 +37,29 @@ describe('SpreadsheetService', () => {
     expect(buffer.length).toBeGreaterThan(0);
     expect(buffer.subarray(0, 2).toString('utf8')).toBe('PK');
   });
+
+  describe('parse', () => {
+    it('parses a CSV buffer into a grid of string rows (header + data)', async () => {
+      const grid = await service.parse(
+        'csv',
+        Buffer.from('name,qty\nWidget,10\nGadget,5\n'),
+      );
+
+      expect(grid).toEqual([
+        ['name', 'qty'],
+        ['Widget', '10'],
+        ['Gadget', '5'],
+      ]);
+    });
+
+    it('round-trips xlsx: toBuffer then parse yields the same header + rows (cells as strings)', async () => {
+      const buffer = await service.toBuffer('xlsx', columns, rows);
+
+      const grid = await service.parse('xlsx', buffer);
+
+      expect(grid[0]).toEqual(['name', 'qty']);
+      expect(grid[1]).toEqual(['Widget', '10']);
+      expect(grid[2]).toEqual(['Gadget', '5']);
+    });
+  });
 });
