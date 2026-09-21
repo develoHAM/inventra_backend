@@ -35,6 +35,147 @@ export class OrdersService {
     },
   ];
 
+  private orderColIndex(key: string): number {
+    return this.ORDER_EXPORT_COLUMNS.findIndex((column) => column.key === key);
+  }
+
+  private async buildOrderDtoFromFile(
+    cornerId: string,
+    file: Express.Multer.File,
+  ): Promise<CreateOrderDto> {
+    const ext = file.originalname.split('.').pop()?.toLowerCase();
+    const format = ext === 'csv' ? 'csv' : ext === 'xlsx' ? 'xlsx' : null;
+    if (!format) throw new BadRequestException('File must be .csv or .xlsx');
+
+    const rows = await this.spreadsheet.parse(format, file.buffer);
+    if (rows.length === 0) throw new BadRequestException('The file is empty');
+    if (rows[0].length !== this.ORDER_EXPORT_COLUMNS.length)
+      throw new BadRequestException('Unexpected column layout');
+    const dataRows = rows.slice(1);
+    if (dataRows.length === 0)
+      throw new BadRequestException('The file has no data rows');
+
+    const titleIdx = this.orderColIndex('title');
+    const descIdx = this.orderColIndex('description');
+    const dateIdx = this.orderColIndex('orderDate');
+    const barcodeIdx = this.orderColIndex('productBarcode');
+    const qtyIdx = this.orderColIndex('productOrderQuantity');
+
+    const errors: { row: number; error: string }[] = [];
+
+    const title = (dataRows[0][titleIdx] ?? '').trim();
+    if (!title) errors.push({ row: 2, error: 'Title is required' });
+    else if (title.length > 255)
+      errors.push({ row: 2, error: 'Title exceeds 255 characters' });
+    const descriptionRaw = (dataRows[0][descIdx] ?? '').trim();
+    const orderDate = (dataRows[0][dateIdx] ?? '').trim();
+    if (!orderDate || Number.isNaN(Date.parse(orderDate)))
+      errors.push({ row: 2, error: 'Invalid order date' });
+
+    // one file = one order: every later data row must repeat the same header cells
+    dataRows.slice(1).forEach((dataRow, index) => {
+      const line = index + 3; // rows 3..N (first data row was line 2)
+      if ((dataRow[titleIdx] ?? '').trim() !== title)
+        errors.push({
+          row: line,
+          error: 'Title differs from the first data row',
+        });
+      if ((dataRow[descIdx] ?? '').trim() !== descriptionRaw)
+        errors.push({
+          row: line,
+          error: 'Description differs from the first data row',
+        });
+      if ((dataRow[dateIdx] ?? '').trim() !== orderDate)
+        errors.push({
+          row: line,
+          error: 'Order Date differs from the first data row',
+        });
+    });
+
+    const barcodes = dataRows.map((dataRow) =>
+      (dataRow[barcodeIdx] ?? '').trim(),
+    );
+    const products = await this.prisma.product.findMany({
+      where: {
+        barcode: { in: barcodes.filter((barcode) => barcode.length > 0) },
+        deletedAt: null,
+      },
+      select: { id: true, barcode: true },
+    });
+    const productIdByBarcode = new Map(
+      products.map((product) => [product.barcode, product.id]),
+    );
+    const placements = await this.prisma.companyStoreProduct.findMany({
+      where: {
+        companyStoreId: cornerId,
+        productId: { in: products.map((product) => product.id) },
+        deletedAt: null,
+      },
+      select: { id: true, productId: true },
+    });
+    const placementIdByProductId = new Map(
+      placements.map((placement) => [placement.productId, placement.id]),
+    );
+
+    const seenBarcodes = new Set<string>();
+    const items: {
+      companyStoreProductId: number;
+      productOrderQuantity: number;
+    }[] = [];
+
+    dataRows.forEach((dataRow, index) => {
+      const line = index + 2; // sheet line (header is line 1)
+      const barcode = (dataRow[barcodeIdx] ?? '').trim();
+      const quantity = Number((dataRow[qtyIdx] ?? '').trim());
+
+      if (!barcode) {
+        errors.push({ row: line, error: 'Barcode is required' });
+        return;
+      }
+      if (seenBarcodes.has(barcode)) {
+        errors.push({ row: line, error: `Duplicate barcode "${barcode}"` });
+        return;
+      }
+      seenBarcodes.add(barcode);
+
+      const productId = productIdByBarcode.get(barcode);
+      if (productId === undefined) {
+        errors.push({ row: line, error: `Unknown barcode "${barcode}"` });
+        return;
+      }
+      const placementId = placementIdByProductId.get(productId);
+      if (placementId === undefined) {
+        errors.push({
+          row: line,
+          error: `Barcode "${barcode}" is not placed on this corner`,
+        });
+        return;
+      }
+      if (!Number.isInteger(quantity) || quantity < 1) {
+        errors.push({ row: line, error: 'Quantity must be an integer ≥ 1' });
+        return;
+      }
+      items.push({
+        companyStoreProductId: placementId,
+        productOrderQuantity: quantity,
+      });
+    });
+
+    if (errors.length > 0)
+      throw new BadRequestException({
+        message: 'Import failed',
+        errors: errors,
+      });
+
+    const dto: CreateOrderDto = {
+      title: title,
+      orderDate: orderDate,
+      items: items,
+    } as CreateOrderDto;
+    if (descriptionRaw) dto.description = descriptionRaw;
+    return dto;
+  }
+
   private async validateItems(cornerId: string, items: OrderItemDto[]) {
     const placementIds = items.map((item) => item.companyStoreProductId);
     const uniquePlacementIds = new Set(placementIds);
@@ -214,5 +355,26 @@ export class OrdersService {
           ? 'text/csv'
           : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     };
+  }
+
+  async importCreate(
+    caller: AuthUser,
+    cornerId: string,
+    file: Express.Multer.File,
+  ) {
+    await this.corners.assertWorksCorner(caller, cornerId);
+    const dto = await this.buildOrderDtoFromFile(cornerId, file);
+    return this.create(caller, cornerId, dto);
+  }
+
+  async importUpdate(
+    caller: AuthUser,
+    cornerId: string,
+    orderId: string,
+    file: Express.Multer.File,
+  ) {
+    await this.corners.assertWorksCorner(caller, cornerId);
+    const dto = await this.buildOrderDtoFromFile(cornerId, file);
+    return this.update(caller, cornerId, orderId, dto);
   }
 }

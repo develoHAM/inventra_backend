@@ -8,7 +8,7 @@ describe('OrdersService', () => {
   let prisma: any;
   let corners: { assertWorksCorner: jest.Mock; findOne: jest.Mock };
   let transaction: any;
-  let spreadsheet: { toBuffer: jest.Mock };
+  let spreadsheet: { toBuffer: jest.Mock; parse: jest.Mock };
 
   const owner: AuthUser = {
     id: 'owner-1',
@@ -51,6 +51,9 @@ describe('OrdersService', () => {
           return requestedIds.map((id) => ({ id: id }));
         }),
       },
+      product: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       order: {
         create: jest.fn().mockResolvedValue({ id: orderId, orderItems: [] }),
         findFirst: jest
@@ -71,6 +74,7 @@ describe('OrdersService', () => {
     };
     spreadsheet = {
       toBuffer: jest.fn().mockResolvedValue(Buffer.from('bytes')),
+      parse: jest.fn(),
     };
     service = new OrdersService(prisma, corners as any, spreadsheet as any);
   });
@@ -280,6 +284,151 @@ describe('OrdersService', () => {
         service.exportOrder(owner, cornerId, orderId),
       ).rejects.toThrow(NotFoundException);
       expect(spreadsheet.toBuffer).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('import', () => {
+    // 10-column layout (header text is irrelevant; only positions + count matter)
+    const headerRow = [
+      'orderId',
+      'title',
+      'description',
+      'orderDate',
+      'userName',
+      'createdAt',
+      'companyStoreName',
+      'productBarcode',
+      'productName',
+      'productOrderQuantity',
+    ];
+    const orderRow = (
+      barcode: string,
+      qty: string,
+      over: { title?: string; description?: string; orderDate?: string } = {},
+    ): string[] => [
+      '', // orderId (ignored)
+      over.title ?? 'Weekend Restock',
+      over.description ?? 'Aisle 3',
+      over.orderDate ?? '2026-09-20T00:00:00.000Z',
+      '', // userName (ignored)
+      '', // createdAt (ignored)
+      '', // companyStoreName (ignored)
+      barcode,
+      '', // productName (ignored)
+      qty,
+    ];
+    const file = (name: string) =>
+      ({ originalname: name, buffer: Buffer.from('x') }) as any;
+
+    const resolvable = () => {
+      prisma.product.findMany.mockResolvedValue([
+        { id: 'p1', barcode: 'BC-1' },
+        { id: 'p2', barcode: 'BC-2' },
+      ]);
+      prisma.companyStoreProduct.findMany.mockResolvedValue([
+        { id: 41, productId: 'p1' },
+        { id: 42, productId: 'p2' },
+      ]);
+    };
+
+    it('importCreate resolves barcodes → placements and calls create with the built dto', async () => {
+      spreadsheet.parse.mockResolvedValue([
+        headerRow,
+        orderRow('BC-1', '24'),
+        orderRow('BC-2', '4'),
+      ]);
+      resolvable();
+      const createSpy = jest
+        .spyOn(service, 'create')
+        .mockResolvedValue({ id: orderId } as any);
+
+      await service.importCreate(owner, cornerId, file('o.csv'));
+
+      expect(corners.assertWorksCorner).toHaveBeenCalledWith(owner, cornerId);
+      expect(spreadsheet.parse).toHaveBeenCalledWith('csv', expect.any(Buffer));
+      expect(createSpy).toHaveBeenCalledWith(owner, cornerId, {
+        title: 'Weekend Restock',
+        orderDate: '2026-09-20T00:00:00.000Z',
+        description: 'Aisle 3',
+        items: [
+          { companyStoreProductId: 41, productOrderQuantity: 24 },
+          { companyStoreProductId: 42, productOrderQuantity: 4 },
+        ],
+      });
+    });
+
+    it('importUpdate detects .xlsx and calls update with the built dto', async () => {
+      spreadsheet.parse.mockResolvedValue([headerRow, orderRow('BC-1', '5')]);
+      resolvable();
+      const updateSpy = jest
+        .spyOn(service, 'update')
+        .mockResolvedValue({ id: orderId } as any);
+
+      await service.importUpdate(owner, cornerId, orderId, file('o.xlsx'));
+
+      expect(spreadsheet.parse).toHaveBeenCalledWith('xlsx', expect.any(Buffer));
+      expect(updateSpy).toHaveBeenCalledWith(
+        owner,
+        cornerId,
+        orderId,
+        expect.objectContaining({
+          items: [{ companyStoreProductId: 41, productOrderQuantity: 5 }],
+        }),
+      );
+    });
+
+    it('collects every row error (bad qty, unknown barcode, duplicate, header mismatch) → 400, create not called', async () => {
+      spreadsheet.parse.mockResolvedValue([
+        headerRow,
+        orderRow('BC-1', '0'), // line 2: quantity 0
+        orderRow('ZZZ', '5'), // line 3: unknown barcode
+        orderRow('BC-1', '3'), // line 4: duplicate BC-1
+        orderRow('BC-2', '2', { title: 'Different' }), // line 5: title mismatch
+      ]);
+      resolvable();
+      const createSpy = jest.spyOn(service, 'create');
+
+      expect.assertions(3);
+      try {
+        await service.importCreate(owner, cornerId, file('o.csv'));
+      } catch (thrown) {
+        expect(thrown).toBeInstanceOf(BadRequestException);
+        const response = (thrown as BadRequestException).getResponse() as {
+          errors: { row: number; error: string }[];
+        };
+        expect(response.errors).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ row: 2, error: expect.stringContaining('Quantity') }),
+            expect.objectContaining({ row: 3, error: expect.stringContaining('Unknown barcode') }),
+            expect.objectContaining({ row: 4, error: expect.stringContaining('Duplicate') }),
+            expect.objectContaining({ row: 5, error: expect.stringContaining('Title differs') }),
+          ]),
+        );
+      }
+      expect(createSpy).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-csv/xlsx extension (400)', async () => {
+      await expect(
+        service.importCreate(owner, cornerId, file('o.txt')),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects an unexpected column layout (400)', async () => {
+      spreadsheet.parse.mockResolvedValue([
+        ['a', 'b', 'c'],
+        ['x', 'y', 'z'],
+      ]);
+      await expect(
+        service.importCreate(owner, cornerId, file('o.csv')),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a header-only file (400)', async () => {
+      spreadsheet.parse.mockResolvedValue([headerRow]);
+      await expect(
+        service.importCreate(owner, cornerId, file('o.csv')),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

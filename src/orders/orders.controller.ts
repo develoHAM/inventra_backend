@@ -3,12 +3,17 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  MaxFileSizeValidator,
   Param,
+  ParseFilePipe,
   ParseUUIDPipe,
   Patch,
   Post,
   Query,
   StreamableFile,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -17,6 +22,7 @@ import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ExportQueryDto } from '../spreadsheet/dto/export-query.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 @Controller('corners/:cornerId/orders')
 export class OrdersController {
@@ -91,5 +97,39 @@ export class OrdersController {
       type: contentType,
       disposition: `attachment; filename="${filename}"`,
     });
+  }
+
+  @RequirePermissions('orders.create')
+  @Post('import')
+  @UseInterceptors(FileInterceptor('file'))
+  importCreate(
+    @CurrentUser() caller: AuthUser,
+    @Param('cornerId', ParseUUIDPipe) cornerId: string,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [new MaxFileSizeValidator({ maxSize: 10 * 1024 * 1024 })],
+      }),
+    )
+    file: Express.Multer.File,
+  ) {
+    return this.orders.importCreate(caller, cornerId, file);
+  }
+
+  @RequirePermissions('orders.update')
+  @Post(':orderId/import')
+  @HttpCode(200)
+  @UseInterceptors(FileInterceptor('file'))
+  importUpdate(
+    @CurrentUser() caller: AuthUser,
+    @Param('cornerId', ParseUUIDPipe) cornerId: string,
+    @Param('orderId', ParseUUIDPipe) orderId: string,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [new MaxFileSizeValidator({ maxSize: 10 * 1024 * 1024 })],
+      }),
+    )
+    file: Express.Multer.File,
+  ) {
+    return this.orders.importUpdate(caller, cornerId, orderId, file);
   }
 }
