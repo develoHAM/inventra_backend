@@ -24,9 +24,9 @@
 | 9 | **Purchase reservations** (hold stock for a customer; fulfill = release + sale) | ✅ complete (blogged) |
 | 10a | **Reservation auto-expiry sweep** (`@nestjs/schedule` cron releases expired holds) | ✅ complete (blogged) |
 | 10b+ | More cross-cutting concerns / Redis caching (only when measured) | ⏳ not started |
-| Files | **File uploads** (product/brand/avatar images) + **data export** (order/audit CSV·xlsx) | 🔨 Slices 1–2 + 3a done; 3b (import) next |
+| Files | **File uploads** (product/brand/avatar images) + **data import/export** (order/audit CSV·xlsx) | ✅ Slices 1–3 complete |
 
-## Where we are right now — Order/audit CSV export (Slice 3a) complete
+## Where we are right now — File-upload + import/export track complete (Slices 1–3)
 
 New parallel track (from the two-item todo: *Prisma 8 migration* + *file uploads*). **Prisma 8 is blocked upstream** — no GA client/adapter yet (only `8.0.0-rc` / dev); revisit when a stable `@prisma/client` + `@prisma/adapter-pg` v8 ship together. So the file-upload subsystem went first.
 
@@ -41,7 +41,10 @@ New parallel track (from the two-item todo: *Prisma 8 migration* + *file uploads
 **Slice 3a — order/audit CSV·xlsx export** ✅. **Reframed:** the "order/audit file" turned out to be **data interchange, not a stored attachment** — it does *not* use `StorageService`/presign/`fileUrl`. `GET /corners/:cornerId/{orders/:orderId,audits/:auditId}/export?format=csv|xlsx&lang=en|ko` (default csv+en, gated `*.read`, corner-scoped) streams a flat denormalized sheet (one row per line item, header repeated) via `StreamableFile`. A shared **`@Global() SpreadsheetService`** (`exceljs`, `src/spreadsheet/`) emits both formats from one workbook. **Localized headers** (EN/KO): columns are `{ key, label: { en, ko } }`; the stable `key` is the import anchor. Audit export includes `appliedAt`. No migration/seed/permission changes.
 - **198 unit tests green** (21 suites) + order/audit export e2e (csv default, `lang=ko`, xlsx, bad-format/lang → 400) — full e2e green.
 
-**Next — Slice 3b: order/audit import.** Parse an uploaded CSV/xlsx in the 3a column layout, key rows by **column order** (language-agnostic — headers are localized), resolve `productBarcode` → the placement on the corner, and create/replace the order/audit + items with per-row validation + error reporting. Spec (both directions): `docs/superpowers/specs/2026-09-16-order-audit-csv-import-export-design.md`; 3a plan: `…/plans/2026-09-16-order-audit-export.md`.
+**Slice 3b — order/audit CSV·xlsx import** ✅. `POST /corners/:cornerId/{orders,audits}/import` (create, gated `*.create`, 201) and `…/{orders/:orderId,audits/:auditId}/import` (update, gated `*.update`, 200). `SpreadsheetService.parse` reads both formats into a `string[][]` grid (xlsx `load` needs a cast at exceljs's stale `Buffer` type — types-only). Each service reads columns **by position**, looked up in the shared `*_EXPORT_COLUMNS` (so localized headers don't matter); validates **header-field consistency** (every row must repeat the first row's title/description/date — one file = one order/audit); resolves `productBarcode` → placement on the corner in two batched queries; and **collects every row error** into one `400 { message: 'Import failed', errors: [{ row, error }] }` (row = sheet line; nothing written). On success it **reuses the existing `create`/`update`** write path — so update-import onto an applied audit → 409. Format from file extension; ≤10 MB. The sheet's id column is never used (update target comes from the URL). Spec: `docs/superpowers/specs/2026-09-19-order-audit-import-design.md`; plan: `…/plans/2026-09-19-order-audit-import.md`.
+- **210 unit tests green** (21 suites) + order/audit import e2e (create, error-list 400, update, applied-audit 409) — **86 e2e green across 9 suites**.
+
+**The file-upload + import/export track is complete** — images (product/brand/avatar) and data interchange (order/audit CSV·xlsx export + import). **Next — no forced slice.** Candidates, built only on a real need: Prisma 8 migration (once a stable v8 client + `@prisma/adapter-pg` ship), Redis caching (measure first), rate limiting, observability/metrics, OpenAPI docs. Start any new slice with `/brainstorming` → spec → plan.
 
 ## Prior — Phase 10a complete (reservation auto-expiry sweep)
 
@@ -99,7 +102,7 @@ The DB, secrets, and generated client are **not** in the repo. After `git pull`:
 3. `docker compose up -d` (postgres + redis + **minio** — MinIO console at `localhost:${MINIO_CONSOLE_PORT}`)
 4. `npx prisma generate` (client generates into `src/generated/prisma`, which is gitignored)
 5. `npx prisma migrate deploy` then `npm run seed` (or `npx prisma migrate reset --force` which also seeds via `prisma/seed.ts`)
-6. `npm test` (unit — should be 198 green across 21 suites) and `npm run test:e2e` (all green, incl. `test/uploads.e2e-spec.ts` + order/audit CSV·xlsx export)
+6. `npm test` (unit — should be 210 green across 21 suites) and `npm run test:e2e` (86 green across 9 suites, incl. uploads + order/audit CSV·xlsx export/import)
 
 Latest migration: `prisma/migrations/20260909162034_reservation_expired_at`. **Keep the `prisma` CLI + `@prisma/client` + `@prisma/adapter-pg` all on the same major (v7); don't bump to the v8 RC.**
 

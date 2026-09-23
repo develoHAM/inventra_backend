@@ -5,7 +5,7 @@ Multi-tenant inventory-management SaaS (Korean concession-store model — compan
 ## Start here
 **Read [`docs/superpowers/STATUS.md`](docs/superpowers/STATUS.md) first** — the living handoff: what's done, the current phase, the next slice, and new-machine setup. Specs are in `docs/superpowers/specs/`, plans in `docs/superpowers/plans/`, phase retrospectives in `blog/en` + `blog/ko`.
 
-**Current state:** Phases 0–5 complete. **Next: Phase 6 — inventory transactions** (move real stock through one centralized write; this is where the atomic `updateMany`/`$transaction` pattern, deferred since Phase 4, becomes mandatory).
+**Current state:** Phases 0–10a complete, plus the file-upload + order/audit CSV·xlsx import/export track (Slices 1–3). No forced next slice — see STATUS.md for candidates.
 
 ## How we work (please follow)
 - **Teaching-first.** I'm learning NestJS — explain the concepts and framework fundamentals as we build, the *why* not just the *what*.
@@ -15,7 +15,7 @@ Multi-tenant inventory-management SaaS (Korean concession-store model — compan
 - **Phase-end:** offer the bilingual EN+KR Medium-style `/phase-blog` retrospective.
 
 ## Commands
-- `npm test` — unit suite (currently **124 green**).
+- `npm test` — unit suite (currently **210 green**).
 - `npm run test:e2e` — e2e. ⚠️ Its `pretest` runs `prisma migrate reset --force`, which Claude's Prisma AI-safety guard blocks — **a human must run e2e and any `prisma migrate` command**. Claude runs `npm test`, `npm run seed`, and read-only `psql` fine.
 - `npm run build` · `npm run seed` · `npm run lint`.
 
