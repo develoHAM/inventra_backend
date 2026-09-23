@@ -393,4 +393,56 @@ describe('Inventory Audits (e2e)', () => {
         .expect(400);
     });
   });
+
+  describe('CSV import', () => {
+    // 11-column layout; header text is decorative (import reads by position)
+    const HEADER =
+      'Audit ID,Title,Description,Audit Date,Created By,Created At,Applied At,Corner,Barcode,Product,Counted Quantity';
+    const csv = (...dataLines: string[]) =>
+      Buffer.from([HEADER, ...dataLines].join('\n') + '\n');
+
+    it('create-import builds a new audit from the sheet (201)', async () => {
+      const res = await request(http)
+        .post(`${base()}/import`)
+        .set(...auth(ownerAccess))
+        .attach(
+          'file',
+          csv(',Imported Audit,,2026-08-28T00:00:00.000Z,,,,,AUD-BC-A,,7'),
+          'audit.csv',
+        )
+        .expect(201);
+
+      expect(res.body.title).toBe('Imported Audit');
+      expect(res.body.inventoryAuditItems).toHaveLength(1);
+      expect(res.body.inventoryAuditItems[0].productQuantity).toBe(7);
+    });
+
+    it('update-import onto an already-applied audit is 409', async () => {
+      const created = await request(http)
+        .post(base())
+        .set(...auth(ownerAccess))
+        .send({
+          title: 'To apply',
+          auditedDate: '2026-08-28',
+          items: [
+            { companyStoreProductId: placementAId, productQuantity: 4 },
+          ],
+        })
+        .expect(201);
+      await request(http)
+        .post(`${base()}/${created.body.id}/apply`)
+        .set(...auth(ownerAccess))
+        .expect(201);
+
+      await request(http)
+        .post(`${base()}/${created.body.id}/import`)
+        .set(...auth(ownerAccess))
+        .attach(
+          'file',
+          csv(',Nope,,2026-08-28T00:00:00.000Z,,,,,AUD-BC-A,,9'),
+          'audit.csv',
+        )
+        .expect(409);
+    });
+  });
 });

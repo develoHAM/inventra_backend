@@ -383,4 +383,76 @@ describe('Restock Orders (e2e)', () => {
         .expect(400);
     });
   });
+
+  describe('CSV import', () => {
+    // 10-column layout; header text is decorative (import reads by position)
+    const HEADER =
+      'Order ID,Title,Description,Order Date,Created By,Created At,Corner,Barcode,Product,Order Quantity';
+    const csv = (...dataLines: string[]) =>
+      Buffer.from([HEADER, ...dataLines].join('\n') + '\n');
+
+    it('create-import builds a new order from the sheet (201)', async () => {
+      const res = await request(http)
+        .post(`${base()}/import`)
+        .set(...auth(ownerAccess))
+        .attach(
+          'file',
+          csv(',Imported Order,,2026-09-20T00:00:00.000Z,,,,ORD-BC-A,,15'),
+          'order.csv',
+        )
+        .expect(201);
+
+      expect(res.body.title).toBe('Imported Order');
+      expect(res.body.orderItems).toHaveLength(1);
+      expect(res.body.orderItems[0].productOrderQuantity).toBe(15);
+    });
+
+    it('reports row errors as a 400 with an errors list', async () => {
+      const res = await request(http)
+        .post(`${base()}/import`)
+        .set(...auth(ownerAccess))
+        .attach(
+          'file',
+          csv(',Bad Order,,2026-09-20T00:00:00.000Z,,,,NOPE-999,,3'),
+          'order.csv',
+        )
+        .expect(400);
+
+      expect(res.body.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            row: 2,
+            error: expect.stringContaining('Unknown barcode'),
+          }),
+        ]),
+      );
+    });
+
+    it('update-import replaces the target order items (200)', async () => {
+      const created = await request(http)
+        .post(base())
+        .set(...auth(ownerAccess))
+        .send({
+          title: 'To be replaced',
+          orderDate: '2026-09-20',
+          items: [
+            { companyStoreProductId: placementAId, productOrderQuantity: 1 },
+          ],
+        })
+        .expect(201);
+
+      const res = await request(http)
+        .post(`${base()}/${created.body.id}/import`)
+        .set(...auth(ownerAccess))
+        .attach(
+          'file',
+          csv(',Replaced,,2026-09-20T00:00:00.000Z,,,,ORD-BC-B,,9'),
+          'order.csv',
+        )
+        .expect(200);
+
+      expect(res.body.orderItems).toHaveLength(1);
+      expect(res.body.orderItems[0].productOrderQuantity).toBe(9);
+    });
+  });
 });
