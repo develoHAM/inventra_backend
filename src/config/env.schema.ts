@@ -7,8 +7,16 @@ export const envSchema = z.object({
     .default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
   // -- Redis --
+  REDIS_HOST: z.string().default('localhost'),
   REDIS_PASSWORD: z.string().min(1),
   REDIS_PORT: z.coerce.number().int().positive().default(6379),
+  BULLMQ_PREFIX: z.string().default('inventra'),
+  // -- Email (SMTP) --
+  SMTP_HOST: z.string().default('localhost'),
+  SMTP_PORT: z.coerce.number().int().positive().default(1025),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().default('Inventra <no-reply@inventra.local>'),
   // -- Database --
   DATABASE_URL: z
     .string()

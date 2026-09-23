@@ -13,6 +13,39 @@ datasource db {
   provider = "postgresql"
 }
 
+enum UserStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  REJECTED
+  SUSPENDED
+  DEACTIVATED
+
+  @@map("user_status")
+}
+
+enum PermissionEffect {
+  GRANT
+  DENY
+
+  @@map("permission_effect")
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  PUSH
+
+  @@map("notification_channel")
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+
+  @@map("notification_status")
+}
+
 model User {
   id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name            String     @db.VarChar(100)
@@ -50,6 +83,7 @@ model User {
   createdTransactions     InventoryTransaction[]
   refreshTokens           RefreshToken[]
   createdReservations     PurchaseReservation[] @relation("ReservationsCreatedBy")
+  receivedNotifications Notification[] @relation("NotificationRecipient")
 
   @@index([companyId], map: "IDX_users_company")
   @@map("users")
@@ -147,21 +181,26 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
-enum UserStatus {
-  PENDING_APPROVAL
-  ACTIVE
-  REJECTED
-  SUSPENDED
-  DEACTIVATED
+model Notification {
+  id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventType        String              @map("event_type") @db.VarChar(64)
+  channel          NotificationChannel
+  recipientUserId  String?             @map("recipient_user_id") @db.Uuid
+  recipientAddress String              @map("recipient_address") @db.VarChar(255)
+  subject          String?             @db.VarChar(255)
+  body             String              @db.Text
+  status           NotificationStatus  @default(PENDING)
+  attempts         Int                 @default(0)
+  lastError        String?             @map("last_error") @db.Text
+  sentAt           DateTime?           @map("sent_at") @db.Timestamptz(6)
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  @@map("user_status")
-}
+  recipientUser User? @relation("NotificationRecipient", fields: [recipientUserId], references: [id])
 
-enum PermissionEffect {
-  GRANT
-  DENY
-
-  @@map("permission_effect")
+  @@index([recipientUserId], map: "IDX_notifications_recipient")
+  @@index([status], map: "IDX_notifications_status")
+  @@map("notifications")
 }
 
 model Store {

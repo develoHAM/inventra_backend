@@ -60,12 +60,16 @@ enum NotificationChannel {
   EMAIL
   SMS
   PUSH
+
+  @@map("notification_channel")
 }
 
 enum NotificationStatus {
   PENDING
   SENT
   FAILED
+
+  @@map("notification_status")
 }
 
 model Notification {
