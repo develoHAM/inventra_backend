@@ -13,7 +13,7 @@ describe('AuditsService', () => {
   let corners: { assertWorksCorner: jest.Mock; findOne: jest.Mock };
   let inventory: { recordWithinTransaction: jest.Mock };
   let transaction: any;
-  let spreadsheet: { toBuffer: jest.Mock };
+  let spreadsheet: { toBuffer: jest.Mock; parse: jest.Mock };
 
   const owner: AuthUser = {
     id: 'owner-1',
@@ -65,6 +65,9 @@ describe('AuditsService', () => {
           return requestedIds.map((id) => ({ id: id }));
         }),
       },
+      product: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       inventoryAudit: {
         create: jest
           .fn()
@@ -88,6 +91,7 @@ describe('AuditsService', () => {
     };
     spreadsheet = {
       toBuffer: jest.fn().mockResolvedValue(Buffer.from('bytes')),
+      parse: jest.fn(),
     };
     service = new AuditsService(
       prisma,
@@ -300,6 +304,124 @@ describe('AuditsService', () => {
         service.exportAudit(owner, cornerId, auditId),
       ).rejects.toThrow(NotFoundException);
       expect(spreadsheet.toBuffer).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('import', () => {
+    // 11-column layout (includes appliedAt, which import ignores)
+    const headerRow = [
+      'auditId',
+      'title',
+      'description',
+      'auditedDate',
+      'userName',
+      'createdAt',
+      'appliedAt',
+      'companyStoreName',
+      'productBarcode',
+      'productName',
+      'productQuantity',
+    ];
+    const auditRow = (
+      barcode: string,
+      qty: string,
+      over: { title?: string; description?: string; auditedDate?: string } = {},
+    ): string[] => [
+      '', // auditId (ignored)
+      over.title ?? 'Monthly count',
+      over.description ?? 'Back room',
+      over.auditedDate ?? '2026-08-28T00:00:00.000Z',
+      '', // userName (ignored)
+      '', // createdAt (ignored)
+      '', // appliedAt (ignored)
+      '', // companyStoreName (ignored)
+      barcode,
+      '', // productName (ignored)
+      qty,
+    ];
+    const file = (name: string) =>
+      ({ originalname: name, buffer: Buffer.from('x') }) as any;
+
+    const resolvable = () => {
+      prisma.product.findMany.mockResolvedValue([
+        { id: 'p1', barcode: 'BC-1' },
+        { id: 'p2', barcode: 'BC-2' },
+      ]);
+      prisma.companyStoreProduct.findMany.mockResolvedValue([
+        { id: 41, productId: 'p1' },
+        { id: 42, productId: 'p2' },
+      ]);
+    };
+
+    it('importCreate resolves barcodes and calls create; quantity 0 is accepted', async () => {
+      spreadsheet.parse.mockResolvedValue([
+        headerRow,
+        auditRow('BC-1', '12'),
+        auditRow('BC-2', '0'),
+      ]);
+      resolvable();
+      const createSpy = jest
+        .spyOn(service, 'create')
+        .mockResolvedValue({ id: auditId } as any);
+
+      await service.importCreate(owner, cornerId, file('a.csv'));
+
+      expect(spreadsheet.parse).toHaveBeenCalledWith('csv', expect.any(Buffer));
+      expect(createSpy).toHaveBeenCalledWith(owner, cornerId, {
+        title: 'Monthly count',
+        auditedDate: '2026-08-28T00:00:00.000Z',
+        description: 'Back room',
+        items: [
+          { companyStoreProductId: 41, productQuantity: 12 },
+          { companyStoreProductId: 42, productQuantity: 0 },
+        ],
+      });
+    });
+
+    it('collects row errors → 400, create not called', async () => {
+      spreadsheet.parse.mockResolvedValue([
+        headerRow,
+        auditRow('ZZZ', '5'), // line 2: unknown barcode
+        auditRow('BC-1', '-1'), // line 3: negative quantity
+      ]);
+      resolvable();
+      const createSpy = jest.spyOn(service, 'create');
+
+      expect.assertions(2);
+      try {
+        await service.importCreate(owner, cornerId, file('a.csv'));
+      } catch (thrown) {
+        const response = (thrown as BadRequestException).getResponse() as {
+          errors: { row: number; error: string }[];
+        };
+        expect(response.errors).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ row: 2, error: expect.stringContaining('Unknown barcode') }),
+            expect.objectContaining({ row: 3, error: expect.stringContaining('Quantity') }),
+          ]),
+        );
+      }
+      expect(createSpy).not.toHaveBeenCalled();
+    });
+
+    it('importUpdate onto an already-applied audit → 409', async () => {
+      spreadsheet.parse.mockResolvedValue([headerRow, auditRow('BC-1', '5')]);
+      resolvable();
+      prisma.inventoryAudit.findFirst.mockResolvedValue({
+        id: auditId,
+        appliedAt: new Date(),
+        inventoryAuditItems: [],
+      });
+
+      await expect(
+        service.importUpdate(owner, cornerId, auditId, file('a.csv')),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('rejects a non-csv/xlsx extension (400)', async () => {
+      await expect(
+        service.importCreate(owner, cornerId, file('a.txt')),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

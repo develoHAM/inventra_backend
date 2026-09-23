@@ -43,6 +43,145 @@ export class AuditsService {
     },
   ];
 
+  private auditColIndex(key: string): number {
+    return this.AUDIT_EXPORT_COLUMNS.findIndex((column) => column.key === key);
+  }
+
+  private async buildAuditDtoFromFile(
+    cornerId: string,
+    file: Express.Multer.File,
+  ): Promise<CreateAuditDto> {
+    const ext = file.originalname.split('.').pop()?.toLowerCase();
+    const format = ext === 'csv' ? 'csv' : ext === 'xlsx' ? 'xlsx' : null;
+    if (!format) throw new BadRequestException('File must be .csv or .xlsx');
+
+    const rows = await this.spreadsheet.parse(format, file.buffer);
+    if (rows.length === 0) throw new BadRequestException('The file is empty');
+    if (rows[0].length !== this.AUDIT_EXPORT_COLUMNS.length)
+      throw new BadRequestException('Unexpected column layout');
+    const dataRows = rows.slice(1);
+    if (dataRows.length === 0)
+      throw new BadRequestException('The file has no data rows');
+
+    const titleIdx = this.auditColIndex('title');
+    const descIdx = this.auditColIndex('description');
+    const dateIdx = this.auditColIndex('auditedDate');
+    const barcodeIdx = this.auditColIndex('productBarcode');
+    const qtyIdx = this.auditColIndex('productQuantity');
+
+    const errors: { row: number; error: string }[] = [];
+
+    const title = (dataRows[0][titleIdx] ?? '').trim();
+    if (!title) errors.push({ row: 2, error: 'Title is required' });
+    else if (title.length > 255)
+      errors.push({ row: 2, error: 'Title exceeds 255 characters' });
+    const descriptionRaw = (dataRows[0][descIdx] ?? '').trim();
+    const auditedDate = (dataRows[0][dateIdx] ?? '').trim();
+    if (!auditedDate || Number.isNaN(Date.parse(auditedDate)))
+      errors.push({ row: 2, error: 'Invalid audit date' });
+
+    // one file = one audit: every later data row must repeat the same header cells
+    dataRows.slice(1).forEach((dataRow, index) => {
+      const line = index + 3;
+      if ((dataRow[titleIdx] ?? '').trim() !== title)
+        errors.push({
+          row: line,
+          error: 'Title differs from the first data row',
+        });
+      if ((dataRow[descIdx] ?? '').trim() !== descriptionRaw)
+        errors.push({
+          row: line,
+          error: 'Description differs from the first data row',
+        });
+      if ((dataRow[dateIdx] ?? '').trim() !== auditedDate)
+        errors.push({
+          row: line,
+          error: 'Audit Date differs from the first data row',
+        });
+    });
+
+    const barcodes = dataRows.map((dataRow) =>
+      (dataRow[barcodeIdx] ?? '').trim(),
+    );
+    const products = await this.prisma.product.findMany({
+      where: {
+        barcode: { in: barcodes.filter((barcode) => barcode.length > 0) },
+        deletedAt: null,
+      },
+      select: { id: true, barcode: true },
+    });
+    const productIdByBarcode = new Map(
+      products.map((product) => [product.barcode, product.id]),
+    );
+    const placements = await this.prisma.companyStoreProduct.findMany({
+      where: {
+        companyStoreId: cornerId,
+        productId: { in: products.map((product) => product.id) },
+        deletedAt: null,
+      },
+      select: { id: true, productId: true },
+    });
+    const placementIdByProductId = new Map(
+      placements.map((placement) => [placement.productId, placement.id]),
+    );
+
+    const seenBarcodes = new Set<string>();
+    const items: { companyStoreProductId: number; productQuantity: number }[] =
+      [];
+
+    dataRows.forEach((dataRow, index) => {
+      const line = index + 2;
+      const barcode = (dataRow[barcodeIdx] ?? '').trim();
+      const quantity = Number((dataRow[qtyIdx] ?? '').trim());
+
+      if (!barcode) {
+        errors.push({ row: line, error: 'Barcode is required' });
+        return;
+      }
+      if (seenBarcodes.has(barcode)) {
+        errors.push({ row: line, error: `Duplicate barcode "${barcode}"` });
+        return;
+      }
+      seenBarcodes.add(barcode);
+
+      const productId = productIdByBarcode.get(barcode);
+      if (productId === undefined) {
+        errors.push({ row: line, error: `Unknown barcode "${barcode}"` });
+        return;
+      }
+      const placementId = placementIdByProductId.get(productId);
+      if (placementId === undefined) {
+        errors.push({
+          row: line,
+          error: `Barcode "${barcode}" is not placed on this corner`,
+        });
+        return;
+      }
+      if (!Number.isInteger(quantity) || quantity < 0) {
+        errors.push({ row: line, error: 'Quantity must be an integer ≥ 0' });
+        return;
+      }
+      items.push({
+        companyStoreProductId: placementId,
+        productQuantity: quantity,
+      });
+    });
+
+    if (errors.length > 0)
+      throw new BadRequestException({
+        message: 'Import failed',
+        errors: errors,
+      });
+
+    const dto: CreateAuditDto = {
+      title: title,
+      auditedDate: auditedDate,
+      items: items,
+    } as CreateAuditDto;
+    if (descriptionRaw) dto.description = descriptionRaw;
+    return dto;
+  }
+
   private async validateItems(
     cornerId: string,
     items: { companyStoreProductId: number }[],
@@ -270,5 +409,26 @@ export class AuditsService {
           ? 'text/csv'
           : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     };
+  }
+
+  async importCreate(
+    caller: AuthUser,
+    cornerId: string,
+    file: Express.Multer.File,
+  ) {
+    await this.corners.assertWorksCorner(caller, cornerId);
+    const dto = await this.buildAuditDtoFromFile(cornerId, file);
+    return this.create(caller, cornerId, dto);
+  }
+
+  async importUpdate(
+    caller: AuthUser,
+    cornerId: string,
+    auditId: string,
+    file: Express.Multer.File,
+  ) {
+    await this.corners.assertWorksCorner(caller, cornerId);
+    const dto = await this.buildAuditDtoFromFile(cornerId, file);
+    return this.update(caller, cornerId, auditId, dto);
   }
 }

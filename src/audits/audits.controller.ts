@@ -3,12 +3,17 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  MaxFileSizeValidator,
   Param,
+  ParseFilePipe,
   ParseUUIDPipe,
   Patch,
   Post,
   Query,
   StreamableFile,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
 import { AuditsService } from './audits.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
@@ -17,6 +22,7 @@ import type { AuthUser } from '../auth/types/auth-user';
 import { CreateAuditDto } from './dto/create-audit.dto';
 import { UpdateAuditDto } from './dto/update-audit.dto';
 import { ExportQueryDto } from '../spreadsheet/dto/export-query.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 @Controller('corners/:cornerId/audits')
 export class AuditsController {
@@ -101,5 +107,39 @@ export class AuditsController {
       type: contentType,
       disposition: `attachment; filename="${filename}"`,
     });
+  }
+
+  @RequirePermissions('audits.create')
+  @Post('import')
+  @UseInterceptors(FileInterceptor('file'))
+  importCreate(
+    @CurrentUser() caller: AuthUser,
+    @Param('cornerId', ParseUUIDPipe) cornerId: string,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [new MaxFileSizeValidator({ maxSize: 10 * 1024 * 1024 })],
+      }),
+    )
+    file: Express.Multer.File,
+  ) {
+    return this.audits.importCreate(caller, cornerId, file);
+  }
+
+  @RequirePermissions('audits.update')
+  @Post(':auditId/import')
+  @HttpCode(200)
+  @UseInterceptors(FileInterceptor('file'))
+  importUpdate(
+    @CurrentUser() caller: AuthUser,
+    @Param('cornerId', ParseUUIDPipe) cornerId: string,
+    @Param('auditId', ParseUUIDPipe) auditId: string,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [new MaxFileSizeValidator({ maxSize: 10 * 1024 * 1024 })],
+      }),
+    )
+    file: Express.Multer.File,
+  ) {
+    return this.audits.importUpdate(caller, cornerId, auditId, file);
   }
 }
