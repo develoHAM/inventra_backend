@@ -264,7 +264,7 @@ export class NotificationsService {
 ```ts
 import { Logger } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { Job, UnrecoverableError } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   NotificationChannel,
@@ -272,7 +272,10 @@ import {
 } from '../generated/prisma/enums';
 import { EmailChannel } from './channels/email.channel';
 import { NotificationSender } from './channels/notification-channel';
-import { NOTIFICATIONS_QUEUE } from './notifications.constants';
+import {
+  NOTIFICATIONS_QUEUE,
+  SEND_NOTIFICATION_JOB,
+} from './notifications.constants';
 
 @Processor(NOTIFICATIONS_QUEUE)
 export class NotificationsProcessor extends WorkerHost {
@@ -286,6 +289,12 @@ export class NotificationsProcessor extends WorkerHost {
   }
 
   async process(job: Job<{ notificationId: string }>): Promise<void> {
+    // A WorkerHost receives EVERY job on the queue, whatever its name.
+    // Fail loudly (no retries) on anything that isn't a send job.
+    if (job.name !== SEND_NOTIFICATION_JOB) {
+      throw new UnrecoverableError(`Unknown notifications job "${job.name}"`);
+    }
+
     const notification = await this.prisma.notification.findUnique({
       where: { id: job.data.notificationId },
     });
