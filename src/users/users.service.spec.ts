@@ -3,6 +3,7 @@ import { UsersService } from './users.service';
 import { AuthUser } from '../auth/types/auth-user';
 import { UserStatus } from '../generated/prisma/enums';
 import { OwnershipService } from '../authorization/ownership.service';
+import { NotificationEvent } from '../notifications/notification-events';
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -17,6 +18,7 @@ describe('UsersService', () => {
     objectExists: jest.Mock;
     deleteObject: jest.Mock;
   };
+  let eventEmitter: { emit: jest.Mock };
 
   const caller: AuthUser = {
     id: 'manager-1',
@@ -38,12 +40,14 @@ describe('UsersService', () => {
       objectExists: jest.fn().mockResolvedValue(true),
       deleteObject: jest.fn().mockResolvedValue(undefined),
     };
+    eventEmitter = { emit: jest.fn().mockReturnValue(true) };
     // OwnershipService is a pure singleton (no deps) — use a real one
-    // constructor: (prisma, ownership, storage)
+    // constructor: (prisma, ownership, storage, eventEmitter)
     service = new UsersService(
       prisma as any,
       new OwnershipService(),
       storage as any,
+      eventEmitter as any,
     );
   });
 
@@ -150,6 +154,43 @@ describe('UsersService', () => {
       });
     });
 
+    it('emits company.approved with the ids, only after the owner is activated', async () => {
+      prisma.user.findFirst.mockResolvedValue({
+        id: 'owner-1',
+        status: UserStatus.PENDING_APPROVAL,
+      });
+      prisma.user.update.mockResolvedValue({
+        id: 'owner-1',
+        status: UserStatus.ACTIVE,
+      });
+
+      const result = await service.approveCompany('company-1');
+
+      expect(eventEmitter.emit).toHaveBeenCalledWith(
+        NotificationEvent.COMPANY_APPROVED,
+        { companyId: 'company-1', ownerUserId: 'owner-1' },
+      );
+      // emit-after-commit: never announce an approval before it's written
+      expect(prisma.user.update.mock.invocationCallOrder[0]).toBeLessThan(
+        eventEmitter.emit.mock.invocationCallOrder[0],
+      );
+      // the caller still gets the updated owner back, unchanged by the emit
+      expect(result).toEqual({ id: 'owner-1', status: UserStatus.ACTIVE });
+    });
+
+    it('does not emit when the owner update fails', async () => {
+      prisma.user.findFirst.mockResolvedValue({
+        id: 'owner-1',
+        status: UserStatus.PENDING_APPROVAL,
+      });
+      prisma.user.update.mockRejectedValue(new Error('db down'));
+
+      await expect(service.approveCompany('company-1')).rejects.toThrow(
+        'db down',
+      );
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+
     it('returns 404 when the company has no owner', async () => {
       prisma.user.findFirst.mockResolvedValue(null);
 
@@ -157,9 +198,10 @@ describe('UsersService', () => {
         NotFoundException,
       );
       expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
-    it('rejects approving an owner who is not PENDING', async () => {
+    it('rejects approving an owner who is not PENDING (and emits nothing)', async () => {
       prisma.user.findFirst.mockResolvedValue({
         id: 'owner-1',
         status: UserStatus.ACTIVE,
@@ -168,6 +210,7 @@ describe('UsersService', () => {
       await expect(service.approveCompany('company-1')).rejects.toThrow(
         BadRequestException,
       );
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
   });
 
