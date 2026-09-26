@@ -25,8 +25,21 @@
 | 10a | **Reservation auto-expiry sweep** (`@nestjs/schedule` cron releases expired holds) | ✅ complete (blogged) |
 | 10b+ | More cross-cutting concerns / Redis caching (only when measured) | ⏳ not started |
 | Files | **File uploads** (product/brand/avatar images) + **data import/export** (order/audit CSV·xlsx) | ✅ Slices 1–3 complete |
+| Notify | **Notifications** (email · SMS · push) + **account security** (phone OTP · find ID · password reset) | 🔨 Slice 1a complete; 1b next |
 
-## Where we are right now — File-upload + import/export track complete (Slices 1–3)
+## Where we are right now — Notifications, Slice 1a complete (foundation + email)
+
+New track, designed in `docs/superpowers/specs/2026-09-23-notifications-and-account-security-design.md` (slices 1a → 1b → 2 → 3 → 4). Decisions: fixed channels per event (in code); **domain events + BullMQ queue**; SMTP via nodemailer with **Mailpit** for dev/e2e; SMS via a Korean provider adapter (Slice 2); push via FCM (Slice 4); a verified phone is **required + unique** at signup; password reset and find-my-ID use an **SMS one-time code**; find-my-ID returns a masked email.
+
+**Slice 1a ✅ — the whole pipeline, proven with `company.approved` → email to the owner:**
+- Flow: `UsersService.approveCompany` writes, then `eventEmitter.emit('company.approved', { companyId, ownerUserId })` → `NotificationsListener` (`@OnEvent`) resolves the owner's email + renders the Korean template → `NotificationsService.dispatch()` writes a `Notification` row (`PENDING`) **then** `queue.add('send', { notificationId })` → `NotificationsProcessor` (`@Processor`, `WorkerHost`) loads the row, sends via `EmailChannel` (nodemailer), marks `SENT`; on failure records `attempts`/`lastError`, sets `FAILED` only on the last attempt, and rethrows so BullMQ retries (3 attempts, exponential 5 s). Unknown job names → `UnrecoverableError`.
+- `Notification` table (+ `notification_channel` / `notification_status` enums). Env: `REDIS_HOST`, `BULLMQ_PREFIX` (`inventra` / `inventra-test` — dev and e2e share one Redis), `SMTP_*`. Redis now runs with `--appendonly yes`.
+- **233 unit tests green (25 suites) + 87 e2e green (10 suites)**, incl. `test/notifications.e2e-spec.ts` (polls until the row is `SENT`, then checks Mailpit's API).
+- ⚠️ **Gotchas:** (1) `@nestjs/event-emitter` 12, `@nestjs/bullmq` 12, its transitive `@nestjs/bull-shared`, and `nodemailer` 10 are **ESM-only** → added to the unit Jest `transformIgnorePatterns` (e2e loads them natively). (2) **BullMQ 6 made `ioredis` an optional peer** — without it every queue/worker fails to connect in a tight loop, which OOM'd Jest; `ioredis` is now a direct dependency. (3) **e2e now needs Redis + Mailpit running** (the app boots BullMQ), in addition to Postgres + MinIO.
+
+**Next — Slice 1b:** the remaining email events (`company.registered` → admins, `member.joinRequested` → owner, `member.approved` → member, `order.created` / `audit.applied` / `stock.belowTarget` → corner manager + owner), plus **emit-after-commit** plumbing for events raised inside `$transaction` (stock alerts fire only on the crossing below target), and a reconciliation cron that re-enqueues stale `PENDING` rows. Plan: write `docs/superpowers/plans/…-notifications-slice-1b-….md` first.
+
+## Prior — File-upload + import/export track complete (Slices 1–3)
 
 New parallel track (from the two-item todo: *Prisma 8 migration* + *file uploads*). **Prisma 8 is blocked upstream** — no GA client/adapter yet (only `8.0.0-rc` / dev); revisit when a stable `@prisma/client` + `@prisma/adapter-pg` v8 ship together. So the file-upload subsystem went first.
 
@@ -44,7 +57,7 @@ New parallel track (from the two-item todo: *Prisma 8 migration* + *file uploads
 **Slice 3b — order/audit CSV·xlsx import** ✅. `POST /corners/:cornerId/{orders,audits}/import` (create, gated `*.create`, 201) and `…/{orders/:orderId,audits/:auditId}/import` (update, gated `*.update`, 200). `SpreadsheetService.parse` reads both formats into a `string[][]` grid (xlsx `load` needs a cast at exceljs's stale `Buffer` type — types-only). Each service reads columns **by position**, looked up in the shared `*_EXPORT_COLUMNS` (so localized headers don't matter); validates **header-field consistency** (every row must repeat the first row's title/description/date — one file = one order/audit); resolves `productBarcode` → placement on the corner in two batched queries; and **collects every row error** into one `400 { message: 'Import failed', errors: [{ row, error }] }` (row = sheet line; nothing written). On success it **reuses the existing `create`/`update`** write path — so update-import onto an applied audit → 409. Format from file extension; ≤10 MB. The sheet's id column is never used (update target comes from the URL). Spec: `docs/superpowers/specs/2026-09-19-order-audit-import-design.md`; plan: `…/plans/2026-09-19-order-audit-import.md`.
 - **210 unit tests green** (21 suites) + order/audit import e2e (create, error-list 400, update, applied-audit 409) — **86 e2e green across 9 suites**.
 
-**The file-upload + import/export track is complete** — images (product/brand/avatar) and data interchange (order/audit CSV·xlsx export + import). **Next — no forced slice.** Candidates, built only on a real need: Prisma 8 migration (once a stable v8 client + `@prisma/adapter-pg` ship), Redis caching (measure first), rate limiting, observability/metrics, OpenAPI docs. Start any new slice with `/brainstorming` → spec → plan.
+**The file-upload + import/export track is complete** — images (product/brand/avatar) and data interchange (order/audit CSV·xlsx export + import). Later candidates (on real need only): Prisma 8 migration (once a stable v8 client + `@prisma/adapter-pg` ship), Redis caching (measure first), rate limiting, observability/metrics, OpenAPI docs.
 
 ## Prior — Phase 10a complete (reservation auto-expiry sweep)
 
@@ -99,10 +112,10 @@ Orders → audits → purchase reservations → cross-cutting concerns → Redis
 The DB, secrets, and generated client are **not** in the repo. After `git pull`:
 1. `npm install`
 2. Recreate the gitignored env files (copy from the other laptop): **`.env`** and **`.env.test`** (both now carry the `MINIO_*` + `S3_*` block). `DATABASE_URL` must **not** include `sslmode=require` for the local container. Keep each file's `MINIO_ROOT_PASSWORD` and `S3_SECRET_KEY` equal — a mismatch triggers `SignatureDoesNotMatch` on boot.
-3. `docker compose up -d` (postgres + redis + **minio** — MinIO console at `localhost:${MINIO_CONSOLE_PORT}`)
+3. `docker compose up -d` (postgres + redis + **minio** + **mailpit** — MinIO console at `localhost:${MINIO_CONSOLE_PORT}`, Mailpit inbox at `localhost:${MAILPIT_UI_PORT}`). The app and **every** e2e suite need Redis up (BullMQ connects at boot).
 4. `npx prisma generate` (client generates into `src/generated/prisma`, which is gitignored)
 5. `npx prisma migrate deploy` then `npm run seed` (or `npx prisma migrate reset --force` which also seeds via `prisma/seed.ts`)
-6. `npm test` (unit — should be 210 green across 21 suites) and `npm run test:e2e` (86 green across 9 suites, incl. uploads + order/audit CSV·xlsx export/import)
+6. `npm test` (unit — should be 233 green across 25 suites) and `npm run test:e2e` (87 green across 10 suites, incl. uploads, order/audit CSV·xlsx export/import, and notifications via Mailpit)
 
 Latest migration: `prisma/migrations/20260909162034_reservation_expired_at`. **Keep the `prisma` CLI + `@prisma/client` + `@prisma/adapter-pg` all on the same major (v7); don't bump to the v8 RC.**
 
