@@ -44,34 +44,39 @@ export class ReservationsService {
     await this.corners.assertWorksCorner(caller, cornerId);
     await this.getPlacement(cornerId, dto.companyStoreProductId);
 
-    return this.prisma.$transaction(async (tx) => {
-      const reservation = await tx.purchaseReservation.create({
-        data: {
-          companyStoreProductId: dto.companyStoreProductId,
-          companyStoreId: cornerId,
-          reservedByName: dto.reservedByName,
-          reservedByPhone: dto.reservedByPhone ?? null,
-          reservedQuantity: dto.reservedQuantity,
-          status: ReservationStatus.RESERVED,
-          remark: dto.remark ?? null,
-          expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
-          createdByUserId: caller.id,
-        },
-      });
+    const { reservation, stockChanges } = await this.prisma.$transaction(
+      async (tx) => {
+        const created = await tx.purchaseReservation.create({
+          data: {
+            companyStoreProductId: dto.companyStoreProductId,
+            companyStoreId: cornerId,
+            reservedByName: dto.reservedByName,
+            reservedByPhone: dto.reservedByPhone ?? null,
+            reservedQuantity: dto.reservedQuantity,
+            status: ReservationStatus.RESERVED,
+            remark: dto.remark ?? null,
+            expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+            createdByUserId: caller.id,
+          },
+        });
 
-      await this.inventory.recordWithinTransaction(
-        tx,
-        dto.companyStoreProductId,
-        {
-          transactionType: InventoryTransactionType.RESERVATION_HOLD,
-          quantity: dto.reservedQuantity,
-        },
-        caller.id,
-        { type: TransactionSourceType.RESERVATION, id: reservation.id },
-      );
+        const { stockChange } = await this.inventory.recordWithinTransaction(
+          tx,
+          dto.companyStoreProductId,
+          {
+            transactionType: InventoryTransactionType.RESERVATION_HOLD,
+            quantity: dto.reservedQuantity,
+          },
+          caller.id,
+          { type: TransactionSourceType.RESERVATION, id: created.id },
+        );
 
-      return reservation;
-    });
+        return { reservation: created, stockChanges: [stockChange] };
+      },
+    );
+
+    this.inventory.emitStockAlerts(stockChanges); // HOLD lowers available stock
+    return reservation;
   }
 
   async findAll(
@@ -103,32 +108,45 @@ export class ReservationsService {
     if (reservation.status !== ReservationStatus.RESERVED)
       throw new ConflictException('Reservation is not active');
 
-    return this.prisma.$transaction(async (tx) => {
-      await this.inventory.recordWithinTransaction(
-        tx,
-        reservation.companyStoreProductId,
-        {
-          transactionType: InventoryTransactionType.RESERVATION_RELEASE,
-          quantity: reservation.reservedQuantity,
-        },
-        caller.id,
-        { type: TransactionSourceType.RESERVATION, id: reservation.id },
-      );
-      await this.inventory.recordWithinTransaction(
-        tx,
-        reservation.companyStoreProductId,
-        {
-          transactionType: InventoryTransactionType.SALE,
-          quantity: reservation.reservedQuantity,
-        },
-        caller.id,
-        { type: TransactionSourceType.RESERVATION, id: reservation.id },
-      );
-      return tx.purchaseReservation.update({
-        where: { id: reservationId },
-        data: { status: ReservationStatus.FULFILLED, fulfilledAt: new Date() },
-      });
-    });
+    const { fulfilled, stockChanges } = await this.prisma.$transaction(
+      async (tx) => {
+        const release = await this.inventory.recordWithinTransaction(
+          tx,
+          reservation.companyStoreProductId,
+          {
+            transactionType: InventoryTransactionType.RESERVATION_RELEASE,
+            quantity: reservation.reservedQuantity,
+          },
+          caller.id,
+          { type: TransactionSourceType.RESERVATION, id: reservation.id },
+        );
+        const sale = await this.inventory.recordWithinTransaction(
+          tx,
+          reservation.companyStoreProductId,
+          {
+            transactionType: InventoryTransactionType.SALE,
+            quantity: reservation.reservedQuantity,
+          },
+          caller.id,
+          { type: TransactionSourceType.RESERVATION, id: reservation.id },
+        );
+        const updated = await tx.purchaseReservation.update({
+          where: { id: reservationId },
+          data: {
+            status: ReservationStatus.FULFILLED,
+            fulfilledAt: new Date(),
+          },
+        });
+        // both reports together, so stockAlertsFrom can see the net effect
+        return {
+          fulfilled: updated,
+          stockChanges: [release.stockChange, sale.stockChange],
+        };
+      },
+    );
+
+    this.inventory.emitStockAlerts(stockChanges);
+    return fulfilled;
   }
 
   async cancel(
@@ -143,6 +161,8 @@ export class ReservationsService {
       throw new ConflictException('Reservation is not active');
 
     return this.prisma.$transaction(async (tx) => {
+      // RELEASE only raises available stock, so it can never cross below
+      // target — no stock alert to collect.
       await this.inventory.recordWithinTransaction(
         tx,
         reservation.companyStoreProductId,

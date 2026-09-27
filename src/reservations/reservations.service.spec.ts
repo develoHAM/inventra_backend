@@ -7,7 +7,7 @@ describe('ReservationsService', () => {
   let service: ReservationsService;
   let prisma: any;
   let corners: { assertWorksCorner: jest.Mock; findOne: jest.Mock };
-  let inventory: { recordWithinTransaction: jest.Mock };
+  let inventory: { recordWithinTransaction: jest.Mock; emitStockAlerts: jest.Mock };
   let transaction: any;
 
   const owner: AuthUser = {
@@ -54,7 +54,17 @@ describe('ReservationsService', () => {
         .mockResolvedValue({ id: cornerId, companyId: 'company-1' }),
       findOne: jest.fn().mockResolvedValue({ id: cornerId }),
     };
-    inventory = { recordWithinTransaction: jest.fn().mockResolvedValue({ id: 1 }) };
+    inventory = {
+      // Each call returns a report tagged with its placement + type, so tests can
+      // see exactly which reports reach emitStockAlerts.
+      recordWithinTransaction: jest
+        .fn()
+        .mockImplementation(async (_tx: unknown, placementId: number, dto: any) => ({
+          ledgerEntry: { id: 1 },
+          stockChange: { placementId: placementId, reportFor: dto.transactionType },
+        })),
+      emitStockAlerts: jest.fn(),
+    };
     service = new ReservationsService(prisma, corners as any, inventory as any);
   });
 
@@ -177,5 +187,53 @@ describe('ReservationsService', () => {
       service.cancel(owner, cornerId, reservationId, {} as any),
     ).rejects.toThrow(ConflictException);
     expect(inventory.recordWithinTransaction).not.toHaveBeenCalled();
+  });
+
+  describe('stock alerts (emitted only after the transaction commits)', () => {
+    it('create hands its HOLD report to emitStockAlerts, after the transaction', async () => {
+      await service.create(owner, cornerId, {
+        companyStoreProductId: placementId,
+        reservedByName: 'Kim',
+        reservedQuantity: 3,
+      } as any);
+
+      expect(inventory.emitStockAlerts).toHaveBeenCalledWith([
+        { placementId: placementId, reportFor: 'RESERVATION_HOLD' },
+      ]);
+      expect(prisma.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
+        inventory.emitStockAlerts.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('fulfill hands BOTH reports (RELEASE then SALE) together, so the net effect is judged', async () => {
+      await service.fulfill(owner, cornerId, reservationId);
+
+      expect(inventory.emitStockAlerts).toHaveBeenCalledTimes(1);
+      expect(inventory.emitStockAlerts).toHaveBeenCalledWith([
+        { placementId: placementId, reportFor: 'RESERVATION_RELEASE' },
+        { placementId: placementId, reportFor: 'SALE' },
+      ]);
+    });
+
+    it('cancel collects nothing (RELEASE only raises available stock)', async () => {
+      await service.cancel(owner, cornerId, reservationId, {} as any);
+
+      expect(inventory.emitStockAlerts).not.toHaveBeenCalled();
+    });
+
+    it('emits nothing when the transaction fails (e.g. not enough stock to hold)', async () => {
+      inventory.recordWithinTransaction.mockRejectedValue(
+        new ConflictException('Insufficient stock'),
+      );
+
+      await expect(
+        service.create(owner, cornerId, {
+          companyStoreProductId: placementId,
+          reservedByName: 'Kim',
+          reservedQuantity: 99,
+        } as any),
+      ).rejects.toThrow(ConflictException);
+      expect(inventory.emitStockAlerts).not.toHaveBeenCalled();
+    });
   });
 });

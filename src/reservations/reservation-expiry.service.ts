@@ -7,6 +7,7 @@ import {
   ReservationStatus,
   TransactionSourceType,
 } from '../generated/prisma/enums';
+import { StockChange } from '../inventory/stock-change';
 
 @Injectable()
 export class ReservationExpiryService {
@@ -49,6 +50,8 @@ export class ReservationExpiryService {
           });
           if (count === 0) return false;
 
+          // RELEASE only raises available stock, so it can never cross below
+          // target — no stock alert to collect.
           await this.inventory.recordWithinTransaction(
             tx,
             reservation.companyStoreProductId,

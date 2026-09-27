@@ -11,7 +11,7 @@ describe('AuditsService', () => {
   let service: AuditsService;
   let prisma: any;
   let corners: { assertWorksCorner: jest.Mock; findOne: jest.Mock };
-  let inventory: { recordWithinTransaction: jest.Mock };
+  let inventory: { recordWithinTransaction: jest.Mock; emitStockAlerts: jest.Mock };
   let transaction: any;
   let spreadsheet: { toBuffer: jest.Mock; parse: jest.Mock };
 
@@ -87,7 +87,15 @@ describe('AuditsService', () => {
       findOne: jest.fn().mockResolvedValue({ id: cornerId }),
     };
     inventory = {
-      recordWithinTransaction: jest.fn().mockResolvedValue({ id: 1 }),
+      // Each call returns a report tagged with its placement + type, so tests can
+      // see exactly which reports reach emitStockAlerts.
+      recordWithinTransaction: jest
+        .fn()
+        .mockImplementation(async (_tx: unknown, placementId: number, dto: any) => ({
+          ledgerEntry: { id: 1 },
+          stockChange: { placementId: placementId, reportFor: dto.transactionType },
+        })),
+      emitStockAlerts: jest.fn(),
     };
     spreadsheet = {
       toBuffer: jest.fn().mockResolvedValue(Buffer.from('bytes')),
@@ -196,6 +204,34 @@ describe('AuditsService', () => {
       ConflictException,
     );
     expect(inventory.recordWithinTransaction).not.toHaveBeenCalled();
+    expect(inventory.emitStockAlerts).not.toHaveBeenCalled();
+  });
+
+  it('apply hands every line’s report to emitStockAlerts, after the transaction', async () => {
+    await service.apply(owner, cornerId, auditId);
+
+    expect(inventory.emitStockAlerts).toHaveBeenCalledWith([
+      { placementId: 7, reportFor: 'ADJUSTMENT' },
+      { placementId: 8, reportFor: 'ADJUSTMENT' },
+    ]);
+    expect(prisma.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
+      inventory.emitStockAlerts.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('apply emits no stock alerts when the transaction fails part-way (rolled back)', async () => {
+    inventory.recordWithinTransaction
+      .mockResolvedValueOnce({
+        ledgerEntry: { id: 1 },
+        stockChange: { placementId: 7, reportFor: 'ADJUSTMENT' },
+      })
+      .mockRejectedValueOnce(new Error('placement vanished'));
+
+    await expect(service.apply(owner, cornerId, auditId)).rejects.toThrow(
+      'placement vanished',
+    );
+    // line 1 "succeeded" inside the transaction, but the whole thing rolled back
+    expect(inventory.emitStockAlerts).not.toHaveBeenCalled();
   });
 
   describe('exportAudit', () => {

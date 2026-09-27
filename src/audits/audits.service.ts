@@ -16,6 +16,7 @@ import {
   TransactionSourceType,
 } from '../generated/prisma/enums';
 import { SpreadsheetService } from '../spreadsheet/spreadsheet.service';
+import { StockChange } from '../inventory/stock-change';
 
 @Injectable()
 export class AuditsService {
@@ -334,28 +335,38 @@ export class AuditsService {
     if (audit.appliedAt) throw new ConflictException('Audit already applied');
     await this.validateItems(cornerId, audit.inventoryAuditItems);
 
-    return this.prisma.$transaction(async (tx) => {
-      for (const item of audit.inventoryAuditItems) {
-        await this.inventory.recordWithinTransaction(
-          tx,
-          item.companyStoreProductId,
-          {
-            transactionType: InventoryTransactionType.ADJUSTMENT,
-            quantity: item.productQuantity,
+    const { appliedAudit, stockChanges } = await this.prisma.$transaction(
+      async (tx) => {
+        const changes: StockChange[] = [];
+        for (const item of audit.inventoryAuditItems) {
+          const { stockChange } = await this.inventory.recordWithinTransaction(
+            tx,
+            item.companyStoreProductId,
+            {
+              transactionType: InventoryTransactionType.ADJUSTMENT,
+              quantity: item.productQuantity,
+            },
+            caller.id,
+            { type: TransactionSourceType.AUDIT, id: audit.id },
+          );
+          changes.push(stockChange);
+        }
+        const updated = await tx.inventoryAudit.update({
+          where: {
+            id_companyStoreId: { id: auditId, companyStoreId: cornerId },
           },
-          caller.id,
-          { type: TransactionSourceType.AUDIT, id: audit.id },
-        );
-      }
-      return tx.inventoryAudit.update({
-        where: { id_companyStoreId: { id: auditId, companyStoreId: cornerId } },
-        data: {
-          appliedAt: new Date(),
-          appliedByUserId: caller.id,
-        },
-        include: { inventoryAuditItems: true },
-      });
-    });
+          data: {
+            appliedAt: new Date(),
+            appliedByUserId: caller.id,
+          },
+          include: { inventoryAuditItems: true },
+        });
+        return { appliedAudit: updated, stockChanges: changes };
+      },
+    );
+
+    this.inventory.emitStockAlerts(stockChanges); // only after the commit
+    return appliedAudit;
   }
 
   async exportAudit(
