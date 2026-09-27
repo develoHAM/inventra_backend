@@ -59,13 +59,15 @@ business service ── emit('<event>') ──► NotificationsListener (@OnEven
 
 | Event | Channels | Recipients | Slice |
 |---|---|---|---|
-| `company.approved` | email | company owner | 1a |
-| `company.registered` | email | platform admins | 1b |
-| `member.joinRequested` | email | company owner | 1b |
-| `member.approved` | email | the member | 1b |
-| `order.created` | email (+push, 4) | corner manager + company owner | 1b |
-| `audit.applied` | email (+push, 4) | corner manager + company owner | 1b |
-| `stock.belowTarget` | email (+push, 4) | corner manager + company owner | 1b |
+| `company.approved` | email (+push, 4) | company owner | 1a |
+| `company.registered` | email (+push, 4) | platform admins | 1b |
+| `member.joinRequested` | email (+push, 4) | company owner | 1b |
+| `member.approved` | email (+push, 4) | the member | 1b |
+| `order.created` | email (+push, 4) | corner manager + company owner (minus actor) | 1b |
+| `audit.applied` | email (+push, 4) | corner manager + company owner (minus actor) | 1b |
+| `stock.belowTarget` | email (+push, 4) | corner manager + company owner (nobody excluded) | 1b |
+
+**Channel decision (2026-09-27):** every event is **push + email** — email always (the durable record; reaches users without the app, pending users, and admins on the web console), plus push to each recipient's registered devices in Slice 4 (users with no device just get the email). Slice 4 therefore generalizes the listener's `emailUsers(...)` into a channel-aware `notifyUsers({ userIds, excludeUserId?, eventType, message })` driven by **one per-event channel table**, rather than editing each handler.
 | `reservation.created` | SMS | the customer's phone | 3 |
 | `reservation.expired` | SMS | the customer's phone | 3 |
 
