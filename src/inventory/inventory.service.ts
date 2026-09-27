@@ -15,6 +15,9 @@ import { AuthUser } from '../auth/types/auth-user';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { EFFECTS } from './inventory-effects';
 import { Prisma } from '../generated/prisma/client';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { NotificationEvent } from '../notifications/notification-events';
+import { StockChange, stockAlertsFrom } from './stock-change';
 
 type Source = { type: TransactionSourceType; id: string };
 
@@ -23,6 +26,7 @@ export class InventoryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly corners: CornersService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async record(
@@ -38,9 +42,11 @@ export class InventoryService {
     });
     if (!placement) throw new NotFoundException('Placement not found');
 
-    return this.prisma.$transaction((tx) =>
+    const { ledgerEntry, stockChange } = await this.prisma.$transaction((tx) =>
       this.recordWithinTransaction(tx, placementId, dto, caller.id, source),
     );
+    this.emitStockAlerts([stockChange]); // only reached if the transaction committed
+    return ledgerEntry; // HTTP response unchanged
   }
 
   // The atomic stock write + ledger append, runnable inside any caller-provided
@@ -108,7 +114,20 @@ export class InventoryService {
       quantityAfter = quantityBefore + primarySign * q;
     }
 
-    return tx.inventoryTransaction.create({
+    const availableDelta =
+      effect.kind === 'set'
+        ? q - stock.availableQuantity
+        : effect.deltas
+            .filter((delta) => delta.field === 'availableQuantity')
+            .reduce((sum, delta) => sum + delta.sign * q, 0);
+    const stockChange: StockChange = {
+      placementId: placementId,
+      availableBefore: stock.availableQuantity,
+      availableAfter: stock.availableQuantity + availableDelta,
+      targetStockQuantity: stock.targetStockQuantity,
+    };
+
+    const ledgerEntry = await tx.inventoryTransaction.create({
       data: {
         companyStoreProductId: placementId,
         transactionType: dto.transactionType,
@@ -121,6 +140,7 @@ export class InventoryService {
         sourceId: source?.id ?? null,
       },
     });
+    return { ledgerEntry: ledgerEntry, stockChange: stockChange };
   }
 
   async findForPlacement(
@@ -137,5 +157,13 @@ export class InventoryService {
       where: { companyStoreProductId: placementId },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  /** Emits stock.belowTarget for each placement that crossed below its target.
+   *  Call ONLY after the transaction that produced these changes has committed. */
+  emitStockAlerts(changes: StockChange[]): void {
+    for (const alert of stockAlertsFrom(changes)) {
+      this.eventEmitter.emit(NotificationEvent.STOCK_BELOW_TARGET, alert);
+    }
   }
 }
