@@ -1,5 +1,5 @@
 import { NotificationsService } from './notifications.service';
-import { NotificationChannel } from '../generated/prisma/enums';
+import { NotificationChannel, UserStatus } from '../generated/prisma/enums';
 import {
   SEND_JOB_OPTIONS,
   SEND_NOTIFICATION_JOB,
@@ -10,6 +10,8 @@ describe('NotificationsService', () => {
   let prisma: {
     notification: { create: jest.Mock };
     userLoginMethod: { findFirst: jest.Mock };
+    user: { findMany: jest.Mock };
+    companyStore: { findUnique: jest.Mock };
   };
   let queue: { add: jest.Mock };
 
@@ -19,6 +21,8 @@ describe('NotificationsService', () => {
         create: jest.fn().mockResolvedValue({ id: 'notification-1' }),
       },
       userLoginMethod: { findFirst: jest.fn() },
+      user: { findMany: jest.fn().mockResolvedValue([]) },
+      companyStore: { findUnique: jest.fn() },
     };
     queue = { add: jest.fn().mockResolvedValue({ id: 'job-1' }) };
     // constructor: (prisma, queue) — the queue is injected by token in the app,
@@ -47,10 +51,11 @@ describe('NotificationsService', () => {
           body: 'Your company was approved.',
         },
       });
+      // jobId = the row id, so re-enqueueing the same notification is a no-op
       expect(queue.add).toHaveBeenCalledWith(
         SEND_NOTIFICATION_JOB,
         { notificationId: 'notification-1' },
-        SEND_JOB_OPTIONS,
+        { ...SEND_JOB_OPTIONS, jobId: 'notification-1' },
       );
       // the row must exist before the worker could possibly look for it
       expect(prisma.notification.create.mock.invocationCallOrder[0]).toBeLessThan(
@@ -102,6 +107,150 @@ describe('NotificationsService', () => {
       prisma.userLoginMethod.findFirst.mockResolvedValue(null);
 
       expect(await service.findUserEmail('ghost')).toBeNull();
+    });
+  });
+
+  describe('recipient finders', () => {
+    it('findPlatformAdminIds returns active, non-deleted ADMIN ids', async () => {
+      prisma.user.findMany.mockResolvedValue([{ id: 'admin-1' }, { id: 'admin-2' }]);
+
+      expect(await service.findPlatformAdminIds()).toEqual(['admin-1', 'admin-2']);
+      expect(prisma.user.findMany).toHaveBeenCalledWith({
+        where: {
+          role: { code: 'ADMIN' },
+          status: UserStatus.ACTIVE,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+    });
+
+    it("findCompanyOwnerIds returns that company's active OWNER ids", async () => {
+      prisma.user.findMany.mockResolvedValue([{ id: 'owner-1' }]);
+
+      expect(await service.findCompanyOwnerIds('company-1')).toEqual(['owner-1']);
+      expect(prisma.user.findMany).toHaveBeenCalledWith({
+        where: {
+          companyId: 'company-1',
+          role: { code: 'OWNER' },
+          status: UserStatus.ACTIVE,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+    });
+
+    it('findCornerRecipientIds returns the corner manager first, then the owners', async () => {
+      prisma.companyStore.findUnique.mockResolvedValue({
+        companyId: 'company-1',
+        managerUserId: 'manager-1',
+      });
+      prisma.user.findMany.mockResolvedValue([{ id: 'owner-1' }]);
+
+      expect(await service.findCornerRecipientIds('corner-1')).toEqual([
+        'manager-1',
+        'owner-1',
+      ]);
+      expect(prisma.companyStore.findUnique).toHaveBeenCalledWith({
+        where: { id: 'corner-1' },
+        select: { companyId: true, managerUserId: true },
+      });
+    });
+
+    it('findCornerRecipientIds returns just the owners when the corner has no manager', async () => {
+      prisma.companyStore.findUnique.mockResolvedValue({
+        companyId: 'company-1',
+        managerUserId: null,
+      });
+      prisma.user.findMany.mockResolvedValue([{ id: 'owner-1' }]);
+
+      expect(await service.findCornerRecipientIds('corner-1')).toEqual(['owner-1']);
+    });
+
+    it('findCornerRecipientIds returns nobody for an unknown corner', async () => {
+      prisma.companyStore.findUnique.mockResolvedValue(null);
+
+      expect(await service.findCornerRecipientIds('ghost')).toEqual([]);
+      expect(prisma.user.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('emailUsers', () => {
+    const message = { subject: 'Hello', body: 'Body' };
+
+    beforeEach(() => {
+      // Every user has an email derived from their id, except 'no-email'.
+      jest
+        .spyOn(service, 'findUserEmail')
+        .mockImplementation(async (userId: string) =>
+          userId === 'no-email' ? null : `${userId}@example.com`,
+        );
+      jest.spyOn(service, 'dispatch').mockResolvedValue(undefined);
+    });
+
+    it('dispatches one EMAIL per user with the rendered message', async () => {
+      await service.emailUsers({
+        userIds: ['manager-1', 'owner-1'],
+        eventType: 'order.created',
+        message: message,
+      });
+
+      expect(service.dispatch).toHaveBeenCalledTimes(2);
+      expect(service.dispatch).toHaveBeenCalledWith({
+        eventType: 'order.created',
+        channel: NotificationChannel.EMAIL,
+        recipientUserId: 'manager-1',
+        recipientAddress: 'manager-1@example.com',
+        subject: 'Hello',
+        body: 'Body',
+      });
+    });
+
+    it('emails a person only once even if listed twice (manager who is also the owner)', async () => {
+      await service.emailUsers({
+        userIds: ['owner-1', 'owner-1'],
+        eventType: 'order.created',
+        message: message,
+      });
+
+      expect(service.dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('never emails the actor', async () => {
+      await service.emailUsers({
+        userIds: ['manager-1', 'owner-1'],
+        excludeUserId: 'manager-1',
+        eventType: 'order.created',
+        message: message,
+      });
+
+      expect(service.dispatch).toHaveBeenCalledTimes(1);
+      expect(service.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ recipientUserId: 'owner-1' }),
+      );
+    });
+
+    it('skips users who have no email, without failing the others', async () => {
+      await service.emailUsers({
+        userIds: ['no-email', 'owner-1'],
+        eventType: 'order.created',
+        message: message,
+      });
+
+      expect(service.dispatch).toHaveBeenCalledTimes(1);
+      expect(service.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ recipientUserId: 'owner-1' }),
+      );
+    });
+
+    it('does nothing for an empty recipient list', async () => {
+      await service.emailUsers({
+        userIds: [],
+        eventType: 'order.created',
+        message: message,
+      });
+
+      expect(service.dispatch).not.toHaveBeenCalled();
     });
   });
 });
