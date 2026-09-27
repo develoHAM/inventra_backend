@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { AuthUser } from '../auth/types/auth-user';
 import { UserStatus } from '../generated/prisma/enums';
+import { NotificationEvent } from '../notifications/notification-events';
 
 describe('OrdersService', () => {
   let service: OrdersService;
@@ -9,6 +10,7 @@ describe('OrdersService', () => {
   let corners: { assertWorksCorner: jest.Mock; findOne: jest.Mock };
   let transaction: any;
   let spreadsheet: { toBuffer: jest.Mock; parse: jest.Mock };
+  let eventEmitter: { emit: jest.Mock };
 
   const owner: AuthUser = {
     id: 'owner-1',
@@ -76,7 +78,13 @@ describe('OrdersService', () => {
       toBuffer: jest.fn().mockResolvedValue(Buffer.from('bytes')),
       parse: jest.fn(),
     };
-    service = new OrdersService(prisma, corners as any, spreadsheet as any);
+    eventEmitter = { emit: jest.fn().mockReturnValue(true) };
+    service = new OrdersService(
+      prisma,
+      corners as any,
+      spreadsheet as any,
+      eventEmitter as any,
+    );
   });
 
   it('create checks corner authority, validates items, and writes order + items', async () => {
@@ -107,6 +115,29 @@ describe('OrdersService', () => {
     expect(arg.include).toEqual({ orderItems: true });
   });
 
+  it('create emits order.created (order, corner, creator) after the insert', async () => {
+    const result = await service.create(owner, cornerId, createDto as any);
+
+    expect(eventEmitter.emit).toHaveBeenCalledWith(
+      NotificationEvent.ORDER_CREATED,
+      { orderId: orderId, cornerId: cornerId, createdByUserId: 'owner-1' },
+    );
+    expect(prisma.order.create.mock.invocationCallOrder[0]).toBeLessThan(
+      eventEmitter.emit.mock.invocationCallOrder[0],
+    );
+    // the HTTP response is still the created order
+    expect(result).toEqual({ id: orderId, orderItems: [] });
+  });
+
+  it('create emits nothing when the insert fails', async () => {
+    prisma.order.create.mockRejectedValue(new Error('db down'));
+
+    await expect(
+      service.create(owner, cornerId, createDto as any),
+    ).rejects.toThrow('db down');
+    expect(eventEmitter.emit).not.toHaveBeenCalled();
+  });
+
   it('create rejects a duplicate placement in the payload (400)', async () => {
     await expect(
       service.create(owner, cornerId, {
@@ -118,6 +149,7 @@ describe('OrdersService', () => {
       } as any),
     ).rejects.toThrow(BadRequestException);
     expect(prisma.order.create).not.toHaveBeenCalled();
+    expect(eventEmitter.emit).not.toHaveBeenCalled();
   });
 
   it('create rejects a line that is not a live placement on this corner (400)', async () => {

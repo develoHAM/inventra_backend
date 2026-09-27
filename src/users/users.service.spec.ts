@@ -74,6 +74,23 @@ describe('UsersService', () => {
       });
     });
 
+    it('emits member.approved (member + approver ids) after activating the member', async () => {
+      prisma.user.findFirst.mockResolvedValue(pendingMember);
+      prisma.role.findUnique.mockResolvedValue({ id: 4, code: 'STAFF' });
+      prisma.user.update.mockResolvedValue({ id: 'member-1', status: UserStatus.ACTIVE });
+
+      const result = await service.approveMember(caller, 'member-1', { roleId: 4 });
+
+      expect(eventEmitter.emit).toHaveBeenCalledWith(
+        NotificationEvent.MEMBER_APPROVED,
+        { memberUserId: 'member-1', approvedByUserId: 'manager-1' },
+      );
+      expect(prisma.user.update.mock.invocationCallOrder[0]).toBeLessThan(
+        eventEmitter.emit.mock.invocationCallOrder[0],
+      );
+      expect(result).toEqual({ id: 'member-1', status: UserStatus.ACTIVE });
+    });
+
     it('returns 404 for a member in another company (no cross-tenant leak)', async () => {
       // scoped query finds nothing → null
       prisma.user.findFirst.mockResolvedValue(null);
@@ -82,6 +99,7 @@ describe('UsersService', () => {
         service.approveMember(caller, 'member-x', { roleId: 4 }),
       ).rejects.toThrow(NotFoundException);
       expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
     it('rejects approving a member who is not PENDING', async () => {

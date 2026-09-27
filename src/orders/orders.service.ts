@@ -10,6 +10,9 @@ import { AuthUser } from '../auth/types/auth-user';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { SpreadsheetService } from '../spreadsheet/spreadsheet.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { NotificationEvent } from '../notifications/notification-events';
+import type { OrderCreatedEvent } from '../notifications/notification-events';
 
 @Injectable()
 export class OrdersService {
@@ -17,6 +20,7 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly corners: CornersService,
     private readonly spreadsheet: SpreadsheetService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   private readonly ORDER_EXPORT_COLUMNS = [
@@ -211,7 +215,7 @@ export class OrdersService {
     await this.corners.assertWorksCorner(caller, cornerId);
     await this.validateItems(cornerId, dto.items);
 
-    return this.prisma.order.create({
+    const order = await this.prisma.order.create({
       data: {
         companyStoreId: cornerId,
         title: title,
@@ -235,6 +239,15 @@ export class OrdersService {
       },
       include: { orderItems: true },
     });
+
+    const event: OrderCreatedEvent = {
+      orderId: order.id,
+      cornerId: cornerId,
+      createdByUserId: caller.id,
+    };
+    this.eventEmitter.emit(NotificationEvent.ORDER_CREATED, event);
+
+    return order;
   }
 
   async findAll(caller: AuthUser, cornerId: string) {

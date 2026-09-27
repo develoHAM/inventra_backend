@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { UserStatus } from '../generated/prisma/enums';
+import { NotificationEvent } from '../notifications/notification-events';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -20,6 +21,7 @@ describe('AuthService', () => {
     hashToken: jest.Mock;
     verifyRefresh: jest.Mock;
   };
+  let eventEmitter: { emit: jest.Mock };
 
   const registerDto = {
     companyName: 'Acme',
@@ -90,10 +92,12 @@ describe('AuthService', () => {
       verifyRefresh: jest.fn().mockResolvedValue({ sub: 'user-1', jti: 'jti-1' }),
     };
 
+    eventEmitter = { emit: jest.fn().mockReturnValue(true) };
     service = new AuthService(
       prisma,
       passwordService as any,
       tokenService as any,
+      eventEmitter as any,
     );
   });
 
@@ -134,6 +138,27 @@ describe('AuthService', () => {
       });
     });
 
+    it('emits company.registered with the new company id, after the transaction commits', async () => {
+      await service.register(registerDto as any);
+
+      expect(eventEmitter.emit).toHaveBeenCalledWith(
+        NotificationEvent.COMPANY_REGISTERED,
+        { companyId: 'company-1' },
+      );
+      expect(prisma.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
+        eventEmitter.emit.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('emits nothing when the signup transaction fails', async () => {
+      tx.company.create.mockRejectedValue(new Error('db down'));
+
+      await expect(service.register(registerDto as any)).rejects.toThrow(
+        'db down',
+      );
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+
     it('rejects a duplicate email with 409 before any writes', async () => {
       prisma.userLoginMethod.findFirst.mockResolvedValue({ id: 'lm-1' });
 
@@ -141,6 +166,7 @@ describe('AuthService', () => {
         ConflictException,
       );
       expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
     it('rejects a duplicate tax ID with 409 before any writes', async () => {
@@ -192,6 +218,23 @@ describe('AuthService', () => {
       });
     });
 
+    it('emits member.joinRequested after the member row is created', async () => {
+      prisma.company.findUnique.mockResolvedValue({
+        id: 'company-1',
+        joinCode: 'INV-ABC123',
+      });
+
+      await service.registerMember(memberDto as any);
+
+      expect(eventEmitter.emit).toHaveBeenCalledWith(
+        NotificationEvent.MEMBER_JOIN_REQUESTED,
+        { companyId: 'company-1', memberUserId: 'member-1' },
+      );
+      expect(prisma.user.create.mock.invocationCallOrder[0]).toBeLessThan(
+        eventEmitter.emit.mock.invocationCallOrder[0],
+      );
+    });
+
     it('rejects an invalid join code with 404 and creates no user', async () => {
       prisma.company.findUnique.mockResolvedValue(null);
 
@@ -199,6 +242,7 @@ describe('AuthService', () => {
         NotFoundException,
       );
       expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
     it('rejects a duplicate email with 409 before resolving the join code', async () => {

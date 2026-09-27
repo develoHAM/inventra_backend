@@ -14,7 +14,10 @@ import { ConfirmUploadDto } from '../storage/dto/confirm-upload.dto';
 import { PresignUploadDto } from '../storage/dto/presign-upload.dto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { NotificationEvent } from '../notifications/notification-events';
-import type { CompanyApprovedEvent } from '../notifications/notification-events';
+import type {
+  CompanyApprovedEvent,
+  MemberApprovedEvent,
+} from '../notifications/notification-events';
 
 const IMAGE_EXT: Record<string, string> = {
   'image/jpeg': 'jpg',
@@ -76,10 +79,18 @@ export class UsersService {
     if (!role || !['MANAGER', 'STAFF'].includes(role.code))
       throw new BadRequestException('Invalid role for a member');
 
-    return this.prisma.user.update({
+    const approvedMember = await this.prisma.user.update({
       where: { id: target.id },
       data: { roleId: dto.roleId, status: UserStatus.ACTIVE },
     });
+
+    const event: MemberApprovedEvent = {
+      memberUserId: target.id,
+      approvedByUserId: caller.id,
+    };
+    this.eventEmitter.emit(NotificationEvent.MEMBER_APPROVED, event);
+
+    return approvedMember;
   }
 
   async approveCompany(companyId: string) {

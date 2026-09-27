@@ -7,7 +7,6 @@ import {
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CornersService } from '../corners/corners.service';
-import { AuditItemDto } from './dto/audit-item.dto';
 import { AuthUser } from '../auth/types/auth-user';
 import { CreateAuditDto } from './dto/create-audit.dto';
 import { UpdateAuditDto } from './dto/update-audit.dto';
@@ -17,6 +16,9 @@ import {
 } from '../generated/prisma/enums';
 import { SpreadsheetService } from '../spreadsheet/spreadsheet.service';
 import { StockChange } from '../inventory/stock-change';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { NotificationEvent } from '../notifications/notification-events';
+import type { AuditAppliedEvent } from '../notifications/notification-events';
 
 @Injectable()
 export class AuditsService {
@@ -25,6 +27,7 @@ export class AuditsService {
     private readonly corners: CornersService,
     private readonly inventory: InventoryService,
     private readonly spreadsheet: SpreadsheetService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   private readonly AUDIT_EXPORT_COLUMNS = [
@@ -366,6 +369,14 @@ export class AuditsService {
     );
 
     this.inventory.emitStockAlerts(stockChanges); // only after the commit
+
+    const event: AuditAppliedEvent = {
+      auditId: auditId,
+      cornerId: cornerId,
+      appliedByUserId: caller.id,
+    };
+    this.eventEmitter.emit(NotificationEvent.AUDIT_APPLIED, event);
+
     return appliedAudit;
   }
 

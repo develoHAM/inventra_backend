@@ -15,6 +15,12 @@ import { UserStatus } from '../generated/prisma/enums';
 import { LoginDto } from './dto/login.dto';
 import { CAN_AUTHENTICATE } from './auth.constants';
 import { RefreshDto } from './dto/refresh.dto';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { NotificationEvent } from '../notifications/notification-events';
+import type {
+  CompanyRegisteredEvent,
+  MemberJoinRequestedEvent,
+} from '../notifications/notification-events';
 
 @Injectable()
 export class AuthService {
@@ -22,6 +28,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly passwordService: PasswordService,
     private readonly tokenService: TokenService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   private generateJoinCode(): string {
@@ -114,6 +121,14 @@ export class AuthService {
       },
     );
 
+    const registeredEvent: CompanyRegisteredEvent = {
+      companyId: company.id,
+    };
+    this.eventEmitter.emit(
+      NotificationEvent.COMPANY_REGISTERED,
+      registeredEvent,
+    );
+
     const tokens = await this.issueTokens(user.id);
 
     return {
@@ -161,6 +176,15 @@ export class AuthService {
         },
       },
     });
+
+    const joinRequestedEvent: MemberJoinRequestedEvent = {
+      companyId: company.id,
+      memberUserId: user.id,
+    };
+    this.eventEmitter.emit(
+      NotificationEvent.MEMBER_JOIN_REQUESTED,
+      joinRequestedEvent,
+    );
 
     const tokens = await this.issueTokens(user.id);
 

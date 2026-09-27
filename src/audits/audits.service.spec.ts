@@ -6,6 +6,7 @@ import {
 import { AuditsService } from './audits.service';
 import { AuthUser } from '../auth/types/auth-user';
 import { UserStatus } from '../generated/prisma/enums';
+import { NotificationEvent } from '../notifications/notification-events';
 
 describe('AuditsService', () => {
   let service: AuditsService;
@@ -14,6 +15,7 @@ describe('AuditsService', () => {
   let inventory: { recordWithinTransaction: jest.Mock; emitStockAlerts: jest.Mock };
   let transaction: any;
   let spreadsheet: { toBuffer: jest.Mock; parse: jest.Mock };
+  let eventEmitter: { emit: jest.Mock };
 
   const owner: AuthUser = {
     id: 'owner-1',
@@ -101,11 +103,13 @@ describe('AuditsService', () => {
       toBuffer: jest.fn().mockResolvedValue(Buffer.from('bytes')),
       parse: jest.fn(),
     };
+    eventEmitter = { emit: jest.fn().mockReturnValue(true) };
     service = new AuditsService(
       prisma,
       corners as any,
       inventory as any,
       spreadsheet as any,
+      eventEmitter as any,
     );
   });
 
@@ -219,6 +223,21 @@ describe('AuditsService', () => {
     );
   });
 
+  it('apply emits audit.applied (audit, corner, applier) after the commit and the stock alerts', async () => {
+    await service.apply(owner, cornerId, auditId);
+
+    expect(eventEmitter.emit).toHaveBeenCalledWith(
+      NotificationEvent.AUDIT_APPLIED,
+      { auditId: auditId, cornerId: cornerId, appliedByUserId: 'owner-1' },
+    );
+    expect(prisma.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
+      eventEmitter.emit.mock.invocationCallOrder[0],
+    );
+    expect(inventory.emitStockAlerts.mock.invocationCallOrder[0]).toBeLessThan(
+      eventEmitter.emit.mock.invocationCallOrder[0],
+    );
+  });
+
   it('apply emits no stock alerts when the transaction fails part-way (rolled back)', async () => {
     inventory.recordWithinTransaction
       .mockResolvedValueOnce({
@@ -232,6 +251,7 @@ describe('AuditsService', () => {
     );
     // line 1 "succeeded" inside the transaction, but the whole thing rolled back
     expect(inventory.emitStockAlerts).not.toHaveBeenCalled();
+    expect(eventEmitter.emit).not.toHaveBeenCalled();
   });
 
   describe('exportAudit', () => {
