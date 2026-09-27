@@ -5,6 +5,7 @@ import { NotificationsService } from './notifications.service';
 import { NotificationsListener } from './notifications.listener';
 import { NotificationsProcessor } from './notifications.processor';
 import { EmailChannel } from './channels/email.channel';
+import { NotificationsReconciler } from './notifications.reconciler';
 
 @Module({
   imports: [BullModule.registerQueue({ name: NOTIFICATIONS_QUEUE })],
@@ -12,6 +13,7 @@ import { EmailChannel } from './channels/email.channel';
     NotificationsService,
     NotificationsListener,
     NotificationsProcessor,
+    NotificationsReconciler,
     EmailChannel,
   ],
   exports: [NotificationsService],
