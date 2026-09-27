@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-09-14.
+> Last updated: 2026-09-27.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -25,9 +25,9 @@
 | 10a | **Reservation auto-expiry sweep** (`@nestjs/schedule` cron releases expired holds) | ✅ complete (blogged) |
 | 10b+ | More cross-cutting concerns / Redis caching (only when measured) | ⏳ not started |
 | Files | **File uploads** (product/brand/avatar images) + **data import/export** (order/audit CSV·xlsx) | ✅ Slices 1–3 complete |
-| Notify | **Notifications** (email · SMS · push) + **account security** (phone OTP · find ID · password reset) | 🔨 Slice 1a complete; 1b next |
+| Notify | **Notifications** (email · SMS · push) + **account security** (phone OTP · find ID · password reset) | 🔨 Slices 1a–1b complete; 2 next |
 
-## Where we are right now — Notifications, Slice 1a complete (foundation + email)
+## Where we are right now — Notifications, Slices 1a–1b complete (all email events)
 
 New track, designed in `docs/superpowers/specs/2026-09-23-notifications-and-account-security-design.md` (slices 1a → 1b → 2 → 3 → 4). Decisions: fixed channels per event (in code); **domain events + BullMQ queue**; SMTP via nodemailer with **Mailpit** for dev/e2e; SMS via a Korean provider adapter (Slice 2); push via FCM (Slice 4); a verified phone is **required + unique** at signup; password reset and find-my-ID use an **SMS one-time code**; find-my-ID returns a masked email.
 
@@ -37,7 +37,16 @@ New track, designed in `docs/superpowers/specs/2026-09-23-notifications-and-acco
 - **233 unit tests green (25 suites) + 87 e2e green (10 suites)**, incl. `test/notifications.e2e-spec.ts` (polls until the row is `SENT`, then checks Mailpit's API).
 - ⚠️ **Gotchas:** (1) `@nestjs/event-emitter` 12, `@nestjs/bullmq` 12, its transitive `@nestjs/bull-shared`, and `nodemailer` 10 are **ESM-only** → added to the unit Jest `transformIgnorePatterns` (e2e loads them natively). (2) **BullMQ 6 made `ioredis` an optional peer** — without it every queue/worker fails to connect in a tight loop, which OOM'd Jest; `ioredis` is now a direct dependency. (3) **e2e now needs Redis + Mailpit running** (the app boots BullMQ), in addition to Postgres + MinIO.
 
-**Next — Slice 1b:** the remaining email events (`company.registered` → admins, `member.joinRequested` → owner, `member.approved` → member, `order.created` / `audit.applied` / `stock.belowTarget` → corner manager + owner), plus **emit-after-commit** plumbing for events raised inside `$transaction` (stock alerts fire only on the crossing below target), and a reconciliation cron that re-enqueues stale `PENDING` rows. Plan: write `docs/superpowers/plans/…-notifications-slice-1b-….md` first.
+**Slice 1b ✅ — every user-facing event emails, and stock alerts are emitted after commit:**
+- Events + recipients: `company.registered` → platform admins; `member.joinRequested` → company owner(s); `member.approved` → the member; `order.created` / `audit.applied` → corner manager + owners **minus the actor**; `stock.belowTarget` → corner manager + owners (**nobody excluded** — a state warning, not an action echo). Listener helper `NotificationsService.emailUsers({ userIds, excludeUserId?, eventType, message })` dedupes, drops the actor, skips users without an email login.
+- **Emit-after-commit ("return & collect"):** `InventoryService.recordWithinTransaction` returns `{ ledgerEntry, stockChange }`; transactional callers (audit apply, reservation create/fulfill) return their `stockChanges` out of `$transaction` and call `inventory.emitStockAlerts(changes)` only after it resolves. `stockAlertsFrom` (`src/inventory/stock-change.ts`) judges **per placement, first "before" vs last "after"**, so fulfill's RELEASE+SALE can't raise a false alarm, and alerts fire only on the **crossing** below target.
+- **`NotificationsReconciler`** (`@Cron` every 5 min): re-enqueues `PENDING` rows older than 10 min (100/run) with `jobId = notification.id`, so a job still in the queue is not duplicated.
+- **292 unit tests green (27 suites) + 91 e2e green (10 suites).** `test/notifications.e2e-spec.ts` now walks register → join → approve → order → restock/sale and asserts actor exclusion + a single stock alert.
+- ⚠️ **e2e gotcha:** suites share one DB after a single reset, so polls on a shared address (the admin) must match a detail unique to the test (`bodyContains`), and "no more rows" counts must be scoped to the test's recipients.
+
+**Channel decision:** every event is **push + email** — Slice 4 generalizes `emailUsers` into a channel-aware `notifyUsers` with one per-event channel table (see the spec).
+
+**Next — Slice 2:** `SmsChannel` (Korean provider adapter + fake for dev/e2e), `PhoneVerification` OTP (`POST /auth/phone/send-code`, `/auth/phone/verify` → single-use `verificationToken`), and signup (`RegisterDto` / `RegisterMemberDto`) requiring a verified, **unique** phone. Needs a migration (human runs it). Plan: write `docs/superpowers/plans/…-notifications-slice-2-….md` first.
 
 ## Prior — File-upload + import/export track complete (Slices 1–3)
 
