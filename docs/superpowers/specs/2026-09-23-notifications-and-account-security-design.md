@@ -66,10 +66,10 @@ business service ── emit('<event>') ──► NotificationsListener (@OnEven
 | `order.created` | email (+push, 4) | corner manager + company owner (minus actor) | 1b |
 | `audit.applied` | email (+push, 4) | corner manager + company owner (minus actor) | 1b |
 | `stock.belowTarget` | email (+push, 4) | corner manager + company owner (nobody excluded) | 1b |
-
-**Channel decision (2026-09-27):** every event is **push + email** — email always (the durable record; reaches users without the app, pending users, and admins on the web console), plus push to each recipient's registered devices in Slice 4 (users with no device just get the email). Slice 4 therefore generalizes the listener's `emailUsers(...)` into a channel-aware `notifyUsers({ userIds, excludeUserId?, eventType, message })` driven by **one per-event channel table**, rather than editing each handler.
 | `reservation.created` | SMS | the customer's phone | 3 |
 | `reservation.expired` | SMS | the customer's phone | 3 |
+
+**Channel decision (2026-09-27):** every event is **push + email** — email always (the durable record; reaches users without the app, pending users, and admins on the web console), plus push to each recipient's registered devices in Slice 4 (users with no device just get the email). Slice 4 therefore generalizes the listener's `emailUsers(...)` into a channel-aware `notifyUsers({ userIds, excludeUserId?, eventType, message })` driven by **one per-event channel table**, rather than editing each handler.
 
 ## Phone verification (OTP) — Slice 2
 
@@ -99,7 +99,7 @@ business service ── emit('<event>') ──► NotificationsListener (@OnEven
 | **1b** | Remaining email events (table above) + after-commit event collection for stock alerts |
 | **2** | `SmsChannel` (provider + fake), `PhoneVerification`, send-code/verify, signup requires a verified phone |
 | **3** | Find my ID, password reset, reservation SMS |
-| **4** | `DeviceToken`, device endpoints, FCM `PushChannel`, push on stock and order/audit events |
+| **4** | `DeviceToken`, device endpoints, FCM `PushChannel`, channel-aware `notifyUsers` + per-event channel table → push on **every** user event (email kept) |
 
 ## Package / tooling notes
 - `@nestjs/event-emitter` 12, `@nestjs/bullmq` 12 and `nodemailer` 10 are **ESM-only**. Runtime is fine (Node 26 supports `require()` of ESM, as `@nestjs/schedule` already proves). **Unit Jest** (CommonJS) must transform them: widen `transformIgnorePatterns` to `node_modules/(?!(@nestjs/schedule|@nestjs/event-emitter|@nestjs/bullmq|nodemailer)/)`. **e2e Jest** (native ESM under `--experimental-vm-modules`) needs no change.
