@@ -46,13 +46,21 @@ enum NotificationStatus {
   @@map("notification_status")
 }
 
+enum PhoneVerificationPurpose {
+  SIGNUP
+  FIND_ID
+  RESET_PASSWORD
+
+  @@map("phone_verification_purpose")
+}
+
 model User {
   id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name            String     @db.VarChar(100)
   companyId       String?    @map("company_id") @db.Uuid
   roleId          Int?       @map("role_id")
   companyStoreId  String?    @map("company_store_id") @db.Uuid
-  phone           String?    @db.VarChar(20)
+  phone           String?    @unique(map: "UQ_users_phone") @db.VarChar(20)
   profileImageUrl String?    @map("profile_image_url") @db.VarChar(2048)
   biography       String?    @db.Text
   status          UserStatus @default(PENDING_APPROVAL)
@@ -201,6 +209,23 @@ model Notification {
   @@index([recipientUserId], map: "IDX_notifications_recipient")
   @@index([status], map: "IDX_notifications_status")
   @@map("notifications")
+}
+
+model PhoneVerification {
+  id             String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  phone          String                   @db.VarChar(20)
+  purpose        PhoneVerificationPurpose
+  code           String                   @db.VarChar(6)
+  expiresAt      DateTime                 @map("expires_at") @db.Timestamptz(6)
+  checkAttempts  Int                      @default(0) @map("check_attempts")
+  verifiedAt     DateTime?                @map("verified_at") @db.Timestamptz(6)
+  tokenHash      String?                  @unique(map: "UQ_phone_verifications_token_hash") @map("token_hash") @db.VarChar(64)
+  tokenExpiresAt DateTime?                @map("token_expires_at") @db.Timestamptz(6)
+  consumedAt     DateTime?                @map("consumed_at") @db.Timestamptz(6)
+  createdAt      DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([phone, createdAt], map: "IDX_phone_verifications_phone_created")
+  @@map("phone_verifications")
 }
 
 model Store {
