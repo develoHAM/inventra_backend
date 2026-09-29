@@ -1,46 +1,67 @@
 import { z } from 'zod';
 
-export const envSchema = z.object({
-  // -- App --
-  NODE_ENV: z
-    .enum(['development', 'test', 'production'])
-    .default('development'),
-  PORT: z.coerce.number().int().positive().default(3000),
-  // -- Redis --
-  REDIS_HOST: z.string().default('localhost'),
-  REDIS_PASSWORD: z.string().min(1),
-  REDIS_PORT: z.coerce.number().int().positive().default(6379),
-  BULLMQ_PREFIX: z.string().default('inventra'),
-  // -- Email (SMTP) --
-  SMTP_HOST: z.string().default('localhost'),
-  SMTP_PORT: z.coerce.number().int().positive().default(1025),
-  SMTP_USER: z.string().optional(),
-  SMTP_PASS: z.string().optional(),
-  SMTP_FROM: z.string().default('Inventra <no-reply@inventra.local>'),
-  // -- Database --
-  DATABASE_URL: z
-    .string()
-    .min(1)
-    .refine(
-      (v) => v.startsWith('postgresql://') || v.startsWith('postgres://'),
-      { message: 'must be a postgres connection string (postgresql://...)' },
-    ),
-  // -- Auth (JWT) --
-  JWT_ACCESS_SECRET: z.string().min(32),
-  JWT_REFRESH_SECRET: z.string().min(32),
-  JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
-  JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
-  // -- Seed (initial platform admin) --
-  SEED_ADMIN_EMAIL: z.email(),
-  SEED_ADMIN_PASSWORD: z.string().min(8),
-  // -- Storage (S3 / MinIO) --
-  S3_ENDPOINT: z.url(),
-  S3_REGION: z.string().default('us-east-1'),
-  S3_ACCESS_KEY: z.string().min(1),
-  S3_SECRET_KEY: z.string().min(1),
-  S3_BUCKET: z.string().min(1),
-  S3_PRESIGN_EXPIRY_SECONDS: z.coerce.number().int().positive().default(300),
-});
+export const envSchema = z
+  .object({
+    // -- App --
+    NODE_ENV: z
+      .enum(['development', 'test', 'production'])
+      .default('development'),
+    PORT: z.coerce.number().int().positive().default(3000),
+    // -- Redis --
+    REDIS_HOST: z.string().default('localhost'),
+    REDIS_PASSWORD: z.string().min(1),
+    REDIS_PORT: z.coerce.number().int().positive().default(6379),
+    BULLMQ_PREFIX: z.string().default('inventra'),
+    // -- Email (SMTP) --
+    SMTP_HOST: z.string().default('localhost'),
+    SMTP_PORT: z.coerce.number().int().positive().default(1025),
+    SMTP_USER: z.string().optional(),
+    SMTP_PASS: z.string().optional(),
+    SMTP_FROM: z.string().default('Inventra <no-reply@inventra.local>'),
+    // -- Phone verification (OCTOMO reverse SMS) --
+    PHONE_VERIFIER: z.enum(['octomo', 'fake']),
+    OCTOMO_API_KEY: z.string().min(1).optional(),
+    // -- Database --
+    DATABASE_URL: z
+      .string()
+      .min(1)
+      .refine(
+        (v) => v.startsWith('postgresql://') || v.startsWith('postgres://'),
+        { message: 'must be a postgres connection string (postgresql://...)' },
+      ),
+    // -- Auth (JWT) --
+    JWT_ACCESS_SECRET: z.string().min(32),
+    JWT_REFRESH_SECRET: z.string().min(32),
+    JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
+    JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
+    // -- Seed (initial platform admin) --
+    SEED_ADMIN_EMAIL: z.email(),
+    SEED_ADMIN_PASSWORD: z.string().min(8),
+    // -- Storage (S3 / MinIO) --
+    S3_ENDPOINT: z.url(),
+    S3_REGION: z.string().default('us-east-1'),
+    S3_ACCESS_KEY: z.string().min(1),
+    S3_SECRET_KEY: z.string().min(1),
+    S3_BUCKET: z.string().min(1),
+    S3_PRESIGN_EXPIRY_SECONDS: z.coerce.number().int().positive().default(300),
+  })
+  // Rules that involve more than one field run after every field passed its own check.
+  .superRefine((env, context) => {
+    if (env.PHONE_VERIFIER === 'octomo' && !env.OCTOMO_API_KEY) {
+      context.addIssue({
+        code: 'custom',
+        path: ['OCTOMO_API_KEY'],
+        message: 'required when PHONE_VERIFIER=octomo',
+      });
+    }
+    if (env.NODE_ENV === 'production' && env.PHONE_VERIFIER === 'fake') {
+      context.addIssue({
+        code: 'custom',
+        path: ['PHONE_VERIFIER'],
+        message: 'fake is not allowed in production',
+      });
+    }
+  });
 
 export type Env = z.infer<typeof envSchema>;
 
