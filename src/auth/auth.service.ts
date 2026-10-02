@@ -11,7 +11,10 @@ import { RegisterDto } from './dto/register.dto';
 import { randomBytes } from 'node:crypto';
 import { UserModel } from '../generated/prisma/models';
 import { RegisterMemberDto } from './dto/register-member.dto';
-import { UserStatus } from '../generated/prisma/enums';
+import {
+  PhoneVerificationPurpose,
+  UserStatus,
+} from '../generated/prisma/enums';
 import { LoginDto } from './dto/login.dto';
 import { CAN_AUTHENTICATE } from './auth.constants';
 import { RefreshDto } from './dto/refresh.dto';
@@ -21,6 +24,7 @@ import type {
   CompanyRegisteredEvent,
   MemberJoinRequestedEvent,
 } from '../notifications/notification-events';
+import { PhoneVerificationService } from '../phone-verification/phone-verification.service';
 
 @Injectable()
 export class AuthService {
@@ -29,6 +33,7 @@ export class AuthService {
     private readonly passwordService: PasswordService,
     private readonly tokenService: TokenService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly phoneVerification: PhoneVerificationService,
   ) {}
 
   private generateJoinCode(): string {
@@ -51,27 +56,38 @@ export class AuthService {
     return { accessToken: accessToken, refreshToken: refreshToken };
   }
 
+  /** null = nobody (non-deleted) has this phone yet. */
+  private findPhoneOwner(phone: string) {
+    return this.prisma.user.findFirst({
+      where: { phone: phone, deletedAt: null },
+      select: { id: true },
+    });
+  }
+
   async register(dto: RegisterDto): Promise<{
     accessToken: string;
     refreshToken: string;
     user: Partial<UserModel>;
   }> {
-    const { companyName, taxId, ownerName, ownerEmail, ownerPassword } = dto;
+    const {
+      companyName,
+      taxId,
+      ownerName,
+      ownerEmail,
+      ownerPassword,
+      ownerPhone,
+      ownerPhoneVerificationToken,
+    } = dto;
 
-    const emailTakenPromise = this.prisma.userLoginMethod.findFirst({
-      where: { email: ownerEmail },
-    });
-    const taxIdTakenPromise = this.prisma.company.findUnique({
-      where: { taxId: taxId },
-    });
-
-    const [emailTaken, taxIdTaken] = await Promise.all([
-      emailTakenPromise,
-      taxIdTakenPromise,
+    const [emailTaken, taxIdTaken, phoneTaken] = await Promise.all([
+      this.prisma.userLoginMethod.findFirst({ where: { email: ownerEmail } }),
+      this.prisma.company.findUnique({ where: { taxId: taxId } }),
+      this.findPhoneOwner(ownerPhone),
     ]);
 
     if (emailTaken) throw new ConflictException('Email already registered');
     if (taxIdTaken) throw new ConflictException('Tax ID already registered');
+    if (phoneTaken) throw new ConflictException('Phone already registered');
 
     const passwordHash = await this.passwordService.hash(ownerPassword);
 
@@ -85,9 +101,17 @@ export class AuthService {
 
     const { user, company } = await this.prisma.$transaction(
       async (transaction) => {
+        // Spend the proof first: if anything below fails, this rolls back too.
+        await this.phoneVerification.consume(transaction, {
+          token: ownerPhoneVerificationToken,
+          phone: ownerPhone,
+          purpose: PhoneVerificationPurpose.SIGNUP,
+        });
+
         const newUser = await transaction.user.create({
           data: {
             name: ownerName,
+            phone: ownerPhone,
             companyId: null,
             status: 'PENDING_APPROVAL',
             roleId: role.id,
@@ -148,15 +172,16 @@ export class AuthService {
     refreshToken: string;
     user: Partial<UserModel>;
   }> {
-    const { joinCode, email, password, name } = dto;
+    const { joinCode, email, password, name, phone, phoneVerificationToken } =
+      dto;
 
-    const emailTaken = await this.prisma.userLoginMethod.findFirst({
-      where: {
-        email: email,
-      },
-    });
+    const [emailTaken, phoneTaken] = await Promise.all([
+      this.prisma.userLoginMethod.findFirst({ where: { email: email } }),
+      this.findPhoneOwner(phone),
+    ]);
 
     if (emailTaken) throw new ConflictException('Email already registered');
+    if (phoneTaken) throw new ConflictException('Phone already registered');
 
     const company = await this.prisma.company.findUnique({
       where: { joinCode: joinCode },
@@ -165,16 +190,30 @@ export class AuthService {
 
     const passwordHash = await this.passwordService.hash(password);
 
-    const user = await this.prisma.user.create({
-      data: {
-        name: name,
-        companyId: company.id,
-        roleId: null, // role assigned by the owner at approval
-        status: UserStatus.PENDING_APPROVAL,
-        loginMethods: {
-          create: { method: 'local', email: email, passwordHash: passwordHash },
+    // Two writes that must succeed or fail together: spend the proof, create the member.
+    const user = await this.prisma.$transaction(async (transaction) => {
+      await this.phoneVerification.consume(transaction, {
+        token: phoneVerificationToken,
+        phone: phone,
+        purpose: PhoneVerificationPurpose.SIGNUP,
+      });
+
+      return transaction.user.create({
+        data: {
+          name: name,
+          phone: phone,
+          companyId: company.id,
+          roleId: null, // role assigned by the owner at approval
+          status: UserStatus.PENDING_APPROVAL,
+          loginMethods: {
+            create: {
+              method: 'local',
+              email: email,
+              passwordHash: passwordHash,
+            },
+          },
         },
-      },
+      });
     });
 
     const joinRequestedEvent: MemberJoinRequestedEvent = {

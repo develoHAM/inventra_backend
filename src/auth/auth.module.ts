@@ -6,9 +6,10 @@ import { PasswordService } from './password.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
+import { PhoneVerificationModule } from '../phone-verification/phone-verification.module';
 
 @Module({
-  imports: [JwtModule.register({})],
+  imports: [JwtModule.register({}), PhoneVerificationModule],
   controllers: [AuthController],
   providers: [
     TokenService,

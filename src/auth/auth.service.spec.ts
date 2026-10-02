@@ -1,10 +1,14 @@
 import {
+  BadRequestException,
   ConflictException,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { UserStatus } from '../generated/prisma/enums';
+import {
+  PhoneVerificationPurpose,
+  UserStatus,
+} from '../generated/prisma/enums';
 import { NotificationEvent } from '../notifications/notification-events';
 
 describe('AuthService', () => {
@@ -22,6 +26,7 @@ describe('AuthService', () => {
     verifyRefresh: jest.Mock;
   };
   let eventEmitter: { emit: jest.Mock };
+  let phoneVerification: { consume: jest.Mock };
 
   const registerDto = {
     companyName: 'Acme',
@@ -29,6 +34,8 @@ describe('AuthService', () => {
     ownerName: 'Jane Owner',
     ownerEmail: 'jane@acme.com',
     ownerPassword: 'password123',
+    ownerPhone: '01012345678',
+    ownerPhoneVerificationToken: 'owner-verification-token',
   };
 
   const memberDto = {
@@ -36,6 +43,8 @@ describe('AuthService', () => {
     email: 'sam@acme.com',
     password: 'password123',
     name: 'Sam Staff',
+    phone: '01099998888',
+    phoneVerificationToken: 'member-verification-token',
   };
 
   beforeEach(() => {
@@ -58,16 +67,12 @@ describe('AuthService', () => {
       // null default = "not taken" (register tax-ID check) / "not found" (member join-code)
       company: { findUnique: jest.fn().mockResolvedValue(null) },
       role: {
-        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 2, code: 'OWNER' }),
+        findUniqueOrThrow: jest
+          .fn()
+          .mockResolvedValue({ id: 2, code: 'OWNER' }),
       },
-      user: {
-        create: jest.fn().mockResolvedValue({
-          id: 'member-1',
-          status: 'PENDING_APPROVAL',
-          companyId: 'company-1',
-          roleId: null,
-        }),
-      },
+      // null default = "phone not taken"
+      user: { findFirst: jest.fn().mockResolvedValue(null) },
       refreshToken: {
         create: jest.fn().mockResolvedValue({}),
         findUnique: jest.fn(),
@@ -89,15 +94,19 @@ describe('AuthService', () => {
         expiresAt: new Date('2030-01-01T00:00:00Z'),
       }),
       hashToken: jest.fn().mockReturnValue('hashed-refresh'),
-      verifyRefresh: jest.fn().mockResolvedValue({ sub: 'user-1', jti: 'jti-1' }),
+      verifyRefresh: jest
+        .fn()
+        .mockResolvedValue({ sub: 'user-1', jti: 'jti-1' }),
     };
 
     eventEmitter = { emit: jest.fn().mockReturnValue(true) };
+    phoneVerification = { consume: jest.fn().mockResolvedValue(undefined) };
     service = new AuthService(
       prisma,
       passwordService as any,
       tokenService as any,
       eventEmitter as any,
+      phoneVerification as any,
     );
   });
 
@@ -177,9 +186,67 @@ describe('AuthService', () => {
       );
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
+
+    it('rejects a phone another user already has with 409 before any writes', async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: 'someone-else' });
+
+      await expect(service.register(registerDto as any)).rejects.toThrow(
+        new ConflictException('Phone already registered'),
+      );
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { phone: '01012345678', deletedAt: null },
+        select: { id: true },
+      });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(phoneVerification.consume).not.toHaveBeenCalled();
+    });
+
+    it('spends the phone token inside the transaction, before creating the owner', async () => {
+      await service.register(registerDto as any);
+
+      expect(phoneVerification.consume).toHaveBeenCalledWith(tx, {
+        token: 'owner-verification-token',
+        phone: '01012345678',
+        purpose: PhoneVerificationPurpose.SIGNUP,
+      });
+      expect(
+        phoneVerification.consume.mock.invocationCallOrder[0],
+      ).toBeLessThan(tx.user.create.mock.invocationCallOrder[0]);
+    });
+
+    it('stores the verified phone on the owner', async () => {
+      await service.register(registerDto as any);
+
+      expect(tx.user.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ phone: '01012345678' }),
+      });
+    });
+
+    it('creates nothing and emits nothing when the phone token is invalid', async () => {
+      phoneVerification.consume.mockRejectedValue(
+        new BadRequestException('Invalid or expired verification token'),
+      );
+
+      await expect(service.register(registerDto as any)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(tx.user.create).not.toHaveBeenCalled();
+      expect(tx.company.create).not.toHaveBeenCalled();
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
   });
 
   describe('registerMember (join-code self-signup)', () => {
+    beforeEach(() => {
+      // the member is now created inside a transaction
+      tx.user.create.mockResolvedValue({
+        id: 'member-1',
+        status: 'PENDING_APPROVAL',
+        companyId: 'company-1',
+        roleId: null,
+      });
+    });
+
     it('creates a role-less PENDING member in the join-code company, with auto-login', async () => {
       prisma.company.findUnique.mockResolvedValue({
         id: 'company-1',
@@ -191,7 +258,7 @@ describe('AuthService', () => {
       expect(prisma.company.findUnique).toHaveBeenCalledWith({
         where: { joinCode: 'INV-ABC123' },
       });
-      expect(prisma.user.create).toHaveBeenCalledWith({
+      expect(tx.user.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           name: 'Sam Staff',
           companyId: 'company-1',
@@ -230,7 +297,7 @@ describe('AuthService', () => {
         NotificationEvent.MEMBER_JOIN_REQUESTED,
         { companyId: 'company-1', memberUserId: 'member-1' },
       );
-      expect(prisma.user.create.mock.invocationCallOrder[0]).toBeLessThan(
+      expect(tx.user.create.mock.invocationCallOrder[0]).toBeLessThan(
         eventEmitter.emit.mock.invocationCallOrder[0],
       );
     });
@@ -241,7 +308,8 @@ describe('AuthService', () => {
       await expect(service.registerMember(memberDto as any)).rejects.toThrow(
         NotFoundException,
       );
-      expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(tx.user.create).not.toHaveBeenCalled();
+      expect(phoneVerification.consume).not.toHaveBeenCalled();
       expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
@@ -252,6 +320,64 @@ describe('AuthService', () => {
         ConflictException,
       );
       expect(prisma.company.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('rejects a phone another user already has with 409 before resolving the join code', async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: 'someone-else' });
+
+      await expect(service.registerMember(memberDto as any)).rejects.toThrow(
+        new ConflictException('Phone already registered'),
+      );
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { phone: '01099998888', deletedAt: null },
+        select: { id: true },
+      });
+      expect(prisma.company.findUnique).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    describe('with a valid join code', () => {
+      beforeEach(() => {
+        prisma.company.findUnique.mockResolvedValue({
+          id: 'company-1',
+          joinCode: 'INV-ABC123',
+        });
+      });
+
+      it('spends the phone token inside a transaction, before creating the member', async () => {
+        await service.registerMember(memberDto as any);
+
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(phoneVerification.consume).toHaveBeenCalledWith(tx, {
+          token: 'member-verification-token',
+          phone: '01099998888',
+          purpose: PhoneVerificationPurpose.SIGNUP,
+        });
+        expect(
+          phoneVerification.consume.mock.invocationCallOrder[0],
+        ).toBeLessThan(tx.user.create.mock.invocationCallOrder[0]);
+      });
+
+      it('stores the verified phone on the member', async () => {
+        await service.registerMember(memberDto as any);
+
+        expect(tx.user.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ phone: '01099998888' }),
+        });
+      });
+
+      it('creates nothing and emits nothing when the phone token is invalid', async () => {
+        phoneVerification.consume.mockRejectedValue(
+          new BadRequestException('Invalid or expired verification token'),
+        );
+
+        await expect(service.registerMember(memberDto as any)).rejects.toThrow(
+          BadRequestException,
+        );
+        expect(tx.user.create).not.toHaveBeenCalled();
+        expect(eventEmitter.emit).not.toHaveBeenCalled();
+        expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -295,7 +421,10 @@ describe('AuthService', () => {
     it('allows a PENDING user to log in (lands on the pending screen)', async () => {
       prisma.userLoginMethod.findFirst.mockResolvedValue({
         ...activeLoginMethod,
-        user: { ...activeLoginMethod.user, status: UserStatus.PENDING_APPROVAL },
+        user: {
+          ...activeLoginMethod.user,
+          status: UserStatus.PENDING_APPROVAL,
+        },
       });
 
       const result = await service.login(loginDto as any);
@@ -381,7 +510,7 @@ describe('AuthService', () => {
       expect(prisma.refreshToken.update).not.toHaveBeenCalled();
     });
 
-    it('detects reuse: a revoked token revokes ALL the user\'s tokens and 401s', async () => {
+    it("detects reuse: a revoked token revokes ALL the user's tokens and 401s", async () => {
       prisma.refreshToken.findUnique.mockResolvedValue({
         ...validStored,
         revokedAt: new Date('2027-01-01T00:00:00Z'), // already revoked
