@@ -4,6 +4,7 @@ import { jest } from '@jest/globals';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { testPhones, verifiedPhone } from './helpers/phone';
 import { NotificationStatus } from '../src/generated/prisma/enums';
 import { NotificationEvent } from '../src/notifications/notification-events';
 import { notificationTemplates } from '../src/notifications/notification-templates';
@@ -26,6 +27,9 @@ describe('Notifications (e2e)', () => {
   const mailpitApi = `http://localhost:${process.env.MAILPIT_UI_PORT ?? 8025}/api/v1`;
   const ownerEmail = 'owner@ntf.test';
   const companyName = 'NTF Co';
+
+  // users.phone is unique across the shared DB: suite 10's own block
+  const nextPhone = testPhones(10);
 
   const auth = (token: string): [string, string] => [
     'Authorization',
@@ -86,6 +90,7 @@ describe('Notifications (e2e)', () => {
 
   it('approving a company emails its owner (row SENT, message in Mailpit)', async () => {
     const taxId = '770-00-00001';
+    const { phone, token } = await verifiedPhone(app, nextPhone);
     await request(http)
       .post('/auth/register')
       .send({
@@ -94,6 +99,8 @@ describe('Notifications (e2e)', () => {
         ownerName: 'Owner',
         ownerEmail: ownerEmail,
         ownerPassword: 'password123',
+        ownerPhone: phone,
+        ownerPhoneVerificationToken: token,
       })
       .expect(201);
     const company = await prisma.company.findUnique({
@@ -187,6 +194,7 @@ describe('Notifications (e2e)', () => {
       });
 
     it('company.registered emails the platform admin', async () => {
+      const { phone, token } = await verifiedPhone(app, nextPhone);
       await request(http)
         .post('/auth/register')
         .send({
@@ -195,6 +203,8 @@ describe('Notifications (e2e)', () => {
           ownerName: 'Owner 1b',
           ownerEmail: ownerEmail1b,
           ownerPassword: password,
+          ownerPhone: phone,
+          ownerPhoneVerificationToken: token,
         })
         .expect(201);
 
@@ -220,6 +230,7 @@ describe('Notifications (e2e)', () => {
       const company = await prisma.company.findUnique({
         where: { taxId: taxId },
       });
+      const { phone, token } = await verifiedPhone(app, nextPhone);
       await request(http)
         .post('/auth/register/member')
         .send({
@@ -227,6 +238,8 @@ describe('Notifications (e2e)', () => {
           email: managerEmail,
           password: password,
           name: 'Manager 1b',
+          phone: phone,
+          phoneVerificationToken: token,
         })
         .expect(201);
 

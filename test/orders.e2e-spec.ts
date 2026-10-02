@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { testPhones, verifiedPhone } from './helpers/phone';
 
 describe('Restock Orders (e2e)', () => {
   let app: INestApplication;
@@ -27,10 +28,14 @@ describe('Restock Orders (e2e)', () => {
     `Bearer ${token}`,
   ];
 
+  // users.phone is unique across the shared DB: suite 06's own block
+  const nextPhone = testPhones(6);
+
   const registerCompany = async (n: number) => {
     const taxId = `4${n}0-00-0000${n}`;
     const email = `owner${n}@ord.test`;
     const password = 'password123';
+    const { phone, token } = await verifiedPhone(app, nextPhone);
     await request(http)
       .post('/auth/register')
       .send({
@@ -39,6 +44,8 @@ describe('Restock Orders (e2e)', () => {
         ownerName: `Owner ${n}`,
         ownerEmail: email,
         ownerPassword: password,
+        ownerPhone: phone,
+        ownerPhoneVerificationToken: token,
       })
       .expect(201);
     const company = await prisma.company.findUnique({
@@ -66,9 +73,17 @@ describe('Restock Orders (e2e)', () => {
   ) => {
     const email = `${tag}@ord.test`;
     const password = 'password123';
+    const { phone, token } = await verifiedPhone(app, nextPhone);
     await request(http)
       .post('/auth/register/member')
-      .send({ joinCode: joinCode, email: email, password: password, name: tag })
+      .send({
+        joinCode: joinCode,
+        email: email,
+        password: password,
+        name: tag,
+        phone: phone,
+        phoneVerificationToken: token,
+      })
       .expect(201);
     const user = await prisma.user.findFirst({
       where: { loginMethods: { some: { email: email } } },

@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-09-27.
+> Last updated: 2026-10-02.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -25,9 +25,9 @@
 | 10a | **Reservation auto-expiry sweep** (`@nestjs/schedule` cron releases expired holds) | ✅ complete (blogged) |
 | 10b+ | More cross-cutting concerns / Redis caching (only when measured) | ⏳ not started |
 | Files | **File uploads** (product/brand/avatar images) + **data import/export** (order/audit CSV·xlsx) | ✅ Slices 1–3 complete |
-| Notify | **Notifications** (email · SMS · push) + **account security** (phone OTP · find ID · password reset) | 🔨 Slices 1a–1b complete; 2 next |
+| Notify | **Notifications** (email · SMS · push) + **account security** (OCTOMO phone verification · find ID · password reset) | 🔨 Slices 1a–2 complete; 3 next |
 
-## Where we are right now — Notifications, Slices 1a–1b complete (all email events)
+## Where we are right now — Notifications, Slices 1a–2 complete (email events + OCTOMO phone verification)
 
 New track, designed in `docs/superpowers/specs/2026-09-23-notifications-and-account-security-design.md` (slices 1a → 1b → 2 → 3 → 4). Decisions: fixed channels per event (in code); **domain events + BullMQ queue**; SMTP via nodemailer with **Mailpit** for dev/e2e; SMS via a Korean provider adapter (Slice 2); push via FCM (Slice 4); a verified phone is **required + unique** at signup; password reset and find-my-ID use an **SMS one-time code**; find-my-ID returns a masked email.
 
@@ -46,7 +46,15 @@ New track, designed in `docs/superpowers/specs/2026-09-23-notifications-and-acco
 
 **Channel decision:** every event is **push + email** — Slice 4 generalizes `emailUsers` into a channel-aware `notifyUsers` with one per-event channel table (see the spec).
 
-**Next — Slice 2:** `SmsChannel` (Korean provider adapter + fake for dev/e2e), `PhoneVerification` OTP (`POST /auth/phone/send-code`, `/auth/phone/verify` → single-use `verificationToken`), and signup (`RegisterDto` / `RegisterMemberDto`) requiring a verified, **unique** phone. Needs a migration (human runs it). Plan: write `docs/superpowers/plans/…-notifications-slice-2-….md` first.
+**Slice 2 ✅ — phone verification via OCTOMO reverse SMS; signup requires a verified, unique phone** (decision 2026-09-28: the user texts a displayed code to OCTOMO's 1666-3538 and we ask its API whether it arrived — the carrier proves the sender, so the code is not a secret and we never send an SMS). Plan: `docs/superpowers/plans/2026-09-28-notifications-slice-2-octomo-phone-verification.md`.
+- `POST /auth/phone/start { phone, purpose }` → `{ verificationId, code, receiverNumber, expiresInSeconds: 300 }` (10 starts/phone/24 h → 429; `SIGNUP` + registered phone → 409). `POST /auth/phone/confirm { verificationId }` → `{ verificationToken, expiresInSeconds: 600 }`; "not received yet" → 400, verifier failure → 503, >10 checks → 429. Both `@Public()`, `@HttpCode(200)`.
+- `PhoneVerification` table + `User.phone @unique`; phones are `010` + 8 digits, normalized from dashes/spaces by a DTO `@Transform`. Code stored as-is (shown to the user); token stored as SHA-256 only.
+- **Race-proof by conditional `updateMany`** (check + change in one statement): claiming a check (`checkAttempts < 10`), issuing the token (`verifiedAt: null`), and `consume` (hash + phone + purpose + unused + unexpired). `consume(tx, …)` runs inside the signup transaction, so a failed signup leaves the token unspent; `registerMember` now uses a `$transaction` too.
+- `PhoneOwnershipVerifier` behind the `PHONE_VERIFIER` token: `OctomoPhoneVerifier` (`fetch`, 5 s `AbortSignal.timeout`, non-2xx throws + logs OCTOMO's message, only a boolean `true` counts) or `FakePhoneVerifier` (e2e: `receive(phone, code)`). Env `PHONE_VERIFIER=octomo|fake` (no default), `OCTOMO_API_KEY` required for octomo, `fake` refused in production (Zod `superRefine`).
+- **383 unit tests green (33 suites) + 106 e2e green (11 suites).** e2e: `test/helpers/phone.ts` (`testPhones(suite)` per-suite phone blocks — users.phone is unique across the shared DB; `verifiedPhone(app, nextPhone)` runs the real flow); `test/phone-verification.e2e-spec.ts`.
+- ⚠️ Gotchas: a reused signup token yields **409** (the phone-taken check precedes `consume`), not 400. e2e signups need `PHONE_VERIFIER=fake` in `.env.test`. HTTP exceptions stay in services (no non-HTTP caller needs domain errors).
+
+**Next — Slice 3:** find my ID (`POST /auth/find-id`, `FIND_ID` token → masked email) and password reset (`RESET_PASSWORD` token, revoke all refresh tokens) — both consume the Slice 2 tokens; plus reservation SMS to customers, which needs an **outbound** SMS provider + `SmsChannel` through the queue (OCTOMO only receives). Plan first.
 
 ## Prior — File-upload + import/export track complete (Slices 1–3)
 

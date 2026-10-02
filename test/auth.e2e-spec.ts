@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { testPhones, verifiedPhone } from './helpers/phone';
 
 describe('Auth & Authorization (e2e)', () => {
   let app: INestApplication;
@@ -28,6 +29,9 @@ describe('Auth & Authorization (e2e)', () => {
   let joinCode: string;
   let memberId: string;
   let memberAccess: string;
+
+  // users.phone is unique across the shared DB: suite 01's own block
+  const nextPhone = testPhones(1);
 
   const loginMember = () =>
     request(http)
@@ -59,9 +63,14 @@ describe('Auth & Authorization (e2e)', () => {
   });
 
   it('1. registers a company — owner PENDING with an auto-login session', async () => {
+    const { phone, token } = await verifiedPhone(app, nextPhone);
     const res = await request(http)
       .post('/auth/register')
-      .send(owner)
+      .send({
+        ...owner,
+        ownerPhone: phone,
+        ownerPhoneVerificationToken: token,
+      })
       .expect(201);
 
     expect(res.body.user.status).toBe('PENDING_APPROVAL');
@@ -114,9 +123,15 @@ describe('Auth & Authorization (e2e)', () => {
   });
 
   it('6. a member self-registers with the join code (PENDING, role-less)', async () => {
+    const { phone, token } = await verifiedPhone(app, nextPhone);
     const res = await request(http)
       .post('/auth/register/member')
-      .send({ ...member, joinCode: joinCode })
+      .send({
+        ...member,
+        joinCode: joinCode,
+        phone: phone,
+        phoneVerificationToken: token,
+      })
       .expect(201);
 
     expect(res.body.user.status).toBe('PENDING_APPROVAL');
@@ -130,6 +145,10 @@ describe('Auth & Authorization (e2e)', () => {
         ...member,
         email: 'nobody@e2e.test',
         joinCode: 'INV-DOESNOTEXIST',
+        // the join code is checked before the token is spent, so any
+        // well-formed values reach the 404
+        phone: nextPhone(),
+        phoneVerificationToken: 'unused',
       })
       .expect(404);
   });

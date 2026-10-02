@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { testPhones, verifiedPhone } from './helpers/phone';
 
 describe('File Uploads (e2e)', () => {
   let app: INestApplication;
@@ -54,6 +55,8 @@ describe('File Uploads (e2e)', () => {
     const taxId = '110-00-00001';
     const email = 'owner1@upl.test';
     const password = 'password123';
+    // users.phone is unique across the shared DB: suite 09's own block
+    const { phone, token } = await verifiedPhone(app, testPhones(9));
     await request(http)
       .post('/auth/register')
       .send({
@@ -62,6 +65,8 @@ describe('File Uploads (e2e)', () => {
         ownerName: 'Owner',
         ownerEmail: email,
         ownerPassword: password,
+        ownerPhone: phone,
+        ownerPhoneVerificationToken: token,
       })
       .expect(201);
     const company = await prisma.company.findUnique({
