@@ -18,7 +18,7 @@ A notifications subsystem that lets any business flow notify people by **email, 
 | Dispatch | **Domain events + queue**: services emit events (`@nestjs/event-emitter`); a listener turns them into `Notification` rows + **BullMQ** jobs on the existing Redis; a worker sends with retries |
 | Email transport | **SMTP via nodemailer**; **Mailpit** in docker-compose for dev/e2e; production = env change (SES, Resend, …) |
 | Phone verification | **OCTOMO reverse (MO) SMS** (decision 2026-09-28): we show a code, the user texts it from their phone to 1666-3538, we ask OCTOMO's API whether it arrived. Behind a `PhoneOwnershipVerifier` interface + a **fake** for e2e |
-| Outbound SMS | Only reservation messages to customers (Slice 3) still need an outbound provider (Solapi / NHN Cloud / SENS) — decided in Slice 3; like every sent notification it goes through the queue |
+| Outbound SMS | Only reservation messages to customers need an outbound provider (Solapi / NHN Cloud / SENS) — **deferred** (decision 2026-10-03); when added, it goes through the queue like every sent notification |
 | Push | **FCM via `firebase-admin`** (covers Android + iOS through APNs); `DeviceToken` table |
 | Template language | Korean now (EN later via the `label.{ko,en}` pattern used in export) |
 | Phone at signup | **Required, verified via OCTOMO, unique per user** |
@@ -67,8 +67,9 @@ business service ── emit('<event>') ──► NotificationsListener (@OnEven
 | `order.created` | email (+push, 4) | corner manager + company owner (minus actor) | 1b |
 | `audit.applied` | email (+push, 4) | corner manager + company owner (minus actor) | 1b |
 | `stock.belowTarget` | email (+push, 4) | corner manager + company owner (nobody excluded) | 1b |
-| `reservation.created` | SMS | the customer's phone | 3 |
-| `reservation.expired` | SMS | the customer's phone | 3 |
+| `account.passwordReset` | email (+push, 4) | the account owner | 3 |
+| `reservation.created` | SMS | the customer's phone | deferred |
+| `reservation.expired` | SMS | the customer's phone | deferred |
 
 **Channel decision (2026-09-27):** every event is **push + email** — email always (the durable record; reaches users without the app, pending users, and admins on the web console), plus push to each recipient's registered devices in Slice 4 (users with no device just get the email). Slice 4 therefore generalizes the listener's `emailUsers(...)` into a channel-aware `notifyUsers({ userIds, excludeUserId?, eventType, message })` driven by **one per-event channel table**, rather than editing each handler.
 
@@ -91,9 +92,11 @@ OCTOMO API: `POST https://api.octoverse.kr/octomo/v1/public/message/exists`, hea
 - `PHONE_VERIFIER=octomo|fake` (`OCTOMO_API_KEY` required for `octomo`); production refuses `fake`.
 - Known limitation of MO verification: a victim can be tricked into texting a code ("text 482913 to claim a prize"). Accepted, as Korean banks do.
 
-## Account recovery — Slice 3
-- `POST /auth/find-id { phoneVerificationToken }` → `{ email: 'ow***@example.com' }`.
-- `POST /auth/reset-password { email, phoneVerificationToken, newPassword }` → the email's user must own that phone; hash the new password; **revoke all refresh tokens**.
+## Account recovery — Slice 3 (decisions 2026-10-03)
+Both flows reuse the Slice 2 OCTOMO verification with purposes `FIND_ID` / `RESET_PASSWORD` — the user proves they still control the phone they gave at signup. **No outbound SMS provider** (reservation SMS deferred).
+- `POST /auth/find-id { phone, phoneVerificationToken }` → `{ email: 'ow***@example.com' }` — first 2 characters of the local part + `***` + the full domain. No account on that phone → 404 (ownership is already proven, so this reveals nothing to a stranger).
+- `POST /auth/reset-password { email, phone, phoneVerificationToken, newPassword }` → 204. **Email + verified phone** (two factors: a thief holding the phone only ever sees the masked email). The email's local login must belong to the user who owns that phone; otherwise 400 with one generic message. Hash the new password, **revoke all refresh tokens** (every device logged out; access tokens expire on their own within 15 min), and email the account **"your password was changed"** (`account.passwordReset`, through the queue).
+- Each flow consumes its token first; a "no match" outcome **returns from the transaction** (commit — the token stays spent) and the 404/400 is thrown after, the same pattern as join-code probing.
 
 ## Push — Slice 4
 `DeviceToken`: `id, userId, token (unique), platform (ANDROID|IOS), lastSeenAt, createdAt`. `POST /devices` / `DELETE /devices/:token` (self-service). `PushChannel` on `firebase-admin`; tokens FCM reports as unregistered are deleted.
@@ -105,7 +108,7 @@ OCTOMO API: `POST https://api.octoverse.kr/octomo/v1/public/message/exists`, hea
 | **1a** | Packages + Jest ESM regex, env (`REDIS_HOST`, `BULLMQ_PREFIX`, `SMTP_*`), Mailpit, `Notification` table, `EmailChannel`, `NotificationsService`/Listener/Processor, and `company.approved` end-to-end |
 | **1b** | Remaining email events (table above) + after-commit event collection for stock alerts |
 | **2** | `PhoneVerification` + OCTOMO verifier (+ fake), start/confirm, signup requires a verified unique phone |
-| **3** | Find my ID, password reset, reservation SMS (outbound SMS provider + `SmsChannel` through the queue) |
+| **3** | Find my ID, password reset (+ "password changed" email) — both via OCTOMO. Reservation SMS (outbound provider) **deferred** |
 | **4** | `DeviceToken`, device endpoints, FCM `PushChannel`, channel-aware `notifyUsers` + per-event channel table → push on **every** user event (email kept) |
 
 ## Package / tooling notes
