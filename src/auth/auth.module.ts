@@ -7,15 +7,18 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { PhoneVerificationModule } from '../phone-verification/phone-verification.module';
+import { AccountRecoveryController } from './account-recovery.controller';
+import { AccountRecoveryService } from './account-recovery.service';
 
 @Module({
   imports: [JwtModule.register({}), PhoneVerificationModule],
-  controllers: [AuthController],
+  controllers: [AuthController, AccountRecoveryController],
   providers: [
     TokenService,
     PasswordService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     AuthService,
+    AccountRecoveryService,
   ],
   exports: [TokenService, PasswordService],
 })
