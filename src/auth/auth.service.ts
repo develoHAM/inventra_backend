@@ -8,7 +8,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
 import { RegisterDto } from './dto/register.dto';
-import { randomBytes } from 'node:crypto';
 import { UserModel } from '../generated/prisma/models';
 import { RegisterMemberDto } from './dto/register-member.dto';
 import {
@@ -25,6 +24,7 @@ import type {
   MemberJoinRequestedEvent,
 } from '../notifications/notification-events';
 import { PhoneVerificationService } from '../phone-verification/phone-verification.service';
+import { generateUniqueJoinCode } from '../users/join-code';
 
 @Injectable()
 export class AuthService {
@@ -35,10 +35,6 @@ export class AuthService {
     private readonly eventEmitter: EventEmitter2,
     private readonly phoneVerification: PhoneVerificationService,
   ) {}
-
-  private generateJoinCode(): string {
-    return 'INV-' + randomBytes(6).toString('hex').toUpperCase();
-  }
 
   private async issueTokens(userId: string) {
     const accessToken = await this.tokenService.signAccess(userId);
@@ -97,7 +93,7 @@ export class AuthService {
       },
     });
 
-    const companyJoinCode = this.generateJoinCode();
+    const companyJoinCode = await generateUniqueJoinCode(this.prisma);
 
     const { user, company } = await this.prisma.$transaction(
       async (transaction) => {

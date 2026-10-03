@@ -144,7 +144,7 @@ describe('Auth & Authorization (e2e)', () => {
       .send({
         ...member,
         email: 'nobody@e2e.test',
-        joinCode: 'INV-DOESNOTEXIST',
+        joinCode: '00000000', // well-formed, but no company has it
         // the join code is checked before the token is spent, so any
         // well-formed values reach the 404
         phone: nextPhone(),

@@ -74,6 +74,8 @@ const PERMISSIONS = [
   { code: 'reservations.read', name: 'Read reservations' },
   { code: 'reservations.fulfill', name: 'Fulfill reservations' },
   { code: 'reservations.cancel', name: 'Cancel reservations' },
+  { code: 'companies.invite', name: 'View the company join code' },
+  { code: 'companies.rotateJoinCode', name: 'Rotate the company join code' },
 ];
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
@@ -120,6 +122,8 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'reservations.read',
     'reservations.fulfill',
     'reservations.cancel',
+    'companies.invite',
+    'companies.rotateJoinCode',
   ],
   MANAGER: [
     'users.create',
@@ -158,6 +162,7 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'reservations.read',
     'reservations.fulfill',
     'reservations.cancel',
+    'companies.invite',
   ],
   STAFF: [
     'users.read',

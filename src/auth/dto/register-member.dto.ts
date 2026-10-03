@@ -11,10 +11,11 @@ import {
   normalizePhone,
   KOREAN_MOBILE_PATTERN,
 } from '../../phone-verification/phone';
+import { JOIN_CODE_PATTERN, normalizeJoinCode } from '../../users/join-code';
 
 export class RegisterMemberDto {
-  @IsString()
-  @IsNotEmpty()
+  @Transform(({ value }) => normalizeJoinCode(value))
+  @Matches(JOIN_CODE_PATTERN, { message: 'joinCode must be 8 digits' })
   joinCode!: string;
 
   @IsEmail()

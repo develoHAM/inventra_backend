@@ -132,7 +132,7 @@ describe('RegisterDto (phone fields)', () => {
 
 describe('RegisterMemberDto (phone fields)', () => {
   const validBody = {
-    joinCode: 'INV-ABC123',
+    joinCode: '48291307',
     email: 'sam@acme.com',
     password: 'password123',
     name: 'Sam Staff',
@@ -148,6 +148,32 @@ describe('RegisterMemberDto (phone fields)', () => {
 
     expect(failedFields).toEqual([]);
     expect(instance.phone).toBe('01099998888');
+  });
+
+  it.each([
+    ['4829 1307', '48291307'],
+    ['4829-1307', '48291307'],
+  ])('normalizes a typed join code %p', async (typed, stored) => {
+    const { instance, failedFields } = await check(RegisterMemberDto, {
+      ...validBody,
+      joinCode: typed,
+    });
+
+    expect(failedFields).toEqual([]);
+    expect(instance.joinCode).toBe(stored);
+  });
+
+  it.each([
+    ['7 digits', '4829130'],
+    ['the old INV- format', 'INV-3FA91C07B2DE'],
+    ['letters', 'ABCD1234'],
+  ])('rejects a join code that is %s', async (_label, joinCode) => {
+    const { failedFields } = await check(RegisterMemberDto, {
+      ...validBody,
+      joinCode: joinCode,
+    });
+
+    expect(failedFields).toEqual(['joinCode']);
   });
 
   it.each(['phone', 'phoneVerificationToken'] as const)(

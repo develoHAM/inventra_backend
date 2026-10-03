@@ -39,7 +39,7 @@ describe('AuthService', () => {
   };
 
   const memberDto = {
-    joinCode: 'INV-ABC123',
+    joinCode: '48291307',
     email: 'sam@acme.com',
     password: 'password123',
     name: 'Sam Staff',
@@ -250,13 +250,13 @@ describe('AuthService', () => {
     it('creates a role-less PENDING member in the join-code company, with auto-login', async () => {
       prisma.company.findUnique.mockResolvedValue({
         id: 'company-1',
-        joinCode: 'INV-ABC123',
+        joinCode: '48291307',
       });
 
       const result = await service.registerMember(memberDto as any);
 
       expect(prisma.company.findUnique).toHaveBeenCalledWith({
-        where: { joinCode: 'INV-ABC123' },
+        where: { joinCode: '48291307' },
       });
       expect(tx.user.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
@@ -288,7 +288,7 @@ describe('AuthService', () => {
     it('emits member.joinRequested after the member row is created', async () => {
       prisma.company.findUnique.mockResolvedValue({
         id: 'company-1',
-        joinCode: 'INV-ABC123',
+        joinCode: '48291307',
       });
 
       await service.registerMember(memberDto as any);
@@ -340,7 +340,7 @@ describe('AuthService', () => {
       beforeEach(() => {
         prisma.company.findUnique.mockResolvedValue({
           id: 'company-1',
-          joinCode: 'INV-ABC123',
+          joinCode: '48291307',
         });
       });
 
