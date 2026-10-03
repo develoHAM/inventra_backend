@@ -138,17 +138,18 @@ describe('Auth & Authorization (e2e)', () => {
     expect(res.body.user.roleId).toBeNull();
   });
 
-  it('7. an unknown join code is rejected (404)', async () => {
+  it('7. an unknown join code is rejected (404) — but only for a verified phone', async () => {
+    // the phone token is checked (and spent) before the join code, so a
+    // real verification is needed to learn that a code doesn't exist
+    const { phone, token } = await verifiedPhone(app, nextPhone);
     await request(http)
       .post('/auth/register/member')
       .send({
         ...member,
         email: 'nobody@e2e.test',
         joinCode: '00000000', // well-formed, but no company has it
-        // the join code is checked before the token is spent, so any
-        // well-formed values reach the 404
-        phone: nextPhone(),
-        phoneVerificationToken: 'unused',
+        phone: phone,
+        phoneVerificationToken: token,
       })
       .expect(404);
   });

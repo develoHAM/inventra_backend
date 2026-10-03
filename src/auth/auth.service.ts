@@ -179,22 +179,24 @@ export class AuthService {
     if (emailTaken) throw new ConflictException('Email already registered');
     if (phoneTaken) throw new ConflictException('Phone already registered');
 
-    const company = await this.prisma.company.findUnique({
-      where: { joinCode: joinCode },
-    });
-    if (!company) throw new NotFoundException('Invalid join code');
-
     const passwordHash = await this.passwordService.hash(password);
 
-    // Two writes that must succeed or fail together: spend the proof, create the member.
-    const user = await this.prisma.$transaction(async (transaction) => {
+    // The phone token is spent BEFORE the join code is looked at, so learning
+    // whether a code exists costs a real phone verification. An unknown code
+    // RETURNS (commit → the token stays spent) instead of throwing (rollback).
+    const created = await this.prisma.$transaction(async (transaction) => {
       await this.phoneVerification.consume(transaction, {
         token: phoneVerificationToken,
         phone: phone,
         purpose: PhoneVerificationPurpose.SIGNUP,
       });
 
-      return transaction.user.create({
+      const company = await transaction.company.findUnique({
+        where: { joinCode: joinCode },
+      });
+      if (!company) return null;
+
+      const user = await transaction.user.create({
         data: {
           name: name,
           phone: phone,
@@ -210,10 +212,14 @@ export class AuthService {
           },
         },
       });
+      return { user: user, companyId: company.id };
     });
 
+    if (!created) throw new NotFoundException('Invalid join code');
+    const { user, companyId } = created;
+
     const joinRequestedEvent: MemberJoinRequestedEvent = {
-      companyId: company.id,
+      companyId: companyId,
       memberUserId: user.id,
     };
     this.eventEmitter.emit(

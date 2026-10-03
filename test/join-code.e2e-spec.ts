@@ -219,4 +219,42 @@ describe('Company join code (e2e)', () => {
     expect(response.status).toBe(400);
     expect(response.body.message).toEqual(['joinCode must be 8 digits']);
   });
+
+  describe('join codes cannot be probed without a verified phone', () => {
+    const rawSignUp = (joinCode: string, phone: string, token: string) =>
+      request(http)
+        .post('/auth/register/member')
+        .send({
+          joinCode: joinCode,
+          email: `probe-${phone}@jc.test`,
+          password: password,
+          name: 'Prober',
+          phone: phone,
+          phoneVerificationToken: token,
+        });
+
+    it('with a made-up token, a real code and a fake code get the SAME answer (400)', async () => {
+      const realCode = await rawSignUp(
+        await joinCodeInDb(),
+        nextPhone(),
+        'made-up',
+      );
+      const fakeCode = await rawSignUp('00000000', nextPhone(), 'made-up');
+
+      expect(realCode.status).toBe(400);
+      expect(fakeCode.status).toBe(400);
+      expect(realCode.body.message).toBe(fakeCode.body.message);
+    });
+
+    it('a verified phone buys exactly one probe: the token is spent even on a 404', async () => {
+      const { phone, token } = await verifiedPhone(app, nextPhone);
+
+      await rawSignUp('00000000', phone, token).expect(404);
+
+      // same token, now with the right code: already spent
+      const retry = await rawSignUp(await joinCodeInDb(), phone, token);
+      expect(retry.status).toBe(400);
+      expect(retry.body.message).toBe('Invalid or expired verification token');
+    });
+  });
 });
