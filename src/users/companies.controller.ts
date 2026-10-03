@@ -7,7 +7,6 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { UsersService } from './users.service';
 import { CompaniesService } from './companies.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -15,15 +14,12 @@ import type { AuthUser } from '../auth/types/auth-user';
 
 @Controller('companies')
 export class CompaniesController {
-  constructor(
-    private usersService: UsersService,
-    private companiesService: CompaniesService,
-  ) {}
+  constructor(private companiesService: CompaniesService) {}
 
   @RequirePermissions('companies.approve')
   @Patch(':id/approve')
   approveCompany(@Param('id') id: string) {
-    return this.usersService.approveCompany(id);
+    return this.companiesService.approveCompany(id);
   }
 
   // "me" = the caller's own company, taken from the JWT, never from the URL.

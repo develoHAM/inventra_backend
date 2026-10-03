@@ -1,15 +1,48 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/types/auth-user';
+import { UserStatus } from '../generated/prisma/enums';
+import { NotificationEvent } from '../notifications/notification-events';
+import type { CompanyApprovedEvent } from '../notifications/notification-events';
 import { generateUniqueJoinCode } from './join-code';
 
 @Injectable()
 export class CompaniesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
+
+  /** Platform admin approves a registered company by activating its owner. */
+  async approveCompany(companyId: string) {
+    const owner = await this.prisma.user.findFirst({
+      where: { companyId: companyId, role: { code: 'OWNER' } },
+    });
+
+    if (!owner) throw new NotFoundException('Company owner not found');
+
+    if (owner.status !== UserStatus.PENDING_APPROVAL)
+      throw new BadRequestException('Owner is not pending approval');
+
+    const approvedOwner = await this.prisma.user.update({
+      where: { id: owner.id },
+      data: { status: UserStatus.ACTIVE },
+    });
+
+    const event: CompanyApprovedEvent = {
+      companyId: companyId,
+      ownerUserId: owner.id,
+    };
+    this.eventEmitter.emit(NotificationEvent.COMPANY_APPROVED, event);
+
+    return approvedOwner;
+  }
 
   /** The code staff type at POST /auth/register/member. */
   async getJoinCode(caller: AuthUser): Promise<{ joinCode: string }> {

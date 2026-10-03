@@ -14,10 +14,7 @@ import { ConfirmUploadDto } from '../storage/dto/confirm-upload.dto';
 import { PresignUploadDto } from '../storage/dto/presign-upload.dto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { NotificationEvent } from '../notifications/notification-events';
-import type {
-  CompanyApprovedEvent,
-  MemberApprovedEvent,
-} from '../notifications/notification-events';
+import type { MemberApprovedEvent } from '../notifications/notification-events';
 
 const IMAGE_EXT: Record<string, string> = {
   'image/jpeg': 'jpg',
@@ -91,30 +88,6 @@ export class UsersService {
     this.eventEmitter.emit(NotificationEvent.MEMBER_APPROVED, event);
 
     return approvedMember;
-  }
-
-  async approveCompany(companyId: string) {
-    const owner = await this.prisma.user.findFirst({
-      where: { companyId: companyId, role: { code: 'OWNER' } },
-    });
-
-    if (!owner) throw new NotFoundException('Company owner not found');
-
-    if (owner.status !== UserStatus.PENDING_APPROVAL)
-      throw new BadRequestException('Owner is not pending approval');
-
-    const approvedOwner = await this.prisma.user.update({
-      where: { id: owner.id },
-      data: { status: UserStatus.ACTIVE },
-    });
-
-    const event: CompanyApprovedEvent = {
-      companyId: companyId,
-      ownerUserId: owner.id,
-    };
-    this.eventEmitter.emit(NotificationEvent.COMPANY_APPROVED, event);
-
-    return approvedOwner;
   }
 
   async findActiveMember(userId: string, companyId: string) {

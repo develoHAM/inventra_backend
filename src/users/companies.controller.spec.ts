@@ -5,9 +5,13 @@ import { REQUIRE_PERMISSIONS_KEY } from '../authorization/decorators/require-per
 import { AuthUser } from '../auth/types/auth-user';
 import { UserStatus } from '../generated/prisma/enums';
 
-describe('CompaniesController — join code routes', () => {
+describe('CompaniesController', () => {
   let controller: CompaniesController;
-  let companiesService: { getJoinCode: jest.Mock; rotateJoinCode: jest.Mock };
+  let companiesService: {
+    approveCompany: jest.Mock;
+    getJoinCode: jest.Mock;
+    rotateJoinCode: jest.Mock;
+  };
 
   const manager: AuthUser = {
     id: 'manager-1',
@@ -27,14 +31,11 @@ describe('CompaniesController — join code routes', () => {
 
   beforeEach(() => {
     companiesService = {
-      getJoinCode: jest
-        .fn()
-        .mockResolvedValue({ joinCode: '48291307' }),
-      rotateJoinCode: jest
-        .fn()
-        .mockResolvedValue({ joinCode: '73014289' }),
+      approveCompany: jest.fn().mockResolvedValue({ id: 'owner-1' }),
+      getJoinCode: jest.fn().mockResolvedValue({ joinCode: '48291307' }),
+      rotateJoinCode: jest.fn().mockResolvedValue({ joinCode: '73014289' }),
     };
-    controller = new CompaniesController({} as any, companiesService as any);
+    controller = new CompaniesController(companiesService as any);
   });
 
   it('viewing requires companies.invite (owner + manager)', () => {
@@ -66,5 +67,14 @@ describe('CompaniesController — join code routes', () => {
       joinCode: '73014289',
     });
     expect(companiesService.rotateJoinCode).toHaveBeenCalledWith(manager);
+  });
+
+  it('approving a company requires companies.approve and delegates to CompaniesService', async () => {
+    expect(permissionsOf('approveCompany')).toEqual(['companies.approve']);
+
+    await expect(controller.approveCompany('company-1')).resolves.toEqual({
+      id: 'owner-1',
+    });
+    expect(companiesService.approveCompany).toHaveBeenCalledWith('company-1');
   });
 });

@@ -77,9 +77,14 @@ describe('UsersService', () => {
     it('emits member.approved (member + approver ids) after activating the member', async () => {
       prisma.user.findFirst.mockResolvedValue(pendingMember);
       prisma.role.findUnique.mockResolvedValue({ id: 4, code: 'STAFF' });
-      prisma.user.update.mockResolvedValue({ id: 'member-1', status: UserStatus.ACTIVE });
+      prisma.user.update.mockResolvedValue({
+        id: 'member-1',
+        status: UserStatus.ACTIVE,
+      });
 
-      const result = await service.approveMember(caller, 'member-1', { roleId: 4 });
+      const result = await service.approveMember(caller, 'member-1', {
+        roleId: 4,
+      });
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         NotificationEvent.MEMBER_APPROVED,
@@ -151,84 +156,6 @@ describe('UsersService', () => {
       expect(prisma.user.findFirst).toHaveBeenCalledWith({
         where: { id: 'member-1' },
       });
-    });
-  });
-
-  describe('approveCompany', () => {
-    it('activates the company owner', async () => {
-      prisma.user.findFirst.mockResolvedValue({
-        id: 'owner-1',
-        status: UserStatus.PENDING_APPROVAL,
-      });
-
-      await service.approveCompany('company-1');
-
-      expect(prisma.user.findFirst).toHaveBeenCalledWith({
-        where: { companyId: 'company-1', role: { code: 'OWNER' } },
-      });
-      expect(prisma.user.update).toHaveBeenCalledWith({
-        where: { id: 'owner-1' },
-        data: { status: UserStatus.ACTIVE },
-      });
-    });
-
-    it('emits company.approved with the ids, only after the owner is activated', async () => {
-      prisma.user.findFirst.mockResolvedValue({
-        id: 'owner-1',
-        status: UserStatus.PENDING_APPROVAL,
-      });
-      prisma.user.update.mockResolvedValue({
-        id: 'owner-1',
-        status: UserStatus.ACTIVE,
-      });
-
-      const result = await service.approveCompany('company-1');
-
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
-        NotificationEvent.COMPANY_APPROVED,
-        { companyId: 'company-1', ownerUserId: 'owner-1' },
-      );
-      // emit-after-commit: never announce an approval before it's written
-      expect(prisma.user.update.mock.invocationCallOrder[0]).toBeLessThan(
-        eventEmitter.emit.mock.invocationCallOrder[0],
-      );
-      // the caller still gets the updated owner back, unchanged by the emit
-      expect(result).toEqual({ id: 'owner-1', status: UserStatus.ACTIVE });
-    });
-
-    it('does not emit when the owner update fails', async () => {
-      prisma.user.findFirst.mockResolvedValue({
-        id: 'owner-1',
-        status: UserStatus.PENDING_APPROVAL,
-      });
-      prisma.user.update.mockRejectedValue(new Error('db down'));
-
-      await expect(service.approveCompany('company-1')).rejects.toThrow(
-        'db down',
-      );
-      expect(eventEmitter.emit).not.toHaveBeenCalled();
-    });
-
-    it('returns 404 when the company has no owner', async () => {
-      prisma.user.findFirst.mockResolvedValue(null);
-
-      await expect(service.approveCompany('company-x')).rejects.toThrow(
-        NotFoundException,
-      );
-      expect(prisma.user.update).not.toHaveBeenCalled();
-      expect(eventEmitter.emit).not.toHaveBeenCalled();
-    });
-
-    it('rejects approving an owner who is not PENDING (and emits nothing)', async () => {
-      prisma.user.findFirst.mockResolvedValue({
-        id: 'owner-1',
-        status: UserStatus.ACTIVE,
-      });
-
-      await expect(service.approveCompany('company-1')).rejects.toThrow(
-        BadRequestException,
-      );
-      expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
   });
 
