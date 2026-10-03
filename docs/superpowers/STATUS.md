@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-10-02.
+> Last updated: 2026-10-03.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -53,6 +53,12 @@ New track, designed in `docs/superpowers/specs/2026-09-23-notifications-and-acco
 - `PhoneOwnershipVerifier` behind the `PHONE_VERIFIER` token: `OctomoPhoneVerifier` (`fetch`, 5 s `AbortSignal.timeout`, non-2xx throws + logs OCTOMO's message, only a boolean `true` counts) or `FakePhoneVerifier` (e2e: `receive(phone, code)`). Env `PHONE_VERIFIER=octomo|fake` (no default), `OCTOMO_API_KEY` required for octomo, `fake` refused in production (Zod `superRefine`).
 - **383 unit tests green (33 suites) + 106 e2e green (11 suites).** e2e: `test/helpers/phone.ts` (`testPhones(suite)` per-suite phone blocks — users.phone is unique across the shared DB; `verifiedPhone(app, nextPhone)` runs the real flow); `test/phone-verification.e2e-spec.ts`.
 - ⚠️ Gotchas: a reused signup token yields **409** (the phone-taken check precedes `consume`), not 400. e2e signups need `PHONE_VERIFIER=fake` in `.env.test`. HTTP exceptions stay in services (no non-HTTP caller needs domain errors).
+
+**Join code endpoints ✅ (mini-slice, 2026-10-03)** — plan `docs/superpowers/plans/2026-10-03-company-join-code-endpoints.md`. The code staff type at member signup had no endpoint at all (e2e read it from the DB).
+- `GET /companies/me/join-code` (`companies.invite`: OWNER + MANAGER) and `POST /companies/me/join-code/rotate` (`companies.rotateJoinCode`: OWNER; 200) → `{ joinCode }`. "me" = `caller.companyId` from the JWT (other tenants unreachable); no company (platform admin) → 403; pending → 403 via the guard. Rotation: the old code stops working at once; existing members unaffected.
+- **Codes are 8 digits** (`generateUniqueJoinCode` in `src/users/join-code.ts`, redraws on collision, max 5); member signup strips spaces/dashes and requires exactly 8 digits (400). **No legacy `INV-…` codes**: dev DB reset + re-seeded (the seed creates no companies). `CompaniesService` is new; `approveCompany` still lives in `UsersService` (move later).
+- Known trade-off: the join code is checked before the phone token, so codes can be probed (404 vs not); a hit only allows a join *request*. Possible hardening: check the token first.
+- **416 unit tests green (36 suites) + 119 e2e green (12 suites).**
 
 **Next — Slice 3:** find my ID (`POST /auth/find-id`, `FIND_ID` token → masked email) and password reset (`RESET_PASSWORD` token, revoke all refresh tokens) — both consume the Slice 2 tokens; plus reservation SMS to customers, which needs an **outbound** SMS provider + `SmsChannel` through the queue (OCTOMO only receives). Plan first.
 
