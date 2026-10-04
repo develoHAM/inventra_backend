@@ -6,6 +6,7 @@ export const NotificationEvent = {
   ORDER_CREATED: 'order.created',
   AUDIT_APPLIED: 'audit.applied',
   STOCK_BELOW_TARGET: 'stock.belowTarget',
+  ACCOUNT_PASSWORD_RESET: 'account.passwordReset',
 } as const;
 
 export interface CompanyApprovedEvent {
@@ -25,6 +26,10 @@ export interface MemberJoinRequestedEvent {
 export interface MemberApprovedEvent {
   memberUserId: string;
   approvedByUserId: string;
+}
+
+export interface AccountPasswordResetEvent {
+  userId: string;
 }
 
 export interface OrderCreatedEvent {

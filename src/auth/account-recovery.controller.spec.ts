@@ -5,7 +5,7 @@ import { IS_PUBLIC_KEY } from './decorators/public.decorator';
 
 describe('AccountRecoveryController', () => {
   let controller: AccountRecoveryController;
-  let accountRecovery: { findId: jest.Mock };
+  let accountRecovery: { findId: jest.Mock; resetPassword: jest.Mock };
 
   const metadata = (key: string, method: keyof AccountRecoveryController) =>
     Reflect.getMetadata(key, AccountRecoveryController.prototype[method]);
@@ -13,6 +13,7 @@ describe('AccountRecoveryController', () => {
   beforeEach(() => {
     accountRecovery = {
       findId: jest.fn().mockResolvedValue({ email: 'ow***@example.com' }),
+      resetPassword: jest.fn().mockResolvedValue(undefined),
     };
     controller = new AccountRecoveryController(accountRecovery as any);
   });
@@ -34,6 +35,32 @@ describe('AccountRecoveryController', () => {
         '01012345678',
         'find-token',
       );
+    });
+  });
+
+  describe('POST /auth/reset-password', () => {
+    it('is public and answers 204 No Content', () => {
+      expect(metadata(IS_PUBLIC_KEY, 'resetPassword')).toBe(true);
+      expect(metadata(HTTP_CODE_METADATA, 'resetPassword')).toBe(
+        HttpStatus.NO_CONTENT,
+      );
+    });
+
+    it('maps the body onto the service input', async () => {
+      await expect(
+        controller.resetPassword({
+          email: 'owner@example.com',
+          phone: '01012345678',
+          phoneVerificationToken: 'reset-token',
+          newPassword: 'brand-new-password',
+        }),
+      ).resolves.toBeUndefined();
+      expect(accountRecovery.resetPassword).toHaveBeenCalledWith({
+        email: 'owner@example.com',
+        phone: '01012345678',
+        token: 'reset-token',
+        newPassword: 'brand-new-password',
+      });
     });
   });
 });
