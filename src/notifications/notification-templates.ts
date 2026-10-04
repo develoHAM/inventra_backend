@@ -48,4 +48,8 @@ export const notificationTemplates = {
     subject: '[Inventra] 재고 부족 알림',
     body: `${cornerName} 코너의 ${productName} 가용 재고가 ${availableQuantity}개로 목표 수량(${targetStockQuantity}개)보다 적습니다.`,
   }),
+  passwordReset: (): RenderedMessage => ({
+    subject: '[Inventra] 비밀번호가 변경되었습니다',
+    body: '계정의 비밀번호가 변경되었고, 모든 기기에서 로그아웃되었습니다. 본인이 변경하지 않았다면 즉시 비밀번호 찾기로 비밀번호를 다시 설정하고 회사 관리자에게 알려 주세요.',
+  }),
 };

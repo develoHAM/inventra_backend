@@ -109,7 +109,9 @@ describe('NotificationsListener', () => {
 
       await listener.handleMemberJoinRequested(event);
 
-      expect(notifications.findCompanyOwnerIds).toHaveBeenCalledWith('company-1');
+      expect(notifications.findCompanyOwnerIds).toHaveBeenCalledWith(
+        'company-1',
+      );
       expect(notifications.emailUsers).toHaveBeenCalledWith({
         userIds: ['owner-1'],
         excludeUserId: 'member-1',
@@ -183,12 +185,18 @@ describe('NotificationsListener', () => {
           _count: { select: { orderItems: true } },
         },
       });
-      expect(notifications.findCornerRecipientIds).toHaveBeenCalledWith('corner-1');
+      expect(notifications.findCornerRecipientIds).toHaveBeenCalledWith(
+        'corner-1',
+      );
       expect(notifications.emailUsers).toHaveBeenCalledWith({
         userIds: ['manager-1', 'owner-1'],
         excludeUserId: 'manager-1',
         eventType: NotificationEvent.ORDER_CREATED,
-        message: notificationTemplates.orderCreated('Corner A', 'Weekend restock', 2),
+        message: notificationTemplates.orderCreated(
+          'Corner A',
+          'Weekend restock',
+          2,
+        ),
       });
     });
 
@@ -221,7 +229,11 @@ describe('NotificationsListener', () => {
         userIds: ['manager-1', 'owner-1'],
         excludeUserId: 'owner-1',
         eventType: NotificationEvent.AUDIT_APPLIED,
-        message: notificationTemplates.auditApplied('Corner A', 'Monthly count', 3),
+        message: notificationTemplates.auditApplied(
+          'Corner A',
+          'Monthly count',
+          3,
+        ),
       });
     });
 
@@ -235,7 +247,11 @@ describe('NotificationsListener', () => {
   });
 
   describe('stock.belowTarget', () => {
-    const event = { placementId: 41, availableQuantity: 7, targetStockQuantity: 10 };
+    const event = {
+      placementId: 41,
+      availableQuantity: 7,
+      targetStockQuantity: 10,
+    };
 
     it('emails the corner recipients with NO actor exclusion (a state warning)', async () => {
       prisma.companyStoreProduct.findUnique.mockResolvedValue({
@@ -246,12 +262,19 @@ describe('NotificationsListener', () => {
 
       await listener.handleStockBelowTarget(event);
 
-      expect(notifications.findCornerRecipientIds).toHaveBeenCalledWith('corner-1');
+      expect(notifications.findCornerRecipientIds).toHaveBeenCalledWith(
+        'corner-1',
+      );
       const call = notifications.emailUsers.mock.calls[0][0];
       expect(call).toEqual({
         userIds: ['manager-1', 'owner-1'],
         eventType: NotificationEvent.STOCK_BELOW_TARGET,
-        message: notificationTemplates.stockBelowTarget('Corner A', 'Cola 500ml', 7, 10),
+        message: notificationTemplates.stockBelowTarget(
+          'Corner A',
+          'Cola 500ml',
+          7,
+          10,
+        ),
       });
       expect(call).not.toHaveProperty('excludeUserId');
     });
@@ -262,6 +285,38 @@ describe('NotificationsListener', () => {
       await listener.handleStockBelowTarget(event);
 
       expect(notifications.emailUsers).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('account.passwordReset', () => {
+    it('emails the account owner a "password changed" notice (nobody excluded)', async () => {
+      await listener.handleAccountPasswordReset({ userId: 'user-1' });
+
+      const call = notifications.emailUsers.mock.calls[0][0];
+      expect(call).toEqual({
+        userIds: ['user-1'],
+        eventType: NotificationEvent.ACCOUNT_PASSWORD_RESET,
+        message: notificationTemplates.passwordReset(),
+      });
+      // the owner IS the actor here — excluding them would send nothing
+      expect(call).not.toHaveProperty('excludeUserId');
+    });
+
+    it('needs no database lookup (the template has no variables)', async () => {
+      await listener.handleAccountPasswordReset({ userId: 'user-1' });
+
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(prisma.company.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('notificationTemplates.passwordReset', () => {
+    it('has a subject and tells the user what to do if it was not them', () => {
+      const message = notificationTemplates.passwordReset();
+
+      expect(message.subject).toBe('[Inventra] 비밀번호가 변경되었습니다');
+      expect(message.body).toContain('본인이 변경하지 않았다면');
+      expect(message.body).toContain('비밀번호 찾기');
     });
   });
 });

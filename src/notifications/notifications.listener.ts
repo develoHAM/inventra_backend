@@ -13,6 +13,7 @@ import type {
   MemberJoinRequestedEvent,
   OrderCreatedEvent,
   StockBelowTargetEvent,
+  AccountPasswordResetEvent,
 } from './notification-events';
 @Injectable()
 export class NotificationsListener {
@@ -165,6 +166,19 @@ export class NotificationsListener {
         event.availableQuantity,
         event.targetStockQuantity,
       ),
+    });
+  }
+
+  @OnEvent(NotificationEvent.ACCOUNT_PASSWORD_RESET)
+  async handleAccountPasswordReset(
+    event: AccountPasswordResetEvent,
+  ): Promise<void> {
+    // The actor IS the recipient — no exclusion. No lookup needed: the
+    // template has no variables and emailUsers resolves the address.
+    await this.notifications.emailUsers({
+      userIds: [event.userId],
+      eventType: NotificationEvent.ACCOUNT_PASSWORD_RESET,
+      message: notificationTemplates.passwordReset(),
     });
   }
 }
