@@ -9,6 +9,9 @@ import {
   SEND_NOTIFICATION_JOB,
 } from './notifications.constants';
 import type { RenderedMessage } from './notification-templates';
+import { DevicesService } from '../devices/devices.service';
+import { EVENT_CHANNELS } from './event-channels';
+import type { NotificationEventName } from './event-channels';
 
 export interface DispatchInput {
   eventType: string;
@@ -24,6 +27,7 @@ export class NotificationsService {
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue(NOTIFICATIONS_QUEUE) private readonly queue: Queue,
+    private readonly devices: DevicesService,
   ) {}
 
   async dispatch(input: DispatchInput): Promise<void> {
@@ -90,27 +94,52 @@ export class NotificationsService {
       : ownerIds;
   }
 
-  /** Email each user once (deduplicated), skipping the actor and users with no email. */
-  async emailUsers(input: {
+  /**
+   * Notify users of an event on every channel EVENT_CHANNELS lists for it:
+   * one EMAIL per user with an email login, one PUSH per registered device.
+   * Duplicates are collapsed and the actor is never notified.
+   */
+  async notifyUsers(input: {
     userIds: string[];
     excludeUserId?: string;
-    eventType: string;
+    eventType: NotificationEventName;
     message: RenderedMessage;
   }): Promise<void> {
     const recipientIds = [...new Set(input.userIds)].filter(
       (userId) => userId !== input.excludeUserId,
     );
-    for (const userId of recipientIds) {
-      const email = await this.findUserEmail(userId);
-      if (!email) continue;
-      await this.dispatch({
-        eventType: input.eventType,
-        channel: NotificationChannel.EMAIL,
-        recipientUserId: userId,
-        recipientAddress: email,
-        subject: input.message.subject,
-        body: input.message.body,
-      });
+    if (recipientIds.length === 0) return;
+
+    const channels = EVENT_CHANNELS[input.eventType];
+
+    if (channels.includes(NotificationChannel.EMAIL)) {
+      for (const userId of recipientIds) {
+        const email = await this.findUserEmail(userId);
+        if (!email) continue;
+        await this.dispatch({
+          eventType: input.eventType,
+          channel: NotificationChannel.EMAIL,
+          recipientUserId: userId,
+          recipientAddress: email,
+          subject: input.message.subject,
+          body: input.message.body,
+        });
+      }
+    }
+
+    if (channels.includes(NotificationChannel.PUSH)) {
+      // One row per device: each succeeds, retries or dies on its own.
+      const devices = await this.devices.findTokens(recipientIds);
+      for (const device of devices) {
+        await this.dispatch({
+          eventType: input.eventType,
+          channel: NotificationChannel.PUSH,
+          recipientUserId: device.userId,
+          recipientAddress: device.token,
+          subject: input.message.subject,
+          body: input.message.body,
+        });
+      }
     }
   }
 }

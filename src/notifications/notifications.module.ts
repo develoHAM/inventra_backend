@@ -10,9 +10,13 @@ import { NotificationsReconciler } from './notifications.reconciler';
 import { EmailChannel } from './channels/email.channel';
 import { FakePushSender } from './channels/fake-push.sender';
 import { FcmPushSender } from './channels/fcm-push.sender';
+import { DevicesModule } from '../devices/devices.module';
 
 @Module({
-  imports: [BullModule.registerQueue({ name: NOTIFICATIONS_QUEUE })],
+  imports: [
+    BullModule.registerQueue({ name: NOTIFICATIONS_QUEUE }),
+    DevicesModule,
+  ],
   providers: [
     NotificationsService,
     NotificationsListener,

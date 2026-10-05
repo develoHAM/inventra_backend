@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
-import { NotificationChannel } from '../generated/prisma/enums';
 import { notificationTemplates } from './notification-templates';
 import { NotificationsService } from './notifications.service';
 import { NotificationEvent } from './notification-events';
@@ -28,17 +27,13 @@ export class NotificationsListener {
       where: { id: event.companyId },
       select: { name: true },
     });
-    const email = await this.notifications.findUserEmail(event.ownerUserId);
-    if (!company || !email) return;
+    if (!company) return;
 
-    const message = notificationTemplates.companyApproved(company.name);
-    await this.notifications.dispatch({
+    // Approved by the platform admin, so there is no actor to exclude.
+    await this.notifications.notifyUsers({
+      userIds: [event.ownerUserId],
       eventType: NotificationEvent.COMPANY_APPROVED,
-      channel: NotificationChannel.EMAIL,
-      recipientUserId: event.ownerUserId,
-      recipientAddress: email,
-      subject: message.subject,
-      body: message.body,
+      message: notificationTemplates.companyApproved(company.name),
     });
   }
 
@@ -49,7 +44,7 @@ export class NotificationsListener {
       select: { name: true },
     });
     if (!company) return;
-    await this.notifications.emailUsers({
+    await this.notifications.notifyUsers({
       userIds: await this.notifications.findPlatformAdminIds(),
       eventType: NotificationEvent.COMPANY_REGISTERED,
       message: notificationTemplates.companyRegistered(company.name),
@@ -71,7 +66,7 @@ export class NotificationsListener {
       }),
     ]);
     if (!company || !member) return;
-    await this.notifications.emailUsers({
+    await this.notifications.notifyUsers({
       userIds: await this.notifications.findCompanyOwnerIds(event.companyId),
       excludeUserId: event.memberUserId,
       eventType: NotificationEvent.MEMBER_JOIN_REQUESTED,
@@ -89,7 +84,7 @@ export class NotificationsListener {
       select: { company: { select: { name: true } } },
     });
     if (!member?.company) return;
-    await this.notifications.emailUsers({
+    await this.notifications.notifyUsers({
       userIds: [event.memberUserId],
       excludeUserId: event.approvedByUserId,
       eventType: NotificationEvent.MEMBER_APPROVED,
@@ -108,7 +103,7 @@ export class NotificationsListener {
       },
     });
     if (!order) return;
-    await this.notifications.emailUsers({
+    await this.notifications.notifyUsers({
       userIds: await this.notifications.findCornerRecipientIds(event.cornerId),
       excludeUserId: event.createdByUserId,
       eventType: NotificationEvent.ORDER_CREATED,
@@ -131,7 +126,7 @@ export class NotificationsListener {
       },
     });
     if (!audit) return;
-    await this.notifications.emailUsers({
+    await this.notifications.notifyUsers({
       userIds: await this.notifications.findCornerRecipientIds(event.cornerId),
       excludeUserId: event.appliedByUserId,
       eventType: NotificationEvent.AUDIT_APPLIED,
@@ -155,7 +150,7 @@ export class NotificationsListener {
     });
     if (!placement) return;
     // A state warning, not an action receipt: nobody is excluded.
-    await this.notifications.emailUsers({
+    await this.notifications.notifyUsers({
       userIds: await this.notifications.findCornerRecipientIds(
         placement.companyStoreId,
       ),
@@ -174,8 +169,8 @@ export class NotificationsListener {
     event: AccountPasswordResetEvent,
   ): Promise<void> {
     // The actor IS the recipient — no exclusion. No lookup needed: the
-    // template has no variables and emailUsers resolves the address.
-    await this.notifications.emailUsers({
+    // template has no variables and notifyUsers resolves the address.
+    await this.notifications.notifyUsers({
       userIds: [event.userId],
       eventType: NotificationEvent.ACCOUNT_PASSWORD_RESET,
       message: notificationTemplates.passwordReset(),
