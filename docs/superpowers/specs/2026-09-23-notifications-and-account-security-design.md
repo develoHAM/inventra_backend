@@ -98,8 +98,13 @@ Both flows reuse the Slice 2 OCTOMO verification with purposes `FIND_ID` / `RESE
 - `POST /auth/reset-password { email, phone, phoneVerificationToken, newPassword }` → 204. **Email + verified phone** (two factors: a thief holding the phone only ever sees the masked email). The email's local login must belong to the user who owns that phone; otherwise 400 with one generic message. Hash the new password, **revoke all refresh tokens** (every device logged out; access tokens expire on their own within 15 min), and email the account **"your password was changed"** (`account.passwordReset`, through the queue).
 - Each flow consumes its token first; a "no match" outcome **returns from the transaction** (commit — the token stays spent) and the 404/400 is thrown after, the same pattern as join-code probing.
 
-## Push — Slice 4
-`DeviceToken`: `id, userId, token (unique), platform (ANDROID|IOS), lastSeenAt, createdAt`. `POST /devices` / `DELETE /devices/:token` (self-service). `PushChannel` on `firebase-admin`; tokens FCM reports as unregistered are deleted.
+## Push — Slice 4 (decisions 2026-10-05)
+- `DeviceToken`: `id, userId, token (unique), platform (ANDROID|IOS|WEB), lastSeenAt, createdAt`. FCM delivers to browsers with the same API, so the web console gets pushes too.
+- `POST /devices { token, platform }` (204, upsert by token — a token re-registered by another user moves to them) / `DELETE /devices/:token` (204, own tokens only). Self-service like `/users/me/avatar`: authenticated, no permission (pending users may register, so they receive the approval push).
+- **Logout removes the device:** `POST /auth/logout { refreshToken, deviceToken? }` — a shared or handed-over phone stops showing the previous user's notifications.
+- `PushSender` behind the `PUSH_SENDER` token: `FcmPushSender` (`firebase-admin`, service account from `FIREBASE_SERVICE_ACCOUNT_PATH`) or `FakePushSender` (dev/e2e outbox). `PUSH_SENDER=fcm|fake`; `fcm` requires the path; production refuses `fake`. Built against the fake first (no Firebase project yet).
+- One `Notification` row **per device** (`channel: PUSH`, `recipientAddress` = the device token), through the same queue. FCM `UNREGISTERED` / invalid token → the sender throws `DeadDeviceTokenError`; the worker deletes that `DeviceToken`, marks the row `FAILED`, and does **not** retry.
+- The listener's `emailUsers` becomes channel-aware `notifyUsers` driven by one `EVENT_CHANNELS` table — every user event is `[EMAIL, PUSH]`.
 
 ## Slices
 
@@ -109,7 +114,7 @@ Both flows reuse the Slice 2 OCTOMO verification with purposes `FIND_ID` / `RESE
 | **1b** | Remaining email events (table above) + after-commit event collection for stock alerts |
 | **2** | `PhoneVerification` + OCTOMO verifier (+ fake), start/confirm, signup requires a verified unique phone |
 | **3** | Find my ID, password reset (+ "password changed" email) — both via OCTOMO. Reservation SMS (outbound provider) **deferred** |
-| **4** | `DeviceToken`, device endpoints, FCM `PushChannel`, channel-aware `notifyUsers` + per-event channel table → push on **every** user event (email kept) |
+| **4** | `DeviceToken` (ANDROID/IOS/WEB), device endpoints, logout removes the device, `PushSender` (FCM + fake), dead-token cleanup, channel-aware `notifyUsers` + `EVENT_CHANNELS` → push + email on every user event |
 
 ## Package / tooling notes
 - `@nestjs/event-emitter` 12, `@nestjs/bullmq` 12 and `nodemailer` 10 are **ESM-only**. Runtime is fine (Node 26 supports `require()` of ESM, as `@nestjs/schedule` already proves). **Unit Jest** (CommonJS) must transform them: widen `transformIgnorePatterns` to `node_modules/(?!(@nestjs/schedule|@nestjs/event-emitter|@nestjs/bullmq|nodemailer)/)`. **e2e Jest** (native ESM under `--experimental-vm-modules`) needs no change.
