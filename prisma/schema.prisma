@@ -54,6 +54,14 @@ enum PhoneVerificationPurpose {
   @@map("phone_verification_purpose")
 }
 
+enum DevicePlatform {
+  ANDROID
+  IOS
+  WEB
+
+  @@map("device_platform")
+}
+
 model User {
   id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name            String     @db.VarChar(100)
@@ -92,6 +100,7 @@ model User {
   refreshTokens           RefreshToken[]
   createdReservations     PurchaseReservation[] @relation("ReservationsCreatedBy")
   receivedNotifications Notification[] @relation("NotificationRecipient")
+  deviceTokens            DeviceToken[]
 
   @@index([companyId], map: "IDX_users_company")
   @@map("users")
@@ -555,7 +564,6 @@ enum InventoryTransactionType {
   @@map("inventory_transaction_type")
 }
 
-
 model PurchaseReservation {
   id                    String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   companyStoreProductId Int               @map("company_store_product_id")
@@ -589,4 +597,18 @@ enum ReservationStatus {
   EXPIRED
 
   @@map("reservation_status")
+}
+
+model DeviceToken {
+  id         String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String         @map("user_id") @db.Uuid
+  token      String         @unique(map: "UQ_device_tokens_token") @db.Text
+  platform   DevicePlatform
+  lastSeenAt DateTime       @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId], map: "IDX_device_tokens_user")
+  @@map("device_tokens")
 }

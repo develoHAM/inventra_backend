@@ -23,6 +23,7 @@ import { SpreadsheetModule } from './spreadsheet/spreadsheet.module';
 import { BullModule } from '@nestjs/bullmq';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { NotificationsModule } from './notifications/notifications.module';
+import { DevicesModule } from './devices/devices.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { NotificationsModule } from './notifications/notifications.module';
       }),
     }),
     NotificationsModule,
+    DevicesModule,
     PrismaModule,
     StorageModule,
     SpreadsheetModule,
