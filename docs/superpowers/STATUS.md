@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-10-03.
+> Last updated: 2026-10-05.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -25,9 +25,9 @@
 | 10a | **Reservation auto-expiry sweep** (`@nestjs/schedule` cron releases expired holds) | ✅ complete (blogged) |
 | 10b+ | More cross-cutting concerns / Redis caching (only when measured) | ⏳ not started |
 | Files | **File uploads** (product/brand/avatar images) + **data import/export** (order/audit CSV·xlsx) | ✅ Slices 1–3 complete |
-| Notify | **Notifications** (email · SMS · push) + **account security** (OCTOMO phone verification · find ID · password reset) | 🔨 Slices 1a–2 complete; 3 next |
+| Notify | **Notifications** (email · SMS · push) + **account security** (OCTOMO phone verification · find ID · password reset) | 🔨 Slices 1a–3 complete; 4 (push) next |
 
-## Where we are right now — Notifications, Slices 1a–2 complete (email events + OCTOMO phone verification)
+## Where we are right now — Notifications, Slices 1a–3 complete (email events, OCTOMO phone verification, account recovery)
 
 New track, designed in `docs/superpowers/specs/2026-09-23-notifications-and-account-security-design.md` (slices 1a → 1b → 2 → 3 → 4). Decisions: fixed channels per event (in code); **domain events + BullMQ queue**; SMTP via nodemailer with **Mailpit** for dev/e2e; SMS via a Korean provider adapter (Slice 2); push via FCM (Slice 4); a verified phone is **required + unique** at signup; password reset and find-my-ID use an **SMS one-time code**; find-my-ID returns a masked email.
 
@@ -60,7 +60,13 @@ New track, designed in `docs/superpowers/specs/2026-09-23-notifications-and-acco
 - **Join codes can't be probed for free:** member signup spends the phone token *before* looking up the code, inside the transaction; an unknown code makes the transaction **return** (commit — token stays spent) and the 404 is thrown after. A made-up token gets the same 400 for real and fake codes; each probe costs a fresh SMS verification. A failure creating the member still rolls back (token unspent).
 - **418 unit tests green (36 suites) + 121 e2e green (12 suites).**
 
-**Next — Slice 3:** find my ID (`POST /auth/find-id`, `FIND_ID` token → masked email) and password reset (`RESET_PASSWORD` token, revoke all refresh tokens) — both consume the Slice 2 tokens; plus reservation SMS to customers, which needs an **outbound** SMS provider + `SmsChannel` through the queue (OCTOMO only receives). Plan first.
+**Slice 3 ✅ — account recovery via OCTOMO (no outbound SMS; reservation SMS deferred)** — plan `docs/superpowers/plans/2026-10-03-notifications-slice-3-account-recovery.md`.
+- `POST /auth/find-id { phone, phoneVerificationToken }` (public, 200) → `{ email: 'ow***@example.com' }` (`maskEmail`: first 2 chars, always one hidden, fixed `***`); no account on the phone → 404.
+- `POST /auth/reset-password { email, phone, phoneVerificationToken, newPassword }` (public, 204). **Two factors**: the email's local login must belong to the user owning the verified phone (one generic 400 otherwise). Password hashed *before* the transaction; inside it: spend the `RESET_PASSWORD` token, store the hash, **revoke every refresh token** (access tokens lapse within 15 min). Emits `account.passwordReset` after commit → the owner is emailed "비밀번호가 변경되었습니다" through the queue (no actor exclusion — the actor is the recipient).
+- Both flows spend the token **first**; a "no match" returns from the transaction (commit, token spent) and the 404/400 is thrown after. `AccountRecoveryService`/`Controller` live in `AuthModule` (`@Controller('auth')`).
+- **456 unit tests green (40 suites) + 138 e2e green (13 suites).** `test/helpers/phone.ts`'s `verifiedPhoneToken(app, phone, purpose?)` now takes a purpose; `test/account-recovery.e2e-spec.ts` is phone suite 13.
+
+**Next — Slice 4 (push):** `DeviceToken` table, `POST /devices` / `DELETE /devices/:token`, FCM `PushChannel` (`firebase-admin`) behind the queue, and generalizing the listener's `emailUsers` into a channel-aware `notifyUsers` with one per-event channel table (push + email for every user event). Needs a Firebase project + service-account key. Plan first. Then the notifications-track phase blog.
 
 ## Prior — File-upload + import/export track complete (Slices 1–3)
 

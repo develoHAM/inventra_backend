@@ -22,16 +22,17 @@ export function testPhones(suiteNumber: number): () => string {
 /**
  * The whole OCTOMO flow for one phone, as a test: start → "the user texts
  * the code" (the fake verifier records it) → confirm. Returns the token
- * that signup consumes.
+ * that signup (SIGNUP), find-ID (FIND_ID) or reset (RESET_PASSWORD) consumes.
  */
 export async function verifiedPhoneToken(
   app: INestApplication,
   phone: string,
+  purpose: 'SIGNUP' | 'FIND_ID' | 'RESET_PASSWORD' = 'SIGNUP',
 ): Promise<string> {
   const http = app.getHttpServer();
   const started = await request(http)
     .post('/auth/phone/start')
-    .send({ phone: phone, purpose: 'SIGNUP' })
+    .send({ phone: phone, purpose: purpose })
     .expect(200);
 
   app
