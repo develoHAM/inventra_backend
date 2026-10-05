@@ -21,6 +21,9 @@ export const envSchema = z
     // -- Phone verification (OCTOMO reverse SMS) --
     PHONE_VERIFIER: z.enum(['octomo', 'fake']),
     OCTOMO_API_KEY: z.string().min(1).optional(),
+    // -- Push (FCM) --
+    PUSH_SENDER: z.enum(['fcm', 'fake']),
+    FIREBASE_SERVICE_ACCOUNT_PATH: z.string().min(1).optional(),
     // -- Database --
     DATABASE_URL: z
       .string()
@@ -58,6 +61,20 @@ export const envSchema = z
       context.addIssue({
         code: 'custom',
         path: ['PHONE_VERIFIER'],
+        message: 'fake is not allowed in production',
+      });
+    }
+    if (env.PUSH_SENDER === 'fcm' && !env.FIREBASE_SERVICE_ACCOUNT_PATH) {
+      context.addIssue({
+        code: 'custom',
+        path: ['FIREBASE_SERVICE_ACCOUNT_PATH'],
+        message: 'required when PUSH_SENDER=fcm',
+      });
+    }
+    if (env.NODE_ENV === 'production' && env.PUSH_SENDER === 'fake') {
+      context.addIssue({
+        code: 'custom',
+        path: ['PUSH_SENDER'],
         message: 'fake is not allowed in production',
       });
     }

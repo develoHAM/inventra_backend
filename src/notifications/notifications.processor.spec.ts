@@ -6,13 +6,16 @@ import {
   NotificationStatus,
 } from '../generated/prisma/enums';
 import { SEND_NOTIFICATION_JOB } from './notifications.constants';
+import { DeadDeviceTokenError } from './channels/push-sender';
 
 describe('NotificationsProcessor', () => {
   let processor: NotificationsProcessor;
   let prisma: {
     notification: { findUnique: jest.Mock; update: jest.Mock };
+    deviceToken: { deleteMany: jest.Mock };
   };
   let email: { send: jest.Mock };
+  let push: { send: jest.Mock };
 
   const pendingEmail = {
     id: 'n-1',
@@ -40,9 +43,15 @@ describe('NotificationsProcessor', () => {
         findUnique: jest.fn().mockResolvedValue(pendingEmail),
         update: jest.fn().mockResolvedValue({}),
       },
+      deviceToken: { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
     };
     email = { send: jest.fn().mockResolvedValue(undefined) };
-    processor = new NotificationsProcessor(prisma as any, email as any);
+    push = { send: jest.fn().mockResolvedValue(undefined) };
+    processor = new NotificationsProcessor(
+      prisma as any,
+      email as any,
+      push as any,
+    );
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   });
 
@@ -159,5 +168,66 @@ describe('NotificationsProcessor', () => {
         }),
       }),
     );
+  });
+
+  describe('push rows', () => {
+    const pendingPush = {
+      id: 'n-1',
+      channel: NotificationChannel.PUSH,
+      status: NotificationStatus.PENDING,
+      recipientAddress: 'phone-token', // the device token
+      subject: '[Inventra] 가입이 승인되었습니다',
+      body: 'NTF Co의 구성원으로 승인되었습니다.',
+    };
+
+    beforeEach(() => {
+      prisma.notification.findUnique.mockResolvedValue(pendingPush);
+    });
+
+    it('sends through the push sender, then marks the row SENT', async () => {
+      await processor.process(makeJob());
+
+      expect(push.send).toHaveBeenCalledWith({
+        to: 'phone-token',
+        subject: '[Inventra] 가입이 승인되었습니다',
+        body: 'NTF Co의 구성원으로 승인되었습니다.',
+      });
+      expect(email.send).not.toHaveBeenCalled();
+      expect(prisma.notification.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: NotificationStatus.SENT }),
+        }),
+      );
+    });
+
+    it('a dead token: deletes the device, marks the row FAILED, and does NOT retry', async () => {
+      push.send.mockRejectedValue(new DeadDeviceTokenError('phone-token'));
+
+      // resolves: no rethrow, so BullMQ schedules no retry
+      await expect(
+        processor.process(makeJob({ attemptsMade: 0, attempts: 3 })),
+      ).resolves.toBeUndefined();
+
+      expect(prisma.deviceToken.deleteMany).toHaveBeenCalledWith({
+        where: { token: 'phone-token' },
+      });
+      expect(prisma.notification.update).toHaveBeenCalledWith({
+        where: { id: 'n-1' },
+        data: {
+          status: NotificationStatus.FAILED,
+          attempts: { increment: 1 },
+          lastError: 'device token unregistered',
+        },
+      });
+    });
+
+    it('any other push failure is retried like email', async () => {
+      push.send.mockRejectedValue(new Error('messaging/server-unavailable'));
+
+      await expect(
+        processor.process(makeJob({ attemptsMade: 0, attempts: 3 })),
+      ).rejects.toThrow('messaging/server-unavailable');
+      expect(prisma.deviceToken.deleteMany).not.toHaveBeenCalled();
+    });
   });
 });

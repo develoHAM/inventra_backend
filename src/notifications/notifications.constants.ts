@@ -5,3 +5,6 @@ export const SEND_JOB_OPTIONS = {
   backoff: { type: 'exponential', delay: 5000 },
   removeOnComplete: true,
 };
+
+/** Injection token for "whichever push sender this environment uses". */
+export const PUSH_SENDER = 'PUSH_SENDER';

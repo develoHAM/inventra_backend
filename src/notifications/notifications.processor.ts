@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Inject, Logger } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job, UnrecoverableError } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
@@ -7,9 +7,11 @@ import {
   NotificationStatus,
 } from '../generated/prisma/enums';
 import { EmailChannel } from './channels/email.channel';
-import { NotificationSender } from './channels/notification-channel';
+import type { NotificationSender } from './channels/notification-channel';
+import { DeadDeviceTokenError } from './channels/push-sender';
 import {
   NOTIFICATIONS_QUEUE,
+  PUSH_SENDER,
   SEND_NOTIFICATION_JOB,
 } from './notifications.constants';
 
@@ -20,6 +22,7 @@ export class NotificationsProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly email: EmailChannel,
+    @Inject(PUSH_SENDER) private readonly push: NotificationSender,
   ) {
     super();
   }
@@ -53,6 +56,25 @@ export class NotificationsProcessor extends WorkerHost {
         },
       });
     } catch (error) {
+      // Permanent: the device is gone. Forget it, record why, don't retry.
+      if (error instanceof DeadDeviceTokenError) {
+        await this.prisma.deviceToken.deleteMany({
+          where: { token: error.token },
+        });
+        await this.prisma.notification.update({
+          where: { id: notification.id },
+          data: {
+            status: NotificationStatus.FAILED,
+            attempts: { increment: 1 },
+            lastError: error.message,
+          },
+        });
+        this.logger.warn(
+          `Notification ${notification.id}: device token unregistered, device removed`,
+        );
+        return;
+      }
+
       const isLastAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
       await this.prisma.notification.update({
         where: { id: notification.id },
@@ -73,6 +95,8 @@ export class NotificationsProcessor extends WorkerHost {
     switch (channel) {
       case NotificationChannel.EMAIL:
         return this.email;
+      case NotificationChannel.PUSH:
+        return this.push;
       default:
         throw new Error(`No sender for channel ${channel}`);
     }

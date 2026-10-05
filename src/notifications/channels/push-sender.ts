@@ -1,0 +1,10 @@
+/**
+ * FCM said this device token will never work again (app uninstalled, token
+ * rotated or malformed). Not worth a retry: the worker deletes the device.
+ */
+export class DeadDeviceTokenError extends Error {
+  constructor(public readonly token: string) {
+    super('device token unregistered');
+    this.name = 'DeadDeviceTokenError';
+  }
+}
