@@ -43,3 +43,7 @@ prisma.config.d.ts
 
 # Claude Code local settings (skills stay tracked; local settings do not)
 .claude/settings.local.json
+# Credentials (Firebase service-account keys and other secrets) — never commit
+/secrets/
+*firebase-adminsdk*.json
+*service-account*.json
