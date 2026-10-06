@@ -9,9 +9,10 @@ import { AuthController } from './auth.controller';
 import { PhoneVerificationModule } from '../phone-verification/phone-verification.module';
 import { AccountRecoveryController } from './account-recovery.controller';
 import { AccountRecoveryService } from './account-recovery.service';
+import { DevicesModule } from '../devices/devices.module';
 
 @Module({
-  imports: [JwtModule.register({}), PhoneVerificationModule],
+  imports: [JwtModule.register({}), PhoneVerificationModule, DevicesModule],
   controllers: [AuthController, AccountRecoveryController],
   providers: [
     TokenService,

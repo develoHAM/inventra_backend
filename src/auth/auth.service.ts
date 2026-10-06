@@ -25,6 +25,8 @@ import type {
 } from '../notifications/notification-events';
 import { PhoneVerificationService } from '../phone-verification/phone-verification.service';
 import { generateUniqueJoinCode } from '../users/join-code';
+import { DevicesService } from '../devices/devices.service';
+import { LogoutDto } from './dto/logout.dto';
 
 @Injectable()
 export class AuthService {
@@ -34,6 +36,7 @@ export class AuthService {
     private readonly tokenService: TokenService,
     private readonly eventEmitter: EventEmitter2,
     private readonly phoneVerification: PhoneVerificationService,
+    private readonly devices: DevicesService,
   ) {}
 
   private async issueTokens(userId: string) {
@@ -320,11 +323,15 @@ export class AuthService {
     };
   }
 
-  async logout(userId: string, dto: RefreshDto) {
+  async logout(userId: string, dto: LogoutDto) {
     const tokenHash = this.tokenService.hashToken(dto.refreshToken);
     await this.prisma.refreshToken.updateMany({
       where: { tokenHash: tokenHash, userId: userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+    // Stop this device showing the user's pushes (only the caller's own token).
+    if (dto.deviceToken) {
+      await this.devices.unregister(userId, dto.deviceToken);
+    }
   }
 }

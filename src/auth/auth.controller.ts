@@ -7,6 +7,7 @@ import type { AuthUser } from './types/auth-user';
 import { RegisterMemberDto } from './dto/register-member.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
+import { LogoutDto } from './dto/logout.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -42,7 +43,7 @@ export class AuthController {
   }
 
   @Post('logout')
-  logout(@CurrentUser() user: AuthUser, @Body() dto: RefreshDto) {
+  logout(@CurrentUser() user: AuthUser, @Body() dto: LogoutDto) {
     return this.authService.logout(user.id, dto);
   }
 }

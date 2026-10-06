@@ -27,6 +27,7 @@ describe('AuthService', () => {
   };
   let eventEmitter: { emit: jest.Mock };
   let phoneVerification: { consume: jest.Mock };
+  let devices: { unregister: jest.Mock };
 
   const registerDto = {
     companyName: 'Acme',
@@ -108,12 +109,14 @@ describe('AuthService', () => {
 
     eventEmitter = { emit: jest.fn().mockReturnValue(true) };
     phoneVerification = { consume: jest.fn().mockResolvedValue(undefined) };
+    devices = { unregister: jest.fn().mockResolvedValue(undefined) };
     service = new AuthService(
       prisma,
       passwordService as any,
       tokenService as any,
       eventEmitter as any,
       phoneVerification as any,
+      devices as any,
     );
   });
 
@@ -538,9 +541,7 @@ describe('AuthService', () => {
 
   describe('logout', () => {
     it('revokes the presented refresh token, scoped to the user', async () => {
-      await service.logout('user-1', {
-        refreshToken: 'refresh-token-string',
-      } as any);
+      await service.logout('user-1', { refreshToken: 'refresh-token-string' });
 
       expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
         where: {
@@ -550,6 +551,22 @@ describe('AuthService', () => {
         },
         data: { revokedAt: expect.any(Date) },
       });
+    });
+
+    it('also removes the device token, so the phone stops showing this user’s pushes', async () => {
+      await service.logout('user-1', {
+        refreshToken: 'refresh-token-string',
+        deviceToken: 'phone-token',
+      });
+
+      // scoped to the caller: someone else's device is never touched
+      expect(devices.unregister).toHaveBeenCalledWith('user-1', 'phone-token');
+    });
+
+    it('leaves devices alone when no deviceToken is sent (e.g. the web console)', async () => {
+      await service.logout('user-1', { refreshToken: 'refresh-token-string' });
+
+      expect(devices.unregister).not.toHaveBeenCalled();
     });
   });
 });
