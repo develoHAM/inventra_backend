@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-10-05.
+> Last updated: 2026-10-06.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -25,9 +25,9 @@
 | 10a | **Reservation auto-expiry sweep** (`@nestjs/schedule` cron releases expired holds) | ✅ complete (blogged) |
 | 10b+ | More cross-cutting concerns / Redis caching (only when measured) | ⏳ not started |
 | Files | **File uploads** (product/brand/avatar images) + **data import/export** (order/audit CSV·xlsx) | ✅ Slices 1–3 complete |
-| Notify | **Notifications** (email · SMS · push) + **account security** (OCTOMO phone verification · find ID · password reset) | 🔨 Slices 1a–3 complete; 4 (push) next |
+| Notify | **Notifications** (email · SMS · push) + **account security** (OCTOMO phone verification · find ID · password reset) | ✅ complete (Slices 1a–4) |
 
-## Where we are right now — Notifications, Slices 1a–3 complete (email events, OCTOMO phone verification, account recovery)
+## Where we are right now — Notifications track complete (Slices 1a–4: email events, OCTOMO phone verification, account recovery, push)
 
 New track, designed in `docs/superpowers/specs/2026-09-23-notifications-and-account-security-design.md` (slices 1a → 1b → 2 → 3 → 4). Decisions: fixed channels per event (in code); **domain events + BullMQ queue**; SMTP via nodemailer with **Mailpit** for dev/e2e; SMS via a Korean provider adapter (Slice 2); push via FCM (Slice 4); a verified phone is **required + unique** at signup; password reset and find-my-ID use an **SMS one-time code**; find-my-ID returns a masked email.
 
@@ -66,7 +66,14 @@ New track, designed in `docs/superpowers/specs/2026-09-23-notifications-and-acco
 - Both flows spend the token **first**; a "no match" returns from the transaction (commit, token spent) and the 404/400 is thrown after. `AccountRecoveryService`/`Controller` live in `AuthModule` (`@Controller('auth')`).
 - **456 unit tests green (40 suites) + 138 e2e green (13 suites).** `test/helpers/phone.ts`'s `verifiedPhoneToken(app, phone, purpose?)` now takes a purpose; `test/account-recovery.e2e-spec.ts` is phone suite 13.
 
-**Next — Slice 4 (push):** `DeviceToken` table, `POST /devices` / `DELETE /devices/:token`, FCM `PushChannel` (`firebase-admin`) behind the queue, and generalizing the listener's `emailUsers` into a channel-aware `notifyUsers` with one per-event channel table (push + email for every user event). Needs a Firebase project + service-account key. Plan first. Then the notifications-track phase blog.
+**Slice 4 ✅ — push (FCM), built against a fake** — plan `docs/superpowers/plans/2026-10-05-notifications-slice-4-push.md`.
+- `DeviceToken` (ANDROID/IOS/WEB, unique token). `POST /devices` (upsert by token — a re-registered token moves to the new user) / `DELETE /devices/:token` (own only), both 204, logged-in but no permission (pending users too). `POST /auth/logout { refreshToken, deviceToken? }` removes that device.
+- `PUSH_SENDER=fcm|fake` (no default; `fcm` needs `FIREBASE_SERVICE_ACCOUNT_PATH`; prod refuses `fake`). `FcmPushSender` (firebase-admin 14, named app, built by the factory only when chosen). FCM dead tokens are matched with `error.hasCode(MessagingErrorCode.*)` — **runtime `error.code` is prefixed `messaging/`, the enum is not**, so `===` would silently never match → `DeadDeviceTokenError` → device deleted, row FAILED, no retry.
+- `notifyUsers` (was `emailUsers`) + `EVENT_CHANNELS` (a `Record` over every event → compile error if one is missing; all `[EMAIL, PUSH]`): dedupe + actor exclusion once, one EMAIL per user, one PUSH row per device.
+- **514 unit tests green (47 suites) + 147 e2e green (14 suites).** `test/push.e2e-spec.ts` (phone suite 14).
+- **To go live:** create a Firebase project, download the service-account JSON (keep it out of git), set `PUSH_SENDER=fcm` + `FIREBASE_SERVICE_ACCOUNT_PATH`. The mobile app must `POST /devices` on launch, after login, and in the token-refresh callback (`onNewToken` / `didReceiveRegistrationToken`), and send `deviceToken` on logout.
+
+**Next:** notifications track is done. Deferred: reservation SMS (needs an outbound SMS provider); `lastSeenAt`-based pruning of stale devices; push `data` payloads for deep links. Candidates: Phase 10b+ (caching only when measured) or a new track — decide with the user.
 
 ## Prior — File-upload + import/export track complete (Slices 1–3)
 
