@@ -15,7 +15,7 @@ Multi-tenant inventory-management SaaS (Korean concession-store model — compan
 - **Phase-end:** offer the bilingual EN+KR Medium-style `/phase-blog` retrospective.
 
 ## Commands
-- `npm test` — unit suite (currently **514 green**).
+- `npm test` — unit suite (currently **526 green**).
 - `npm run test:e2e` — e2e. ⚠️ Its `pretest` runs `prisma migrate reset --force`, which Claude's Prisma AI-safety guard blocks — **a human must run e2e and any `prisma migrate` command**. Claude runs `npm test`, `npm run seed`, and read-only `psql` fine.
 - `npm run build` · `npm run seed` · `npm run lint`.
 

@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-10-06.
+> Last updated: 2026-10-07.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -70,8 +70,10 @@ New track, designed in `docs/superpowers/specs/2026-09-23-notifications-and-acco
 - `DeviceToken` (ANDROID/IOS/WEB, unique token). `POST /devices` (upsert by token — a re-registered token moves to the new user) / `DELETE /devices/:token` (own only), both 204, logged-in but no permission (pending users too). `POST /auth/logout { refreshToken, deviceToken? }` removes that device.
 - `PUSH_SENDER=fcm|fake` (no default; `fcm` needs `FIREBASE_SERVICE_ACCOUNT_PATH`; prod refuses `fake`). `FcmPushSender` (firebase-admin 14, named app, built by the factory only when chosen). FCM dead tokens are matched with `error.hasCode(MessagingErrorCode.*)` — **runtime `error.code` is prefixed `messaging/`, the enum is not**, so `===` would silently never match → `DeadDeviceTokenError` → device deleted, row FAILED, no retry.
 - `notifyUsers` (was `emailUsers`) + `EVENT_CHANNELS` (a `Record` over every event → compile error if one is missing; all `[EMAIL, PUSH]`): dedupe + actor exclusion once, one EMAIL per user, one PUSH row per device.
-- **514 unit tests green (47 suites) + 147 e2e green (14 suites).** `test/push.e2e-spec.ts` (phone suite 14).
-- **To go live:** create a Firebase project, download the service-account JSON (keep it out of git), set `PUSH_SENDER=fcm` + `FIREBASE_SERVICE_ACCOUNT_PATH`. The mobile app must `POST /devices` on launch, after login, and in the token-refresh callback (`onNewToken` / `didReceiveRegistrationToken`), and send `deviceToken` on logout.
+- **Token validation at registration (2026-10-07):** `POST /devices` asks the push sender `isValidToken()` first — FCM does a **dry run** (`send(msg, true)`) with a fixed payload, so `invalid-argument` there can only mean the token → **400 `Invalid device token`**, nothing stored. Fail open (store + warn) if FCM is unreachable. The push providers moved into a shared `PushModule` (imported by both `NotificationsModule` and `DevicesModule`) to avoid a circular module import.
+- **Verified live against real FCM (project `inventra-bc3bf`):** a real push delivered to a Chrome web token through the full pipeline; garbage token → 400, real token → 204.
+- **526 unit tests green (47 suites) + 148 e2e green (14 suites).** `test/push.e2e-spec.ts` (phone suite 14).
+- **Live in dev:** `.env` has `PUSH_SENDER=fcm` + `FIREBASE_SERVICE_ACCOUNT_PATH` (key git-ignored: `/secrets/`, `*firebase-adminsdk*.json`, `*service-account*.json`); `.env.test` stays `fake`. iOS additionally needs an APNs key uploaded to Firebase. The mobile app must `POST /devices` on launch, after login, and in the token-refresh callback (`onNewToken` / `didReceiveRegistrationToken`), and send `deviceToken` on logout.
 
 **Next:** notifications track is done. Deferred: reservation SMS (needs an outbound SMS provider); `lastSeenAt`-based pruning of stale devices; push `data` payloads for deep links. Candidates: Phase 10b+ (caching only when measured) or a new track — decide with the user.
 

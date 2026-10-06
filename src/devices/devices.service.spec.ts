@@ -1,3 +1,4 @@
+import { BadRequestException, Logger } from '@nestjs/common';
 import { DevicesService } from './devices.service';
 import { DevicePlatform } from '../generated/prisma/enums';
 
@@ -11,6 +12,8 @@ describe('DevicesService', () => {
     };
   };
 
+  let push: { isValidToken: jest.Mock };
+
   const now = new Date('2026-10-05T09:00:00.000Z');
 
   beforeEach(() => {
@@ -22,11 +25,14 @@ describe('DevicesService', () => {
         findMany: jest.fn().mockResolvedValue([]),
       },
     };
-    service = new DevicesService(prisma as any);
+    push = { isValidToken: jest.fn().mockResolvedValue(true) };
+    service = new DevicesService(prisma as any, push as any);
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
     jest.useRealTimers();
+    jest.restoreAllMocks();
   });
 
   describe('register', () => {
@@ -51,6 +57,43 @@ describe('DevicesService', () => {
           lastSeenAt: now,
         },
       });
+    });
+
+    it('validates the token with the push sender before storing it', async () => {
+      await service.register('user-1', {
+        token: 'fcm-token-abc',
+        platform: DevicePlatform.ANDROID,
+      });
+
+      expect(push.isValidToken).toHaveBeenCalledWith('fcm-token-abc');
+      expect(push.isValidToken.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.deviceToken.upsert.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('a token FCM rejects → 400, nothing stored', async () => {
+      push.isValidToken.mockResolvedValue(false);
+
+      await expect(
+        service.register('user-1', {
+          token: 'garbage',
+          platform: DevicePlatform.WEB,
+        }),
+      ).rejects.toThrow(new BadRequestException('Invalid device token'));
+      expect(prisma.deviceToken.upsert).not.toHaveBeenCalled();
+    });
+
+    it('FCM unreachable → fail open: store it anyway (and warn)', async () => {
+      push.isValidToken.mockRejectedValue(new Error('server-unavailable'));
+
+      await expect(
+        service.register('user-1', {
+          token: 'fcm-token-abc',
+          platform: DevicePlatform.IOS,
+        }),
+      ).resolves.toBeUndefined();
+      expect(prisma.deviceToken.upsert).toHaveBeenCalled();
+      expect(Logger.prototype.warn).toHaveBeenCalled();
     });
 
     it('resolves with nothing (the route answers 204)', async () => {

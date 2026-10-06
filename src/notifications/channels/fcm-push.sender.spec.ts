@@ -120,4 +120,48 @@ describe('FcmPushSender', () => {
       sender.send({ to: 'phone-token', subject: 'T', body: 'B' }),
     ).rejects.toThrow('socket hang up');
   });
+
+  describe('isValidToken (dry run: FCM checks the token, delivers nothing)', () => {
+    it('asks FCM with dryRun=true and a fixed, valid payload', async () => {
+      await sender.isValidToken('phone-token');
+
+      expect(messaging.send).toHaveBeenCalledWith(
+        {
+          token: 'phone-token',
+          notification: { title: 'Inventra', body: 'token check' },
+        },
+        true,
+      );
+    });
+
+    it('a token FCM accepts is valid', async () => {
+      await expect(sender.isValidToken('phone-token')).resolves.toBe(true);
+    });
+
+    it.each([
+      // what a malformed token actually returns (seen against real FCM)
+      MessagingErrorCode.INVALID_ARGUMENT,
+      MessagingErrorCode.INVALID_REGISTRATION_TOKEN,
+      MessagingErrorCode.REGISTRATION_TOKEN_NOT_REGISTERED,
+    ])(
+      '%s means the token is invalid (our dry-run payload is fixed and valid)',
+      async (code) => {
+        messaging.send.mockRejectedValue(fcmError(code));
+
+        await expect(sender.isValidToken('garbage')).resolves.toBe(false);
+      },
+    );
+
+    it.each([
+      MessagingErrorCode.SERVER_UNAVAILABLE,
+      MessagingErrorCode.INTERNAL_ERROR,
+      MessagingErrorCode.AUTHENTICATION_ERROR,
+    ])('%s says nothing about the token: rethrown', async (code) => {
+      messaging.send.mockRejectedValue(fcmError(code));
+
+      await expect(sender.isValidToken('phone-token')).rejects.toMatchObject({
+        code: `messaging/${code}`,
+      });
+    });
+  });
 });

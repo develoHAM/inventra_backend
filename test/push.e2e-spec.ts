@@ -149,6 +149,17 @@ describe('Push notifications (e2e)', () => {
     expect(await deviceOwner('push-owner-phone')).toBe(ownerId);
   });
 
+  it('a token the push provider rejects is refused (400) and not stored', async () => {
+    fakePush.markDead('push-garbage-token'); // as FCM would reject a malformed one
+
+    const response = await registerDevice(
+      ownerAccess,
+      'push-garbage-token',
+    ).expect(400);
+    expect(response.body.message).toBe('Invalid device token');
+    expect(await deviceOwner('push-garbage-token')).toBeNull();
+  });
+
   it('company approval reaches the owner by push AND email', async () => {
     const company = await prisma.company.findUnique({
       where: { taxId: taxId },

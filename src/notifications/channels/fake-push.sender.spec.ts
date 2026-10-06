@@ -46,4 +46,12 @@ describe('FakePushSender', () => {
     expect(error.message).toBe('device token unregistered');
     expect(error).toBeInstanceOf(Error);
   });
+
+  it('isValidToken: any token is valid unless marked dead', async () => {
+    await expect(sender.isValidToken('phone-token')).resolves.toBe(true);
+
+    sender.markDead('garbage-token');
+
+    await expect(sender.isValidToken('garbage-token')).resolves.toBe(false);
+  });
 });
