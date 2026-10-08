@@ -20,6 +20,7 @@ export interface DispatchInput {
   recipientAddress: string;
   subject?: string;
   body: string;
+  data?: Record<string, string>; // push deep-link payload
 }
 
 @Injectable()
@@ -39,6 +40,7 @@ export class NotificationsService {
         recipientAddress: input.recipientAddress,
         subject: input.subject ?? null,
         body: input.body,
+        data: input.data,
       },
     });
     await this.queue.add(
@@ -104,6 +106,7 @@ export class NotificationsService {
     excludeUserId?: string;
     eventType: NotificationEventName;
     message: RenderedMessage;
+    data?: Record<string, string>; // deep-link ids, sent with push only
   }): Promise<void> {
     const recipientIds = [...new Set(input.userIds)].filter(
       (userId) => userId !== input.excludeUserId,
@@ -138,6 +141,7 @@ export class NotificationsService {
           recipientAddress: device.token,
           subject: input.message.subject,
           body: input.message.body,
+          data: input.data,
         });
       }
     }

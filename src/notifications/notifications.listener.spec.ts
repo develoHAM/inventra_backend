@@ -57,6 +57,7 @@ describe('NotificationsListener', () => {
         userIds: ['owner-1'],
         eventType: NotificationEvent.COMPANY_APPROVED,
         message: notificationTemplates.companyApproved('UPL Co'),
+        data: { companyId: 'company-1' },
       });
       // approved by the platform admin, not by the owner: nobody to exclude
       expect(call).not.toHaveProperty('excludeUserId');
@@ -80,6 +81,7 @@ describe('NotificationsListener', () => {
         userIds: ['admin-1'],
         eventType: NotificationEvent.COMPANY_REGISTERED,
         message: notificationTemplates.companyRegistered('UPL Co'),
+        data: { companyId: 'company-1' },
       });
     });
 
@@ -108,6 +110,7 @@ describe('NotificationsListener', () => {
         excludeUserId: 'member-1',
         eventType: NotificationEvent.MEMBER_JOIN_REQUESTED,
         message: notificationTemplates.memberJoinRequested('Sam', 'UPL Co'),
+        data: { companyId: 'company-1', memberUserId: 'member-1' },
       });
     });
 
@@ -124,19 +127,23 @@ describe('NotificationsListener', () => {
     const event = { memberUserId: 'member-1', approvedByUserId: 'owner-1' };
 
     it("emails the member with their company's name, excluding the approver", async () => {
-      prisma.user.findUnique.mockResolvedValue({ company: { name: 'UPL Co' } });
+      prisma.user.findUnique.mockResolvedValue({
+        company: { id: 'company-1', name: 'UPL Co' },
+      });
 
       await listener.handleMemberApproved(event);
 
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
         where: { id: 'member-1' },
-        select: { company: { select: { name: true } } },
+        // id too: the push deep-links to the company
+        select: { company: { select: { id: true, name: true } } },
       });
       expect(notifications.notifyUsers).toHaveBeenCalledWith({
         userIds: ['member-1'],
         excludeUserId: 'owner-1',
         eventType: NotificationEvent.MEMBER_APPROVED,
         message: notificationTemplates.memberApproved('UPL Co'),
+        data: { companyId: 'company-1' },
       });
     });
 
@@ -188,6 +195,7 @@ describe('NotificationsListener', () => {
           'Weekend restock',
           2,
         ),
+        data: { cornerId: 'corner-1', orderId: 'order-1' },
       });
     });
 
@@ -225,6 +233,7 @@ describe('NotificationsListener', () => {
           'Monthly count',
           3,
         ),
+        data: { cornerId: 'corner-1', auditId: 'audit-1' },
       });
     });
 
@@ -266,6 +275,8 @@ describe('NotificationsListener', () => {
           7,
           10,
         ),
+        // the integer placement id travels as a STRING (FCM data rule)
+        data: { cornerId: 'corner-1', placementId: '41' },
       });
       expect(call).not.toHaveProperty('excludeUserId');
     });
@@ -289,6 +300,8 @@ describe('NotificationsListener', () => {
         eventType: NotificationEvent.ACCOUNT_PASSWORD_RESET,
         message: notificationTemplates.passwordReset(),
       });
+      // no ids to deep-link to: the worker still adds eventType for the app
+      expect(call).not.toHaveProperty('data');
       // the owner IS the actor here — excluding them would send nothing
       expect(call).not.toHaveProperty('excludeUserId');
     });

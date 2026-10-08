@@ -69,6 +69,20 @@ describe('NotificationsService', () => {
       ).toBeLessThan(queue.add.mock.invocationCallOrder[0]);
     });
 
+    it('stores the deep-link data on the row (so a replayed job keeps it)', async () => {
+      await service.dispatch({
+        eventType: 'order.created',
+        channel: NotificationChannel.PUSH,
+        recipientAddress: 'owner-phone',
+        body: 'Body',
+        data: { orderId: 'order-1' },
+      });
+
+      expect(prisma.notification.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ data: { orderId: 'order-1' } }),
+      });
+    });
+
     it('stores null for the optional recipientUserId and subject when omitted', async () => {
       await service.dispatch({
         eventType: 'reservation.created',
@@ -252,6 +266,34 @@ describe('NotificationsService', () => {
       }
       // 1 email + 2 devices
       expect(service.dispatch).toHaveBeenCalledTimes(3);
+    });
+
+    it('passes deep-link data to PUSH rows only, never to EMAIL rows', async () => {
+      devices.findTokens.mockResolvedValue([
+        { userId: 'owner-1', token: 'owner-phone' },
+      ]);
+
+      await service.notifyUsers({
+        userIds: ['owner-1'],
+        eventType: 'order.created',
+        message: message,
+        data: { cornerId: 'corner-1', orderId: 'order-1' },
+      });
+
+      const calls = (service.dispatch as jest.Mock).mock.calls.map(
+        (call) => call[0],
+      );
+      const pushCall = calls.find(
+        (call) => call.channel === NotificationChannel.PUSH,
+      );
+      const emailCall = calls.find(
+        (call) => call.channel === NotificationChannel.EMAIL,
+      );
+      expect(pushCall.data).toEqual({
+        cornerId: 'corner-1',
+        orderId: 'order-1',
+      });
+      expect(emailCall.data).toBeUndefined();
     });
 
     it('a user with no devices still gets the email', async () => {

@@ -45,6 +45,15 @@ export class NotificationsProcessor extends WorkerHost {
         to: notification.recipientAddress,
         subject: notification.subject ?? undefined,
         body: notification.body,
+        // Push: what the app needs to deep-link on tap. eventType always,
+        // plus the ids notifyUsers stored on the row (string → string).
+        data:
+          notification.channel === NotificationChannel.PUSH
+            ? {
+                eventType: notification.eventType,
+                ...((notification.data as Record<string, string> | null) ?? {}),
+              }
+            : undefined,
       });
       await this.prisma.notification.update({
         where: { id: notification.id },

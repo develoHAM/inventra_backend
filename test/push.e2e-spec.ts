@@ -190,11 +190,16 @@ describe('Push notifications (e2e)', () => {
 
     // what the phone would show: template subject as title, body as body
     const expected = notificationTemplates.companyApproved(companyName);
+    // ...and what the app reads on tap to deep-link to the company
     expect(fakePush.lastMessageTo('push-owner-phone')).toEqual({
       to: 'push-owner-phone',
       subject: expected.subject,
       body: expected.body,
+      data: { eventType: 'company.approved', companyId: company!.id },
     });
+
+    // the deep-link ids live on the row too, so a replayed job keeps them
+    expect(pushRow.data).toEqual({ companyId: company!.id });
 
     ownerAccess = (
       await request(http)

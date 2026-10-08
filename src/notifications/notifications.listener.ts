@@ -34,6 +34,7 @@ export class NotificationsListener {
       userIds: [event.ownerUserId],
       eventType: NotificationEvent.COMPANY_APPROVED,
       message: notificationTemplates.companyApproved(company.name),
+      data: { companyId: event.companyId },
     });
   }
 
@@ -48,6 +49,7 @@ export class NotificationsListener {
       userIds: await this.notifications.findPlatformAdminIds(),
       eventType: NotificationEvent.COMPANY_REGISTERED,
       message: notificationTemplates.companyRegistered(company.name),
+      data: { companyId: event.companyId },
     });
   }
 
@@ -74,6 +76,7 @@ export class NotificationsListener {
         member.name,
         company.name,
       ),
+      data: { companyId: event.companyId, memberUserId: event.memberUserId },
     });
   }
 
@@ -81,7 +84,7 @@ export class NotificationsListener {
   async handleMemberApproved(event: MemberApprovedEvent): Promise<void> {
     const member = await this.prisma.user.findUnique({
       where: { id: event.memberUserId },
-      select: { company: { select: { name: true } } },
+      select: { company: { select: { id: true, name: true } } },
     });
     if (!member?.company) return;
     await this.notifications.notifyUsers({
@@ -89,6 +92,7 @@ export class NotificationsListener {
       excludeUserId: event.approvedByUserId,
       eventType: NotificationEvent.MEMBER_APPROVED,
       message: notificationTemplates.memberApproved(member.company.name),
+      data: { companyId: member.company.id },
     });
   }
 
@@ -112,6 +116,7 @@ export class NotificationsListener {
         order.title,
         order._count.orderItems,
       ),
+      data: { cornerId: event.cornerId, orderId: event.orderId },
     });
   }
 
@@ -135,6 +140,7 @@ export class NotificationsListener {
         audit.title,
         audit._count.inventoryAuditItems,
       ),
+      data: { cornerId: event.cornerId, auditId: event.auditId },
     });
   }
 
@@ -161,6 +167,11 @@ export class NotificationsListener {
         event.availableQuantity,
         event.targetStockQuantity,
       ),
+      // FCM data values must be strings; placement ids are integers
+      data: {
+        cornerId: placement.companyStoreId,
+        placementId: String(event.placementId),
+      },
     });
   }
 

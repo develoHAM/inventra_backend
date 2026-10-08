@@ -59,6 +59,21 @@ describe('FcmPushSender', () => {
     });
   });
 
+  it('forwards the deep-link data with the notification', async () => {
+    await sender.send({
+      to: 'phone-token',
+      subject: 'T',
+      body: 'B',
+      data: { eventType: 'order.created', orderId: 'order-1' },
+    });
+
+    expect(messaging.send).toHaveBeenCalledWith({
+      token: 'phone-token',
+      notification: { title: 'T', body: 'B' },
+      data: { eventType: 'order.created', orderId: 'order-1' },
+    });
+  });
+
   it('real errors carry the PREFIXED code (why === against MessagingErrorCode would miss)', () => {
     const error = fcmError(
       MessagingErrorCode.REGISTRATION_TOKEN_NOT_REGISTERED,

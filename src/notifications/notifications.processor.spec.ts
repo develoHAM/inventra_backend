@@ -87,6 +87,12 @@ describe('NotificationsProcessor', () => {
     });
   });
 
+  it('sends email WITHOUT push data (an email client has no use for it)', async () => {
+    await processor.process(makeJob());
+
+    expect(email.send.mock.calls[0][0].data).toBeUndefined();
+  });
+
   it('passes an undefined subject when the row has none', async () => {
     prisma.notification.findUnique.mockResolvedValue({
       ...pendingEmail,
@@ -175,6 +181,8 @@ describe('NotificationsProcessor', () => {
       id: 'n-1',
       channel: NotificationChannel.PUSH,
       status: NotificationStatus.PENDING,
+      eventType: 'member.approved',
+      data: null, // no deep-link ids stored
       recipientAddress: 'phone-token', // the device token
       subject: '[Inventra] 가입이 승인되었습니다',
       body: 'NTF Co의 구성원으로 승인되었습니다.',
@@ -191,6 +199,7 @@ describe('NotificationsProcessor', () => {
         to: 'phone-token',
         subject: '[Inventra] 가입이 승인되었습니다',
         body: 'NTF Co의 구성원으로 승인되었습니다.',
+        data: { eventType: 'member.approved' },
       });
       expect(email.send).not.toHaveBeenCalled();
       expect(prisma.notification.update).toHaveBeenCalledWith(
@@ -219,6 +228,26 @@ describe('NotificationsProcessor', () => {
           lastError: 'device token unregistered',
         },
       });
+    });
+
+    it("adds the row's deep-link ids after eventType", async () => {
+      prisma.notification.findUnique.mockResolvedValue({
+        ...pendingPush,
+        eventType: 'order.created',
+        data: { cornerId: 'corner-1', orderId: 'order-1' },
+      });
+
+      await processor.process(makeJob());
+
+      expect(push.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            eventType: 'order.created',
+            cornerId: 'corner-1',
+            orderId: 'order-1',
+          },
+        }),
+      );
     });
 
     it('any other push failure is retried like email', async () => {

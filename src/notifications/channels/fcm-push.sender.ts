@@ -50,6 +50,7 @@ export class FcmPushSender implements PushSender {
       await this.messaging.send({
         token: message.to,
         notification: { title: message.subject, body: message.body },
+        data: message.data, // deep-link ids for the app (string values)
       });
     } catch (error) {
       if (
