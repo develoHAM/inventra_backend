@@ -15,7 +15,7 @@ This track was the biggest so far. It ran across **five slices in two weeks**:
 4. find-my-ID and password reset
 5. push notifications to Android, iOS and the web
 
-Along the way, the SMS half of the plan turned into something I hadn't expected. The unit suite went from 233 to **514** tests, and e2e from 87 to **147**.
+Along the way, the SMS half of the plan turned into something I hadn't expected. The unit suite went from 233 to **514** tests, and e2e from 87 to **140**.
 
 ## Architectural Decisions
 
