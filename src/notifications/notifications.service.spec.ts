@@ -10,7 +10,7 @@ describe('NotificationsService', () => {
   let prisma: {
     notification: { create: jest.Mock };
     userLoginMethod: { findFirst: jest.Mock };
-    user: { findMany: jest.Mock };
+    user: { findMany: jest.Mock; findUnique: jest.Mock };
     companyStore: { findUnique: jest.Mock };
   };
   let queue: { add: jest.Mock };
@@ -22,7 +22,10 @@ describe('NotificationsService', () => {
         create: jest.fn().mockResolvedValue({ id: 'notification-1' }),
       },
       userLoginMethod: { findFirst: jest.fn() },
-      user: { findMany: jest.fn().mockResolvedValue([]) },
+      user: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
       companyStore: { findUnique: jest.fn() },
     };
     queue = { add: jest.fn().mockResolvedValue({ id: 'job-1' }) };
@@ -109,23 +112,35 @@ describe('NotificationsService', () => {
   });
 
   describe('findUserEmail', () => {
-    it("returns the email of the user's local (password) login method", async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue({
-        email: 'owner@example.com',
+    it("returns the user's contact email (where notifications go)", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        contactEmail: 'owner@example.com',
       });
 
       const email = await service.findUserEmail('owner-1');
 
       expect(email).toBe('owner@example.com');
-      expect(prisma.userLoginMethod.findFirst).toHaveBeenCalledWith({
-        where: { userId: 'owner-1', method: 'local', email: { not: null } },
-        select: { email: true },
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: 'owner-1' },
+        select: { contactEmail: true },
       });
     });
 
-    it('returns null when the user has no email login', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue(null);
+    it('does not depend on a password login (a social-only user still has one)', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        contactEmail: 'kakao-user@example.com',
+      });
 
+      await service.findUserEmail('social-user');
+
+      expect(prisma.userLoginMethod.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('returns null when the user has no contact email, or does not exist', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ contactEmail: null });
+      expect(await service.findUserEmail('no-email')).toBeNull();
+
+      prisma.user.findUnique.mockResolvedValueOnce(null);
       expect(await service.findUserEmail('ghost')).toBeNull();
     });
   });

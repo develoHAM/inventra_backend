@@ -70,6 +70,7 @@ model User {
   companyStoreId  String?    @map("company_store_id") @db.Uuid
   phone           String?    @unique(map: "UQ_users_phone") @db.VarChar(20)
   profileImageUrl String?    @map("profile_image_url") @db.VarChar(2048)
+  contactEmail    String?    @map("contact_email") @db.VarChar(255) // where notifications go (set at signup)
   biography       String?    @db.Text
   status          UserStatus @default(PENDING_APPROVAL)
   createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -125,6 +126,10 @@ model UserLoginMethod {
 
   user User @relation(fields: [userId], references: [id])
 
+  // one provider identity → one account (local rows have NULL providerUserId: never conflict)
+  @@unique([method, providerUserId], map: "UQ_login_methods_identity")
+  // one login per provider per account
+  @@unique([userId, method], map: "UQ_login_methods_user_method")
   @@map("user_login_methods")
 }
 
@@ -207,6 +212,7 @@ model Notification {
   subject          String?             @db.VarChar(255)
   body             String              @db.Text
   data             Json? // push deep-link payload (string values only)
+  redacted         Boolean             @default(false) @map("redacted") // body is a placeholder; the real text only lived in the queue job
   status           NotificationStatus  @default(PENDING)
   attempts         Int                 @default(0)
   lastError        String?             @map("last_error") @db.Text
@@ -612,4 +618,46 @@ model DeviceToken {
 
   @@index([userId], map: "IDX_device_tokens_user")
   @@map("device_tokens")
+}
+
+model SocialSignupTicket {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash            String    @unique(map: "UQ_social_signup_tickets_token_hash") @map("token_hash") @db.VarChar(64)
+  provider             String    @db.VarChar(20)
+  providerUserId       String    @map("provider_user_id") @db.VarChar(255)
+  email                String?   @db.VarChar(255)
+  emailVerified        Boolean   @default(false) @map("email_verified")
+  name                 String?   @db.VarChar(100)
+  providerRefreshToken String?   @map("provider_refresh_token") @db.Text // encrypted (Apple/Google)
+  expiresAt            DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt           DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("social_signup_tickets")
+}
+
+model SocialNonce {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nonceHash  String    @unique(map: "UQ_social_nonces_nonce_hash") @map("nonce_hash") @db.VarChar(64)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("social_nonces")
+}
+
+model EmailVerification {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email          String    @db.VarChar(255)
+  codeHash       String    @map("code_hash") @db.VarChar(64)
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(6)
+  attempts       Int       @default(0)
+  verifiedAt     DateTime? @map("verified_at") @db.Timestamptz(6)
+  tokenHash      String?   @unique(map: "UQ_email_verifications_token_hash") @map("token_hash") @db.VarChar(64)
+  tokenExpiresAt DateTime? @map("token_expires_at") @db.Timestamptz(6)
+  consumedAt     DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([email, createdAt], map: "IDX_email_verifications_email_created")
+  @@map("email_verifications")
 }

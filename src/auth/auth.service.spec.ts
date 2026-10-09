@@ -224,6 +224,14 @@ describe('AuthService', () => {
       ).toBeLessThan(tx.user.create.mock.invocationCallOrder[0]);
     });
 
+    it('sets the contact email to the login email (where notifications go)', async () => {
+      await service.register(registerDto as any);
+
+      expect(tx.user.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ contactEmail: 'jane@acme.com' }),
+      });
+    });
+
     it('stores the verified phone on the owner', async () => {
       await service.register(registerDto as any);
 
@@ -287,6 +295,14 @@ describe('AuthService', () => {
           companyId: 'company-1',
           roleId: null,
         },
+      });
+    });
+
+    it('sets the contact email to the login email (where notifications go)', async () => {
+      await service.registerMember(memberDto as any);
+
+      expect(tx.user.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ contactEmail: 'sam@acme.com' }),
       });
     });
 

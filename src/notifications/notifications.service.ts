@@ -50,12 +50,13 @@ export class NotificationsService {
     );
   }
 
+  /** Where this user's notifications go (set at signup; independent of how they sign in). */
   async findUserEmail(userId: string): Promise<string | null> {
-    const loginMethod = await this.prisma.userLoginMethod.findFirst({
-      where: { userId: userId, method: 'local', email: { not: null } },
-      select: { email: true },
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { contactEmail: true },
     });
-    return loginMethod?.email ?? null;
+    return user?.contactEmail ?? null;
   }
 
   async findPlatformAdminIds(): Promise<string[]> {

@@ -111,6 +111,7 @@ export class AuthService {
           data: {
             name: ownerName,
             phone: ownerPhone,
+            contactEmail: ownerEmail, // notifications go to the login email
             companyId: null,
             status: 'PENDING_APPROVAL',
             roleId: role.id,
@@ -203,6 +204,7 @@ export class AuthService {
         data: {
           name: name,
           phone: phone,
+          contactEmail: email, // notifications go to the login email
           companyId: company.id,
           roleId: null, // role assigned by the owner at approval
           status: UserStatus.PENDING_APPROVAL,
