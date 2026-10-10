@@ -258,6 +258,8 @@ async function main() {
         roleId: adminRole.id,
         name: 'Platform Admin',
         status: 'ACTIVE',
+        // where notifications go (findUserEmail reads contactEmail, not the login)
+        contactEmail: email,
         loginMethods: {
           create: { method: 'local', email, passwordHash, emailVerified: true },
         },
