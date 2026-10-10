@@ -63,8 +63,7 @@ describe('File Uploads (e2e)', () => {
         companyName: 'UPL Co',
         taxId: taxId,
         ownerName: 'Owner',
-        ownerEmail: email,
-        ownerPassword: password,
+        credentials: { type: 'password', email: email, password: password },
         ownerPhone: phone,
         ownerPhoneVerificationToken: token,
       })

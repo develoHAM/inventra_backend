@@ -41,8 +41,7 @@ describe('Stores & Corners (e2e)', () => {
         companyName: `SC Co ${n}`,
         taxId: taxId,
         ownerName: `Owner ${n}`,
-        ownerEmail: email,
-        ownerPassword: password,
+        credentials: { type: 'password', email: email, password: password },
         ownerPhone: phone,
         ownerPhoneVerificationToken: token,
       })
@@ -79,8 +78,7 @@ describe('Stores & Corners (e2e)', () => {
       .post('/auth/register/member')
       .send({
         joinCode: joinCode,
-        email: email,
-        password: password,
+        credentials: { type: 'password', email: email, password: password },
         name: tag,
         phone: phone,
         phoneVerificationToken: token,

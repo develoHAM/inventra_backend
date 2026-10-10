@@ -50,8 +50,7 @@ describe('Company join code (e2e)', () => {
       .post('/auth/register/member')
       .send({
         joinCode: joinCode,
-        email: email,
-        password: password,
+        credentials: { type: 'password', email: email, password: password },
         name: email.split('@')[0],
         phone: phone,
         phoneVerificationToken: token,
@@ -109,8 +108,11 @@ describe('Company join code (e2e)', () => {
         companyName: 'JC Co',
         taxId: taxId,
         ownerName: 'JC Owner',
-        ownerEmail: 'owner@jc.test',
-        ownerPassword: password,
+        credentials: {
+          type: 'password',
+          email: 'owner@jc.test',
+          password: password,
+        },
         ownerPhone: phone,
         ownerPhoneVerificationToken: token,
       })
@@ -226,8 +228,11 @@ describe('Company join code (e2e)', () => {
         .post('/auth/register/member')
         .send({
           joinCode: joinCode,
-          email: `probe-${phone}@jc.test`,
-          password: password,
+          credentials: {
+            type: 'password',
+            email: `probe-${phone}@jc.test`,
+            password: password,
+          },
           name: 'Prober',
           phone: phone,
           phoneVerificationToken: token,

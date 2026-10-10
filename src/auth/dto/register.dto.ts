@@ -1,12 +1,14 @@
 import { Transform } from 'class-transformer';
 import {
-  IsEmail,
+  IsDefined,
   IsNotEmpty,
+  IsObject,
   IsString,
   Matches,
-  MaxLength,
-  MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { CredentialsType } from './credentials.dto';
+import type { SignupCredentials } from './credentials.dto';
 import {
   normalizePhone,
   KOREAN_MOBILE_PATTERN,
@@ -20,14 +22,6 @@ export class RegisterDto {
   @IsString()
   @IsNotEmpty()
   taxId!: string;
-
-  @IsEmail()
-  ownerEmail!: string;
-
-  @IsString()
-  @MinLength(8)
-  @MaxLength(128)
-  ownerPassword!: string;
 
   @IsString()
   @IsNotEmpty()
@@ -43,4 +37,11 @@ export class RegisterDto {
   @IsString()
   @IsNotEmpty()
   ownerPhoneVerificationToken!: string;
+
+  // { type: 'password', email, password } | { type: 'social', signupToken, … }
+  @IsDefined()
+  @IsObject()
+  @ValidateNested()
+  @CredentialsType()
+  credentials!: SignupCredentials;
 }

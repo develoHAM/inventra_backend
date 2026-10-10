@@ -94,8 +94,11 @@ describe('Account recovery (e2e)', () => {
         companyName: 'AR Co',
         taxId: '660-00-00001',
         ownerName: 'AR Owner',
-        ownerEmail: ownerEmail,
-        ownerPassword: oldPassword,
+        credentials: {
+          type: 'password',
+          email: ownerEmail,
+          password: oldPassword,
+        },
         ownerPhone: ownerPhone,
         ownerPhoneVerificationToken: await verifiedPhoneToken(app, ownerPhone),
       })

@@ -97,8 +97,11 @@ describe('Notifications (e2e)', () => {
         companyName: companyName,
         taxId: taxId,
         ownerName: 'Owner',
-        ownerEmail: ownerEmail,
-        ownerPassword: 'password123',
+        credentials: {
+          type: 'password',
+          email: ownerEmail,
+          password: 'password123',
+        },
         ownerPhone: phone,
         ownerPhoneVerificationToken: token,
       })
@@ -201,8 +204,11 @@ describe('Notifications (e2e)', () => {
           companyName: companyName,
           taxId: taxId,
           ownerName: 'Owner 1b',
-          ownerEmail: ownerEmail1b,
-          ownerPassword: password,
+          credentials: {
+            type: 'password',
+            email: ownerEmail1b,
+            password: password,
+          },
           ownerPhone: phone,
           ownerPhoneVerificationToken: token,
         })
@@ -235,8 +241,11 @@ describe('Notifications (e2e)', () => {
         .post('/auth/register/member')
         .send({
           joinCode: company!.joinCode,
-          email: managerEmail,
-          password: password,
+          credentials: {
+            type: 'password',
+            email: managerEmail,
+            password: password,
+          },
           name: 'Manager 1b',
           phone: phone,
           phoneVerificationToken: token,

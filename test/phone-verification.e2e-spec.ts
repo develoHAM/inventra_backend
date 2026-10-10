@@ -34,13 +34,18 @@ describe('Phone verification (e2e)', () => {
     request(http)
       .post('/auth/phone/confirm')
       .send({ verificationId: verificationId });
-  const registerMember = (body: Record<string, unknown>) =>
+  // callers pass `email` at the top level for brevity; it goes into credentials
+  const registerMember = ({ email, ...body }: Record<string, unknown>) =>
     request(http)
       .post('/auth/register/member')
       .send({
         joinCode: joinCode,
-        password: 'password123',
         name: 'PV Member',
+        credentials: {
+          type: 'password',
+          email: email,
+          password: 'password123',
+        },
         ...body,
       });
 
@@ -114,8 +119,11 @@ describe('Phone verification (e2e)', () => {
         companyName: 'PV Co',
         taxId: '880-00-00001',
         ownerName: 'PV Owner',
-        ownerEmail: 'owner@pv.test',
-        ownerPassword: 'password123',
+        credentials: {
+          type: 'password',
+          email: 'owner@pv.test',
+          password: 'password123',
+        },
         ownerPhone: ownerPhoneDashed,
         ownerPhoneVerificationToken: ownerToken,
       })

@@ -1,12 +1,14 @@
 import { Transform } from 'class-transformer';
 import {
-  IsEmail,
+  IsDefined,
   IsNotEmpty,
+  IsObject,
   IsString,
   Matches,
-  MaxLength,
-  MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { CredentialsType } from './credentials.dto';
+import type { SignupCredentials } from './credentials.dto';
 import {
   normalizePhone,
   KOREAN_MOBILE_PATTERN,
@@ -17,14 +19,6 @@ export class RegisterMemberDto {
   @Transform(({ value }) => normalizeJoinCode(value))
   @Matches(JOIN_CODE_PATTERN, { message: 'joinCode must be 8 digits' })
   joinCode!: string;
-
-  @IsEmail()
-  email!: string;
-
-  @IsString()
-  @MinLength(8)
-  @MaxLength(128)
-  password!: string;
 
   @IsString()
   @IsNotEmpty()
@@ -40,4 +34,11 @@ export class RegisterMemberDto {
   @IsString()
   @IsNotEmpty()
   phoneVerificationToken!: string;
+
+  // { type: 'password', email, password } | { type: 'social', signupToken, … }
+  @IsDefined()
+  @IsObject()
+  @ValidateNested()
+  @CredentialsType()
+  credentials!: SignupCredentials;
 }

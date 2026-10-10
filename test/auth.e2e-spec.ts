@@ -67,7 +67,14 @@ describe('Auth & Authorization (e2e)', () => {
     const res = await request(http)
       .post('/auth/register')
       .send({
-        ...owner,
+        companyName: owner.companyName,
+        taxId: owner.taxId,
+        ownerName: owner.ownerName,
+        credentials: {
+          type: 'password',
+          email: owner.ownerEmail,
+          password: owner.ownerPassword,
+        },
         ownerPhone: phone,
         ownerPhoneVerificationToken: token,
       })
@@ -127,7 +134,12 @@ describe('Auth & Authorization (e2e)', () => {
     const res = await request(http)
       .post('/auth/register/member')
       .send({
-        ...member,
+        name: member.name,
+        credentials: {
+          type: 'password',
+          email: member.email,
+          password: member.password,
+        },
         joinCode: joinCode,
         phone: phone,
         phoneVerificationToken: token,
@@ -145,8 +157,12 @@ describe('Auth & Authorization (e2e)', () => {
     await request(http)
       .post('/auth/register/member')
       .send({
-        ...member,
-        email: 'nobody@e2e.test',
+        name: member.name,
+        credentials: {
+          type: 'password',
+          email: 'nobody@e2e.test',
+          password: member.password,
+        },
         joinCode: '00000000', // well-formed, but no company has it
         phone: phone,
         phoneVerificationToken: token,

@@ -62,8 +62,7 @@ describe('Push notifications (e2e)', () => {
       .post('/auth/register/member')
       .send({
         joinCode: joinCode,
-        email: email,
-        password: password,
+        credentials: { type: 'password', email: email, password: password },
         name: email.split('@')[0],
         phone: phone,
         phoneVerificationToken: token,
@@ -129,8 +128,11 @@ describe('Push notifications (e2e)', () => {
         companyName: companyName,
         taxId: taxId,
         ownerName: 'Push Owner',
-        ownerEmail: ownerEmail,
-        ownerPassword: password,
+        credentials: {
+          type: 'password',
+          email: ownerEmail,
+          password: password,
+        },
         ownerPhone: phone,
         ownerPhoneVerificationToken: token,
       })

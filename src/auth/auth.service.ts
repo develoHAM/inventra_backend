@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -72,11 +73,16 @@ export class AuthService {
       companyName,
       taxId,
       ownerName,
-      ownerEmail,
-      ownerPassword,
       ownerPhone,
       ownerPhoneVerificationToken,
+      credentials,
     } = dto;
+    // Narrowing: below this line TypeScript knows it's the password variant.
+    if (credentials.type !== 'password') {
+      throw new BadRequestException('Social signup not available yet');
+    }
+    const ownerEmail = credentials.email;
+    const ownerPassword = credentials.password;
 
     const [emailTaken, taxIdTaken, phoneTaken] = await Promise.all([
       this.prisma.userLoginMethod.findFirst({ where: { email: ownerEmail } }),
@@ -172,8 +178,12 @@ export class AuthService {
     refreshToken: string;
     user: Partial<UserModel>;
   }> {
-    const { joinCode, email, password, name, phone, phoneVerificationToken } =
-      dto;
+    const { joinCode, name, phone, phoneVerificationToken, credentials } = dto;
+    if (credentials.type !== 'password') {
+      throw new BadRequestException('Social signup not available yet');
+    }
+    const email = credentials.email;
+    const password = credentials.password;
 
     const [emailTaken, phoneTaken] = await Promise.all([
       this.prisma.userLoginMethod.findFirst({ where: { email: email } }),

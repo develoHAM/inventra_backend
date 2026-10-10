@@ -33,16 +33,22 @@ describe('AuthService', () => {
     companyName: 'Acme',
     taxId: '123-45-67890',
     ownerName: 'Jane Owner',
-    ownerEmail: 'jane@acme.com',
-    ownerPassword: 'password123',
+    credentials: {
+      type: 'password',
+      email: 'jane@acme.com',
+      password: 'password123',
+    },
     ownerPhone: '01012345678',
     ownerPhoneVerificationToken: 'owner-verification-token',
   };
 
   const memberDto = {
     joinCode: '48291307',
-    email: 'sam@acme.com',
-    password: 'password123',
+    credentials: {
+      type: 'password',
+      email: 'sam@acme.com',
+      password: 'password123',
+    },
     name: 'Sam Staff',
     phone: '01099998888',
     phoneVerificationToken: 'member-verification-token',
@@ -251,6 +257,28 @@ describe('AuthService', () => {
       expect(tx.user.create).not.toHaveBeenCalled();
       expect(tx.company.create).not.toHaveBeenCalled();
       expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('social credentials (not wired until Task 12)', () => {
+    const social = { type: 'social', signupToken: 'signup-token' };
+
+    it('register refuses them with 400 and touches nothing', async () => {
+      await expect(
+        service.register({ ...registerDto, credentials: social } as any),
+      ).rejects.toThrow(
+        new BadRequestException('Social signup not available yet'),
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('registerMember refuses them with 400 and touches nothing', async () => {
+      await expect(
+        service.registerMember({ ...memberDto, credentials: social } as any),
+      ).rejects.toThrow(
+        new BadRequestException('Social signup not available yet'),
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
 

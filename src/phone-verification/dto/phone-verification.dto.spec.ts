@@ -96,8 +96,11 @@ describe('RegisterDto (phone fields)', () => {
     companyName: 'Acme',
     taxId: '123-45-67890',
     ownerName: 'Jane Owner',
-    ownerEmail: 'jane@acme.com',
-    ownerPassword: 'password123',
+    credentials: {
+      type: 'password',
+      email: 'jane@acme.com',
+      password: 'password123',
+    },
     ownerPhone: '010-1234-5678',
     ownerPhoneVerificationToken: 'some-token',
   };
@@ -133,8 +136,11 @@ describe('RegisterDto (phone fields)', () => {
 describe('RegisterMemberDto (phone fields)', () => {
   const validBody = {
     joinCode: '48291307',
-    email: 'sam@acme.com',
-    password: 'password123',
+    credentials: {
+      type: 'password',
+      email: 'sam@acme.com',
+      password: 'password123',
+    },
     name: 'Sam Staff',
     phone: '010 9999 8888',
     phoneVerificationToken: 'some-token',
