@@ -16,6 +16,8 @@ describe('validateEnv — phone verifier and push sender rules', () => {
     S3_BUCKET: 'inventra-files-test',
     PHONE_VERIFIER: 'fake',
     PUSH_SENDER: 'fake',
+    LOGIN_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
+    VERIFICATION_CODE_SECRET: 'v'.repeat(32),
   };
 
   it('accepts the fake verifier outside production', () => {
@@ -90,5 +92,25 @@ describe('validateEnv — phone verifier and push sender rules', () => {
     const { PUSH_SENDER: _omitted, ...withoutPush } = baseEnv;
 
     expect(() => validateEnv(withoutPush)).toThrow(/PUSH_SENDER/);
+  });
+
+  it('accepts a 32-byte base64 encryption key', () => {
+    expect(() => validateEnv({ ...baseEnv })).not.toThrow();
+  });
+
+  it.each([
+    ['16 bytes', Buffer.alloc(16, 1).toString('base64')],
+    ['33 bytes', Buffer.alloc(33, 1).toString('base64')],
+    ['empty', ''],
+  ])('rejects an encryption key of %s', (_label, key) => {
+    expect(() =>
+      validateEnv({ ...baseEnv, LOGIN_TOKEN_ENCRYPTION_KEY: key }),
+    ).toThrow(/LOGIN_TOKEN_ENCRYPTION_KEY/);
+  });
+
+  it('requires a verification-code secret of at least 32 characters', () => {
+    expect(() =>
+      validateEnv({ ...baseEnv, VERIFICATION_CODE_SECRET: 'short' }),
+    ).toThrow(/VERIFICATION_CODE_SECRET/);
   });
 });

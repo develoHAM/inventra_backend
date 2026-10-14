@@ -24,6 +24,15 @@ export const envSchema = z
     // -- Push (FCM) --
     PUSH_SENDER: z.enum(['fcm', 'fake']),
     FIREBASE_SERVICE_ACCOUNT_PATH: z.string().min(1).optional(),
+    // -- Account security secrets --
+    // AES-256-GCM key for provider refresh tokens we must read back (Apple/Google)
+    LOGIN_TOKEN_ENCRYPTION_KEY: z
+      .string()
+      .refine((value) => Buffer.from(value, 'base64').length === 32, {
+        message: 'must be 32 bytes, base64-encoded (openssl rand -base64 32)',
+      }),
+    // HMAC key for emailed verification codes (a 6-digit code needs a keyed hash)
+    VERIFICATION_CODE_SECRET: z.string().min(32),
     // -- Database --
     DATABASE_URL: z
       .string()
