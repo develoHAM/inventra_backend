@@ -5,9 +5,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationChannel, UserStatus } from '../generated/prisma/enums';
 import {
   NOTIFICATIONS_QUEUE,
+  REDACTED_SEND_JOB_OPTIONS,
   SEND_JOB_OPTIONS,
   SEND_NOTIFICATION_JOB,
 } from './notifications.constants';
+import type { SendNotificationJobData } from './notifications.constants';
 import type { RenderedMessage } from './notification-templates';
 import { DevicesService } from '../devices/devices.service';
 import { EVENT_CHANNELS } from './event-channels';
@@ -21,6 +23,11 @@ export interface DispatchInput {
   subject?: string;
   body: string;
   data?: Record<string, string>; // push deep-link payload
+  /**
+   * Set for secret text (verification codes): the row stores this placeholder
+   * and the real `body` travels only inside the queue job.
+   */
+  redactedBody?: string;
 }
 
 @Injectable()
@@ -32,6 +39,7 @@ export class NotificationsService {
   ) {}
 
   async dispatch(input: DispatchInput): Promise<void> {
+    const isRedacted = input.redactedBody !== undefined;
     const notification = await this.prisma.notification.create({
       data: {
         eventType: input.eventType,
@@ -39,15 +47,19 @@ export class NotificationsService {
         recipientUserId: input.recipientUserId ?? null,
         recipientAddress: input.recipientAddress,
         subject: input.subject ?? null,
-        body: input.body,
+        // a redacted row never holds the secret text
+        body: isRedacted ? input.redactedBody! : input.body,
         data: input.data,
+        redacted: isRedacted,
       },
     });
-    await this.queue.add(
-      SEND_NOTIFICATION_JOB,
-      { notificationId: notification.id },
-      { ...SEND_JOB_OPTIONS, jobId: notification.id },
-    );
+    const jobData: SendNotificationJobData = isRedacted
+      ? { notificationId: notification.id, body: input.body }
+      : { notificationId: notification.id };
+    await this.queue.add(SEND_NOTIFICATION_JOB, jobData, {
+      ...(isRedacted ? REDACTED_SEND_JOB_OPTIONS : SEND_JOB_OPTIONS),
+      jobId: notification.id,
+    });
   }
 
   /** Where this user's notifications go (set at signup; independent of how they sign in). */

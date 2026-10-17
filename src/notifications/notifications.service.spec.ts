@@ -1,6 +1,7 @@
 import { NotificationsService } from './notifications.service';
 import { NotificationChannel, UserStatus } from '../generated/prisma/enums';
 import {
+  REDACTED_SEND_JOB_OPTIONS,
   SEND_JOB_OPTIONS,
   SEND_NOTIFICATION_JOB,
 } from './notifications.constants';
@@ -58,6 +59,7 @@ describe('NotificationsService', () => {
           recipientAddress: 'owner@example.com',
           subject: 'Approved',
           body: 'Your company was approved.',
+          redacted: false,
         },
       });
       // jobId = the row id, so re-enqueueing the same notification is a no-op
@@ -102,11 +104,61 @@ describe('NotificationsService', () => {
       });
     });
 
-    it('uses the shared retry policy (3 attempts, exponential backoff, drop on success)', () => {
+    it('uses the shared retry policy (3 attempts, exponential backoff, drop on success, priority 10)', () => {
       expect(SEND_JOB_OPTIONS).toEqual({
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: true,
+        // BullMQ runs unprioritized jobs first: regular mail yields to codes
+        priority: 10,
+      });
+    });
+
+    describe('redacted (secret text, e.g. a verification code)', () => {
+      const input = {
+        eventType: 'email.verificationCode',
+        channel: NotificationChannel.EMAIL,
+        recipientAddress: 'new@example.com',
+        subject: '[Inventra] 이메일 인증번호',
+        body: '인증번호 [482913]',
+        redactedBody: '인증번호 [******]',
+      };
+
+      it('stores ONLY the placeholder in the row, marked redacted', async () => {
+        await service.dispatch(input);
+
+        const row = prisma.notification.create.mock.calls[0][0].data;
+        expect(row.body).toBe('인증번호 [******]');
+        expect(row.redacted).toBe(true);
+        expect(JSON.stringify(row)).not.toContain('482913');
+      });
+
+      it('carries the real text inside the job, with the redacted options', async () => {
+        await service.dispatch(input);
+
+        expect(queue.add).toHaveBeenCalledWith(
+          SEND_NOTIFICATION_JOB,
+          { notificationId: 'notification-1', body: '인증번호 [482913]' },
+          { ...REDACTED_SEND_JOB_OPTIONS, jobId: 'notification-1' },
+        );
+      });
+
+      it('redacted options: short fixed retries, nothing left in Redis, no priority (front of the line)', () => {
+        expect(REDACTED_SEND_JOB_OPTIONS).toEqual({
+          attempts: 3,
+          backoff: { type: 'fixed', delay: 2000 },
+          removeOnComplete: true,
+          removeOnFail: true,
+        });
+        expect(REDACTED_SEND_JOB_OPTIONS).not.toHaveProperty('priority');
+      });
+
+      it('a normal notification carries no body in its job', async () => {
+        await service.dispatch({ ...input, redactedBody: undefined });
+
+        expect(queue.add.mock.calls[0][1]).toEqual({
+          notificationId: 'notification-1',
+        });
       });
     });
   });

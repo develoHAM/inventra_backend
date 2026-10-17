@@ -93,6 +93,30 @@ describe('NotificationsProcessor', () => {
     expect(email.send.mock.calls[0][0].data).toBeUndefined();
   });
 
+  it('a redacted row: sends the real text from the JOB, not the placeholder in the row', async () => {
+    prisma.notification.findUnique.mockResolvedValue({
+      ...pendingEmail,
+      body: '인증번호 [******]',
+      redacted: true,
+    });
+    const job = makeJob();
+    job.data.body = '인증번호 [482913]';
+
+    await processor.process(job);
+
+    expect(email.send).toHaveBeenCalledWith(
+      expect.objectContaining({ body: '인증번호 [482913]' }),
+    );
+  });
+
+  it('a normal row (no body in the job) sends the row text, as before', async () => {
+    await processor.process(makeJob());
+
+    expect(email.send).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'Your company was approved.' }),
+    );
+  });
+
   it('passes an undefined subject when the row has none', async () => {
     prisma.notification.findUnique.mockResolvedValue({
       ...pendingEmail,

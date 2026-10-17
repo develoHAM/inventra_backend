@@ -8,7 +8,7 @@ import {
 
 describe('NotificationsReconciler', () => {
   let reconciler: NotificationsReconciler;
-  let prisma: { notification: { findMany: jest.Mock } };
+  let prisma: { notification: { findMany: jest.Mock; updateMany: jest.Mock } };
   let queue: { add: jest.Mock };
 
   // Freeze "now" so the 10-minute cutoff is an exact, assertable Date.
@@ -17,7 +17,12 @@ describe('NotificationsReconciler', () => {
 
   beforeEach(() => {
     jest.useFakeTimers({ now: now });
-    prisma = { notification: { findMany: jest.fn().mockResolvedValue([]) } };
+    prisma = {
+      notification: {
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
     queue = { add: jest.fn().mockResolvedValue({ id: 'job' }) };
     reconciler = new NotificationsReconciler(prisma as any, queue as any);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
@@ -34,6 +39,7 @@ describe('NotificationsReconciler', () => {
     expect(prisma.notification.findMany).toHaveBeenCalledWith({
       where: {
         status: NotificationStatus.PENDING,
+        redacted: false, // a redacted row can't be rebuilt from its placeholder
         createdAt: { lt: tenMinutesAgo },
       },
       select: { id: true },
@@ -74,6 +80,29 @@ describe('NotificationsReconciler', () => {
     expect(requeued).toBe(0);
     expect(queue.add).not.toHaveBeenCalled();
     expect(Logger.prototype.warn).not.toHaveBeenCalled();
+  });
+
+  it('marks stale REDACTED rows FAILED instead of replaying them (the placeholder would be sent)', async () => {
+    await reconciler.requeueStalePending();
+
+    expect(prisma.notification.updateMany).toHaveBeenCalledWith({
+      where: {
+        status: NotificationStatus.PENDING,
+        redacted: true,
+        createdAt: { lt: tenMinutesAgo },
+      },
+      data: {
+        status: NotificationStatus.FAILED,
+        lastError: 'expired before delivery',
+      },
+    });
+  });
+
+  it('never re-enqueues a redacted row', async () => {
+    await reconciler.requeueStalePending();
+
+    const query = prisma.notification.findMany.mock.calls[0][0];
+    expect(query.where.redacted).toBe(false);
   });
 
   it('is scheduled every 5 minutes', () => {

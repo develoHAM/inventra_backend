@@ -14,6 +14,7 @@ import {
   PUSH_SENDER,
   SEND_NOTIFICATION_JOB,
 } from './notifications.constants';
+import type { SendNotificationJobData } from './notifications.constants';
 
 @Processor(NOTIFICATIONS_QUEUE)
 export class NotificationsProcessor extends WorkerHost {
@@ -27,7 +28,7 @@ export class NotificationsProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<{ notificationId: string }>): Promise<void> {
+  async process(job: Job<SendNotificationJobData>): Promise<void> {
     // A WorkerHost receives EVERY job on the queue, whatever its name.
     // Fail loudly (no retries) on anything that isn't a send job.
     if (job.name !== SEND_NOTIFICATION_JOB) {
@@ -44,7 +45,8 @@ export class NotificationsProcessor extends WorkerHost {
       await this.senderFor(notification.channel).send({
         to: notification.recipientAddress,
         subject: notification.subject ?? undefined,
-        body: notification.body,
+        // redacted rows hold a placeholder: the real text is only in the job
+        body: job.data.body ?? notification.body,
         // Push: what the app needs to deep-link on tap. eventType always,
         // plus the ids notifyUsers stored on the row (string → string).
         data:

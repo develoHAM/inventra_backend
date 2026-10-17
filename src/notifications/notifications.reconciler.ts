@@ -23,9 +23,25 @@ export class NotificationsReconciler {
   @Cron(CronExpression.EVERY_5_MINUTES)
   async requeueStalePending(): Promise<number> {
     const staleBefore = new Date(Date.now() - 10 * 60 * 1000);
+
+    // A redacted row's real text lived only in its job; replaying it would send
+    // the placeholder. The secret (a code) has expired anyway: record the failure.
+    await this.prisma.notification.updateMany({
+      where: {
+        status: NotificationStatus.PENDING,
+        redacted: true,
+        createdAt: { lt: staleBefore },
+      },
+      data: {
+        status: NotificationStatus.FAILED,
+        lastError: 'expired before delivery',
+      },
+    });
+
     const stale = await this.prisma.notification.findMany({
       where: {
         status: NotificationStatus.PENDING,
+        redacted: false,
         createdAt: { lt: staleBefore },
       },
       select: { id: true },
