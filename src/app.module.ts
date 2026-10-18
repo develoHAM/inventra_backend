@@ -24,6 +24,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { NotificationsModule } from './notifications/notifications.module';
 import { DevicesModule } from './devices/devices.module';
+import { EmailVerificationModule } from './email-verification/email-verification.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { DevicesModule } from './devices/devices.module';
     }),
     NotificationsModule,
     DevicesModule,
+    EmailVerificationModule,
     PrismaModule,
     StorageModule,
     SpreadsheetModule,

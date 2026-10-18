@@ -4,6 +4,12 @@ export interface RenderedMessage {
 }
 
 export const notificationTemplates = {
+  // Called twice by email verification: once with the code (sent), once
+  // with '******' (the placeholder stored in the notifications table).
+  emailVerificationCode: (code: string): RenderedMessage => ({
+    subject: '[Inventra] 이메일 인증번호',
+    body: `인증번호 [${code}]를 입력해 주세요. 10분 안에 입력해야 합니다. 본인이 요청하지 않았다면 이 메일을 무시해 주세요.`,
+  }),
   companyApproved: (companyName: string): RenderedMessage => ({
     subject: `[Inventra] 회사 가입이 승인되었습니다`,
     body: `${companyName} 회사의 가입이 승인되었습니다. 이제 Inventra에 로그인할 수 있습니다.`,
