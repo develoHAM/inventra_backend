@@ -25,6 +25,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { NotificationsModule } from './notifications/notifications.module';
 import { DevicesModule } from './devices/devices.module';
 import { EmailVerificationModule } from './email-verification/email-verification.module';
+import { SocialAuthModule } from './social-auth/social-auth.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { EmailVerificationModule } from './email-verification/email-verification
     NotificationsModule,
     DevicesModule,
     EmailVerificationModule,
+    SocialAuthModule,
     PrismaModule,
     StorageModule,
     SpreadsheetModule,

@@ -210,7 +210,7 @@ export interface SocialIdentityVerifier {
 export const SOCIAL_VERIFIERS = 'SOCIAL_VERIFIERS'; // Record<SocialProvider, SocialIdentityVerifier>
 ```
 - `SocialNonceService.issue(): Promise<{ nonce, expiresInSeconds: 300 }>` (stores SHA-256 of the nonce); `consume(nonce): Promise<boolean>` (conditional `updateMany` unconsumed + unexpired); helper `nonceClaimFor(nonce) = sha256hex(nonce)`.
-- `FakeSocialVerifier.register(credentialToken, identity)`; `verify({ token })` returns it or throws 401.
+- `FakeSocialVerifier.register(credentialToken, identity)`; `forProvider(provider)` returns that provider's `SocialIdentityVerifier` view: `verify({ token })` returns the identity, or throws 401 if the token is unknown or registered for another provider; `disconnect` is recorded in `disconnected`. `SOCIAL_PROVIDERS` (runtime list) derives the `SocialProvider` type. With `SOCIAL_VERIFIER=real` the factory throws until Tasks 7–10 add the real verifiers.
 - Env: `SOCIAL_VERIFIER`, `KAKAO_NATIVE_APP_KEY`, `KAKAO_ADMIN_KEY`, `GOOGLE_CLIENT_IDS` (comma-separated), `GOOGLE_CLIENT_SECRET`, `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY_PATH`, `APPLE_BUNDLE_ID`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`; `superRefine`: all required when `real`, production refuses `fake`.
 - [ ] Steps: tests → implement → green → commit + push.
 

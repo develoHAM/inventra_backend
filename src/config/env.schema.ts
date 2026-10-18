@@ -1,5 +1,19 @@
 import { z } from 'zod';
 
+// Every provider credential the real verifiers need (all four providers ship together).
+const SOCIAL_PROVIDER_ENV = [
+  'KAKAO_NATIVE_APP_KEY',
+  'KAKAO_ADMIN_KEY',
+  'GOOGLE_CLIENT_IDS',
+  'GOOGLE_CLIENT_SECRET',
+  'APPLE_TEAM_ID',
+  'APPLE_KEY_ID',
+  'APPLE_PRIVATE_KEY_PATH',
+  'APPLE_BUNDLE_ID',
+  'FACEBOOK_APP_ID',
+  'FACEBOOK_APP_SECRET',
+] as const;
+
 export const envSchema = z
   .object({
     // -- App --
@@ -24,6 +38,18 @@ export const envSchema = z
     // -- Push (FCM) --
     PUSH_SENDER: z.enum(['fcm', 'fake']),
     FIREBASE_SERVICE_ACCOUNT_PATH: z.string().min(1).optional(),
+    // -- Social login (Kakao · Google · Facebook · Apple) --
+    SOCIAL_VERIFIER: z.enum(['real', 'fake']),
+    KAKAO_NATIVE_APP_KEY: z.string().min(1).optional(), // the id token's audience
+    KAKAO_ADMIN_KEY: z.string().min(1).optional(), // unlinks a user from our app
+    GOOGLE_CLIENT_IDS: z.string().min(1).optional(), // comma-separated audiences
+    GOOGLE_CLIENT_SECRET: z.string().min(1).optional(), // exchanges serverAuthCode
+    APPLE_TEAM_ID: z.string().min(1).optional(),
+    APPLE_KEY_ID: z.string().min(1).optional(),
+    APPLE_PRIVATE_KEY_PATH: z.string().min(1).optional(), // the .p8 key file
+    APPLE_BUNDLE_ID: z.string().min(1).optional(), // the id token's audience
+    FACEBOOK_APP_ID: z.string().min(1).optional(),
+    FACEBOOK_APP_SECRET: z.string().min(1).optional(),
     // -- Account security secrets --
     // AES-256-GCM key for provider refresh tokens we must read back (Apple/Google)
     LOGIN_TOKEN_ENCRYPTION_KEY: z
@@ -84,6 +110,24 @@ export const envSchema = z
       context.addIssue({
         code: 'custom',
         path: ['PUSH_SENDER'],
+        message: 'fake is not allowed in production',
+      });
+    }
+    if (env.SOCIAL_VERIFIER === 'real') {
+      for (const name of SOCIAL_PROVIDER_ENV) {
+        if (!env[name]) {
+          context.addIssue({
+            code: 'custom',
+            path: [name],
+            message: 'required when SOCIAL_VERIFIER=real',
+          });
+        }
+      }
+    }
+    if (env.NODE_ENV === 'production' && env.SOCIAL_VERIFIER === 'fake') {
+      context.addIssue({
+        code: 'custom',
+        path: ['SOCIAL_VERIFIER'],
         message: 'fake is not allowed in production',
       });
     }
