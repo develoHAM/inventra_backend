@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { SignJWT, errors } from 'jose';
 import type { JWTVerifyGetKey } from 'jose';
-import { checkNonce, verifyIdToken } from './id-token';
+import { checkNonce, claimIsTrue, verifyIdToken } from './id-token';
 import { nonceClaimFor } from '../social-nonce.service';
 import { fakeProviderKeys } from '../../../test/helpers/provider-keys';
 
@@ -168,5 +168,18 @@ describe('checkNonce', () => {
 
   it('optional (Google) and the token has none → passes', () => {
     expect(() => checkNonce({}, undefined, { required: false })).not.toThrow();
+  });
+});
+
+describe('claimIsTrue', () => {
+  it.each([
+    [true, true],
+    ['true', true], // Apple sends email_verified as a string
+    [false, false],
+    ['false', false],
+    [undefined, false],
+    [1, false],
+  ])('%p → %p', (value, expected) => {
+    expect(claimIsTrue(value)).toBe(expected);
   });
 });

@@ -68,6 +68,11 @@ export async function verifyIdToken(
   return payload as IdTokenPayload;
 }
 
+/** A boolean claim that providers send as `true` or (Apple) the string "true". */
+export function claimIsTrue(value: unknown): boolean {
+  return value === true || value === 'true';
+}
+
 /**
  * The token's `nonce` claim must be SHA-256(the raw nonce the app sent us).
  * `required`: the provider always binds one (Kakao, Apple, Facebook iOS); if

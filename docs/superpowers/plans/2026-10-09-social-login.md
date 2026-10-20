@@ -28,6 +28,7 @@
 - **Redacted dispatch (Task 4).** The spec routes the emailed verification code through the notification queue (project rule: every sent notification goes through the queue). A queued row stores its text, so the code would sit in plain text in `notifications`. The row stores `******`; the real text rides only in the BullMQ job (removed on completion or failure); the reconciler never replays a redacted row. This is the design drafted on 2026-09-27 and dropped when OCTOMO removed outbound SMS.
 - **`jose` is ESM-only** → added to the unit-Jest `transformIgnorePatterns` (like `nodemailer`); runtime and e2e load it natively.
 - **Kakao email verification by admin-key lookup (Task 7, decided 2026-10-18).** Kakao's ID token carries `email` but never `email_verified`, so the plan's `payload.email_verified === true` would always be false. The verifier asks `/v2/user/me` with the admin key (no app-contract change; the app still sends only `{ idToken }`) and fails soft to "unverified".
+- **Google refresh-token exchange fails soft (Task 8, 2026-10-20).** The plan said exchange failure → 503 and `invalid_grant` → 401. But the ID token alone proves the identity, the refresh token only serves best-effort revocation, and Google returns one only on first consent anyway — so blocking sign-in on it would trade a login for a nice-to-have. Same rule as Kakao's email lookup: problems mean `null` + a warning.
 
 ## Review Focus
 1. **The same social identity signing up twice at once** (double-tapped "sign up") → exactly one account; the loser gets 400 (ticket spent) or 409 (unique index) — Task 12.
@@ -223,7 +224,7 @@ export const SOCIAL_VERIFIERS = 'SOCIAL_VERIFIERS'; // Record<SocialProvider, So
 
 ### Task 8: Google verifier
 **Files:** `google.verifier.ts` + spec.
-- verify `{ idToken, serverAuthCode }`: JWKS `https://www.googleapis.com/oauth2/v3/certs`, `issuer: ['https://accounts.google.com', 'accounts.google.com']`, `audience: GOOGLE_CLIENT_IDS`; nonce checked only if the token has one; then `POST https://oauth2.googleapis.com/token` (`grant_type=authorization_code, code, client_id=<web client id>, client_secret`) → `refresh_token`. Exchange failure → 503; a 400 `invalid_grant` → 401.
+- verify `{ idToken, serverAuthCode }`: JWKS `https://www.googleapis.com/oauth2/v3/certs`, `issuer: ['https://accounts.google.com', 'accounts.google.com']`, `audience: GOOGLE_CLIENT_IDS`; nonce checked only if the token has one; then `POST https://oauth2.googleapis.com/token` (`grant_type=authorization_code, code, client_id=<web client id>, client_secret`) → `refresh_token`. **As built (2026-10-20):** the exchange fails soft — any failure (network, `invalid_grant`, no `refresh_token` because it isn't the first consent) gives `refreshToken: null` with a logged warning, never a failed sign-in; the exchange's `id_token` `sub` must equal the verified token's `sub` or the refresh token is discarded. `redirect_uri` is sent empty. `email_verified` via `claimIsTrue` (`true` or `"true"`). Settings: `{ audiences, webClientId, clientSecret }`; the factory takes `webClientId` = the FIRST entry of `GOOGLE_CLIENT_IDS`.
 - disconnect: `POST https://oauth2.googleapis.com/revoke` (form `token=<refresh token>`).
 
 ### Task 9: Apple verifier

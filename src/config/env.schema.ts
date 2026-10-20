@@ -42,7 +42,7 @@ export const envSchema = z
     SOCIAL_VERIFIER: z.enum(['real', 'fake']),
     KAKAO_NATIVE_APP_KEY: z.string().min(1).optional(), // the id token's audience
     KAKAO_ADMIN_KEY: z.string().min(1).optional(), // unlinks a user from our app
-    GOOGLE_CLIENT_IDS: z.string().min(1).optional(), // comma-separated audiences
+    GOOGLE_CLIENT_IDS: z.string().min(1).optional(), // comma-separated; the FIRST is the web client
     GOOGLE_CLIENT_SECRET: z.string().min(1).optional(), // exchanges serverAuthCode
     APPLE_TEAM_ID: z.string().min(1).optional(),
     APPLE_KEY_ID: z.string().min(1).optional(),
