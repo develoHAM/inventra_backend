@@ -1,6 +1,6 @@
-import { Logger } from '@nestjs/common';
-import { createRemoteJWKSet, decodeJwt } from 'jose';
+import { createRemoteJWKSet } from 'jose';
 import type { JWTVerifyGetKey } from 'jose';
+import { exchangeCodeForRefreshToken } from './code-exchange';
 import { checkNonce, claimIsTrue, verifyIdToken } from './id-token';
 import type {
   SocialIdentity,
@@ -23,8 +23,6 @@ export interface GoogleSettings {
 
 /** App sends `{ idToken, serverAuthCode? }` from Google Sign-In (offline access on). */
 export class GoogleVerifier implements SocialIdentityVerifier {
-  private readonly logger = new Logger(GoogleVerifier.name);
-
   constructor(
     private readonly settings: GoogleSettings,
     private readonly keySet: JWTVerifyGetKey = createRemoteJWKSet(
@@ -58,12 +56,7 @@ export class GoogleVerifier implements SocialIdentityVerifier {
     };
   }
 
-  /**
-   * Trade the one-time serverAuthCode for a refresh token: the only thing that
-   * lets us revoke our access later. Google returns one only on the user's
-   * first consent, and the identity is already proven, so any problem here
-   * means "no refresh token" (logged), never a failed sign-in.
-   */
+  /** The serverAuthCode → refresh token (Google sends one only on first consent). */
   private async refreshTokenFrom(
     serverAuthCode: unknown,
     googleUserId: string,
@@ -71,46 +64,18 @@ export class GoogleVerifier implements SocialIdentityVerifier {
     if (typeof serverAuthCode !== 'string' || serverAuthCode.length === 0) {
       return null;
     }
-    try {
-      const response = await fetch(GOOGLE_TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          code: serverAuthCode,
-          client_id: this.settings.webClientId,
-          client_secret: this.settings.clientSecret,
-          redirect_uri: '', // native apps have no redirect
-        }).toString(),
-        signal: AbortSignal.timeout(5000),
-      });
-      if (!response.ok) {
-        throw new Error(
-          `Google token exchange responded ${response.status} - ${await response.text()}`,
-        );
-      }
-      const body = (await response.json()) as {
-        refresh_token?: unknown;
-        id_token?: unknown;
-      };
-      if (typeof body.refresh_token !== 'string') return null; // not the first consent
-
-      // The code must be this user's: never attach someone else's grant to the account.
-      // Decoding without a signature check is fine here: this id_token came straight
-      // from Google's token endpoint over HTTPS, in answer to our authenticated call.
-      const exchangedFor =
-        typeof body.id_token === 'string'
-          ? decodeJwt(body.id_token).sub
-          : undefined;
-      if (exchangedFor !== googleUserId) {
-        throw new Error('the auth code belongs to a different Google user');
-      }
-      return body.refresh_token;
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Google refresh token not obtained: ${reason}`);
-      return null;
-    }
+    return exchangeCodeForRefreshToken({
+      provider: 'Google',
+      tokenUrl: GOOGLE_TOKEN_URL,
+      form: {
+        grant_type: 'authorization_code',
+        code: serverAuthCode,
+        client_id: this.settings.webClientId,
+        client_secret: this.settings.clientSecret,
+        redirect_uri: '', // native apps have no redirect
+      },
+      expectedSub: googleUserId,
+    });
   }
 
   /** Revoke our access with the stored refresh token (nothing to do without one). */
