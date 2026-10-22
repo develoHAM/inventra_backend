@@ -1,44 +1,134 @@
 import { UnauthorizedException } from '@nestjs/common';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildSocialVerifiers } from './social-auth.module';
+import { AppleVerifier } from './verifiers/apple.verifier';
+import { FacebookVerifier } from './verifiers/facebook.verifier';
 import { FakeSocialVerifier } from './verifiers/fake.verifier';
+import { GoogleVerifier } from './verifiers/google.verifier';
+import { KakaoVerifier } from './verifiers/kakao.verifier';
 import { SOCIAL_PROVIDERS } from './verifiers/social-identity-verifier';
 
 describe('buildSocialVerifiers', () => {
-  const configWith = (socialVerifier: 'real' | 'fake') =>
-    ({ get: jest.fn().mockReturnValue(socialVerifier) }) as any;
+  /** A ConfigService stand-in that answers from a plain object. */
+  const configFrom = (env: Record<string, string>) =>
+    ({ get: jest.fn((key: string) => env[key]) }) as any;
 
-  it('fake: every provider gets a verifier', () => {
-    const verifiers = buildSocialVerifiers(
-      configWith('fake'),
-      new FakeSocialVerifier(),
-    );
+  describe('fake', () => {
+    it('every provider gets a verifier', () => {
+      const verifiers = buildSocialVerifiers(
+        configFrom({ SOCIAL_VERIFIER: 'fake' }),
+        new FakeSocialVerifier(),
+      );
 
-    expect(Object.keys(verifiers).sort()).toEqual([...SOCIAL_PROVIDERS].sort());
-  });
-
-  it('fake: each verifier speaks for its own provider only', async () => {
-    const fake = new FakeSocialVerifier();
-    fake.register('google-token-1', {
-      provider: 'google',
-      providerUserId: 'google-user-1',
-      email: null,
-      emailVerified: false,
-      name: null,
-      refreshToken: null,
+      expect(Object.keys(verifiers).sort()).toEqual(
+        [...SOCIAL_PROVIDERS].sort(),
+      );
     });
-    const verifiers = buildSocialVerifiers(configWith('fake'), fake);
 
-    await expect(
-      verifiers.google.verify({ token: 'google-token-1' }),
-    ).resolves.toMatchObject({ providerUserId: 'google-user-1' });
-    await expect(
-      verifiers.apple.verify({ token: 'google-token-1' }),
-    ).rejects.toBeInstanceOf(UnauthorizedException);
+    it('each verifier speaks for its own provider only', async () => {
+      const fake = new FakeSocialVerifier();
+      fake.register('google-token-1', {
+        provider: 'google',
+        providerUserId: 'google-user-1',
+        email: null,
+        emailVerified: false,
+        name: null,
+        refreshToken: null,
+      });
+      const verifiers = buildSocialVerifiers(
+        configFrom({ SOCIAL_VERIFIER: 'fake' }),
+        fake,
+      );
+
+      await expect(
+        verifiers.google.verify({ token: 'google-token-1' }),
+      ).resolves.toMatchObject({ providerUserId: 'google-user-1' });
+      await expect(
+        verifiers.apple.verify({ token: 'google-token-1' }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    });
   });
 
-  it('real: refuses to start until Tasks 7–10 add the provider verifiers', () => {
-    expect(() =>
-      buildSocialVerifiers(configWith('real'), new FakeSocialVerifier()),
-    ).toThrow(/not built yet/);
+  describe('real', () => {
+    let keyDirectory: string;
+    let realEnv: Record<string, string>;
+
+    beforeAll(() => {
+      // the .p8 is only read here, not parsed: any text will do
+      keyDirectory = mkdtempSync(join(tmpdir(), 'inventra-apple-key-'));
+      const keyPath = join(keyDirectory, 'AuthKey_KEY1234567.p8');
+      writeFileSync(keyPath, '-----BEGIN PRIVATE KEY-----\ntest\n');
+      realEnv = {
+        SOCIAL_VERIFIER: 'real',
+        KAKAO_NATIVE_APP_KEY: 'kakao-native-app-key',
+        KAKAO_ADMIN_KEY: 'kakao-admin-key',
+        GOOGLE_CLIENT_IDS:
+          ' web.apps.googleusercontent.com , ios.apps.googleusercontent.com ,',
+        GOOGLE_CLIENT_SECRET: 'google-client-secret',
+        APPLE_TEAM_ID: 'TEAM123456',
+        APPLE_KEY_ID: 'KEY1234567',
+        APPLE_PRIVATE_KEY_PATH: keyPath,
+        APPLE_BUNDLE_ID: 'com.inventra.app',
+        FACEBOOK_APP_ID: '1234567890',
+        FACEBOOK_APP_SECRET: 'facebook-app-secret',
+      };
+    });
+
+    afterAll(() => {
+      rmSync(keyDirectory, { recursive: true, force: true });
+    });
+
+    it('builds the real verifier for each provider', () => {
+      const verifiers = buildSocialVerifiers(
+        configFrom(realEnv),
+        new FakeSocialVerifier(),
+      );
+
+      expect(verifiers.kakao).toBeInstanceOf(KakaoVerifier);
+      expect(verifiers.google).toBeInstanceOf(GoogleVerifier);
+      expect(verifiers.apple).toBeInstanceOf(AppleVerifier);
+      expect(verifiers.facebook).toBeInstanceOf(FacebookVerifier);
+    });
+
+    it('Google: every listed id is an audience; the FIRST is the web client', () => {
+      const verifiers = buildSocialVerifiers(
+        configFrom(realEnv),
+        new FakeSocialVerifier(),
+      );
+
+      expect((verifiers.google as GoogleVerifier)['settings']).toEqual({
+        audiences: [
+          'web.apps.googleusercontent.com',
+          'ios.apps.googleusercontent.com',
+        ],
+        webClientId: 'web.apps.googleusercontent.com',
+        clientSecret: 'google-client-secret',
+      });
+    });
+
+    it('Apple: the key file is read at startup', () => {
+      const verifiers = buildSocialVerifiers(
+        configFrom(realEnv),
+        new FakeSocialVerifier(),
+      );
+
+      expect((verifiers.apple as AppleVerifier)['settings'].privateKeyPem).toBe(
+        '-----BEGIN PRIVATE KEY-----\ntest\n',
+      );
+    });
+
+    it('Apple: a missing key file stops startup (not the first sign-in)', () => {
+      expect(() =>
+        buildSocialVerifiers(
+          configFrom({
+            ...realEnv,
+            APPLE_PRIVATE_KEY_PATH: join(keyDirectory, 'missing.p8'),
+          }),
+          new FakeSocialVerifier(),
+        ),
+      ).toThrow(/ENOENT/);
+    });
   });
 });
