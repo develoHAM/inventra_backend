@@ -10,9 +10,17 @@ import { PhoneVerificationModule } from '../phone-verification/phone-verificatio
 import { AccountRecoveryController } from './account-recovery.controller';
 import { AccountRecoveryService } from './account-recovery.service';
 import { DevicesModule } from '../devices/devices.module';
+import { SignupTicketsModule } from '../social-auth/signup-tickets/signup-tickets.module';
+import { EmailVerificationModule } from '../email-verification/email-verification.module';
 
 @Module({
-  imports: [JwtModule.register({}), PhoneVerificationModule, DevicesModule],
+  imports: [
+    JwtModule.register({}),
+    PhoneVerificationModule,
+    DevicesModule,
+    SignupTicketsModule, // social signup spends the ticket
+    EmailVerificationModule, // …and, when needed, the contact-email proof
+  ],
   controllers: [AuthController, AccountRecoveryController],
   providers: [
     TokenService,

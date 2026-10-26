@@ -1,4 +1,7 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { Module, UnauthorizedException } from '@nestjs/common';
+import { AuthService } from '../auth/auth.service';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { NotificationsService } from '../notifications/notifications.service';
 import { ConfigModule } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { Test } from '@nestjs/testing';
@@ -140,11 +143,21 @@ describe('buildSocialVerifiers', () => {
   });
 });
 
+/** Stands in for NotificationsModule, whose BullMQ queue would reach for Redis. */
+@Module({
+  providers: [
+    { provide: NotificationsService, useValue: { dispatch: jest.fn() } },
+  ],
+  exports: [NotificationsService],
+})
+class StubNotificationsModule {}
+
 describe('SocialAuthModule wiring', () => {
-  // Builds the REAL module graph (SocialAuthModule → AuthModule,
-  // SignupTicketsModule, …) with only the database swapped out: a missing
-  // export or a circular import fails here instead of at app start.
-  it('Nest can resolve every dependency of the social sign-in endpoints', async () => {
+  // Builds the REAL module graph (SocialAuthModule → AuthModule →
+  // SignupTicketsModule, EmailVerificationModule, …) with only the database
+  // and the notification queue swapped out: a missing export or a circular
+  // import fails here instead of at app start.
+  it('Nest can resolve every dependency of social sign-in and signup', async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [
         ConfigModule.forRoot({
@@ -169,12 +182,16 @@ describe('SocialAuthModule wiring', () => {
     })
       .overrideProvider(PrismaService)
       .useValue({})
+      .overrideModule(NotificationsModule)
+      .useModule(StubNotificationsModule)
       .compile();
 
     expect(moduleRef.get(SocialAuthService)).toBeInstanceOf(SocialAuthService);
     expect(moduleRef.get(SocialAuthController)).toBeInstanceOf(
       SocialAuthController,
     );
+    // AuthModule now spends signup tickets and email proofs (Task 12)
+    expect(moduleRef.get(AuthService)).toBeInstanceOf(AuthService);
     await moduleRef.close();
   });
 });

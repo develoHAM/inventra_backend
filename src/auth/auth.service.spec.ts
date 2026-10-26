@@ -17,6 +17,7 @@ describe('AuthService', () => {
   let tx: {
     user: { create: jest.Mock; update: jest.Mock };
     company: { create: jest.Mock; findUnique: jest.Mock };
+    userLoginMethod: { createMany: jest.Mock };
   };
   let passwordService: { hash: jest.Mock; verify: jest.Mock };
   let tokenService: {
@@ -28,6 +29,18 @@ describe('AuthService', () => {
   let eventEmitter: { emit: jest.Mock };
   let phoneVerification: { consume: jest.Mock };
   let devices: { unregister: jest.Mock };
+  let signupTickets: { consume: jest.Mock };
+  let emailVerification: { consume: jest.Mock };
+
+  /** A spent Kakao ticket whose provider email is verified. */
+  const kakaoTicket = {
+    provider: 'kakao',
+    providerUserId: '4012345678',
+    email: 'owner@kakao.com',
+    emailVerified: true,
+    name: '김사장',
+    providerRefreshToken: null,
+  };
 
   const registerDto = {
     companyName: 'Acme',
@@ -74,6 +87,10 @@ describe('AuthService', () => {
           joinCode: '48291307',
         }),
       },
+      // the first login method: ON CONFLICT DO NOTHING → count 1 inserted, 0 skipped
+      userLoginMethod: {
+        createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
     };
 
     prisma = {
@@ -116,6 +133,8 @@ describe('AuthService', () => {
     eventEmitter = { emit: jest.fn().mockReturnValue(true) };
     phoneVerification = { consume: jest.fn().mockResolvedValue(undefined) };
     devices = { unregister: jest.fn().mockResolvedValue(undefined) };
+    signupTickets = { consume: jest.fn().mockResolvedValue(kakaoTicket) };
+    emailVerification = { consume: jest.fn().mockResolvedValue(undefined) };
     service = new AuthService(
       prisma,
       passwordService as any,
@@ -123,6 +142,8 @@ describe('AuthService', () => {
       eventEmitter as any,
       phoneVerification as any,
       devices as any,
+      signupTickets as any,
+      emailVerification as any,
     );
   });
 
@@ -260,25 +281,280 @@ describe('AuthService', () => {
     });
   });
 
-  describe('social credentials (not wired until Task 12)', () => {
-    const social = { type: 'social', signupToken: 'signup-token' };
+  describe('social signup (credentials.type = social)', () => {
+    const social = { type: 'social', signupToken: 'raw-signup-token' };
+    const socialOwner = (credentials: Record<string, unknown> = social) =>
+      ({ ...registerDto, credentials: credentials }) as any;
+    /** The data the owner was created with. */
+    const createdOwner = () => tx.user.create.mock.calls[0][0].data;
+    /** The login row inserted for the new user. */
+    const insertedLogin = () =>
+      tx.userLoginMethod.createMany.mock.calls[0][0].data[0];
 
-    it('register refuses them with 400 and touches nothing', async () => {
-      await expect(
-        service.register({ ...registerDto, credentials: social } as any),
-      ).rejects.toThrow(
-        new BadRequestException('Social signup not available yet'),
-      );
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+    it('creates the owner with the provider login (no password), from the ticket', async () => {
+      const result = await service.register(socialOwner());
+
+      expect(tx.userLoginMethod.createMany).toHaveBeenCalledWith({
+        data: [
+          {
+            method: 'kakao',
+            providerUserId: '4012345678',
+            email: 'owner@kakao.com',
+            emailVerified: true,
+            refreshToken: null,
+            userId: 'user-1',
+          },
+        ],
+        skipDuplicates: true, // INSERT … ON CONFLICT DO NOTHING
+      });
+      expect(result).toMatchObject({
+        accessToken: 'access-token',
+        user: { id: 'user-1' },
+      });
     });
 
-    it('registerMember refuses them with 400 and touches nothing', async () => {
-      await expect(
-        service.registerMember({ ...memberDto, credentials: social } as any),
-      ).rejects.toThrow(
-        new BadRequestException('Social signup not available yet'),
+    it('a verified provider email becomes the contact email', async () => {
+      await service.register(socialOwner());
+
+      expect(createdOwner().contactEmail).toBe('owner@kakao.com');
+      expect(emailVerification.consume).not.toHaveBeenCalled();
+    });
+
+    it('spends phone token → ticket inside ONE transaction, before the user is created', async () => {
+      await service.register(socialOwner());
+
+      expect(signupTickets.consume).toHaveBeenCalledWith(
+        tx,
+        'raw-signup-token',
       );
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(
+        phoneVerification.consume.mock.invocationCallOrder[0],
+      ).toBeLessThan(signupTickets.consume.mock.invocationCallOrder[0]);
+      expect(signupTickets.consume.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.user.create.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('no password: no email-taken check, no hashing (never matched by email)', async () => {
+      await service.register(socialOwner());
+
+      expect(prisma.userLoginMethod.findFirst).not.toHaveBeenCalled();
+      expect(passwordService.hash).not.toHaveBeenCalled();
+    });
+
+    it('an Apple ticket keeps its (already encrypted) refresh token on the login', async () => {
+      signupTickets.consume.mockResolvedValue({
+        ...kakaoTicket,
+        provider: 'apple',
+        providerRefreshToken: 'encrypted-apple-refresh',
+      });
+
+      await service.register(socialOwner());
+
+      expect(insertedLogin()).toMatchObject({
+        method: 'apple',
+        refreshToken: 'encrypted-apple-refresh',
+      });
+    });
+
+    it('an invalid ticket → 400, nothing created, nothing emitted', async () => {
+      signupTickets.consume.mockRejectedValue(
+        new BadRequestException('Invalid or expired signup token'),
+      );
+
+      await expect(service.register(socialOwner())).rejects.toThrow(
+        new BadRequestException('Invalid or expired signup token'),
+      );
+      expect(tx.user.create).not.toHaveBeenCalled();
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+
+    it('a double-tapped signup: the second spend of the same ticket fails → one account', async () => {
+      // the conditional updateMany lets exactly one transaction spend it
+      signupTickets.consume
+        .mockResolvedValueOnce(kakaoTicket)
+        .mockRejectedValueOnce(
+          new BadRequestException('Invalid or expired signup token'),
+        );
+
+      const attempts = await Promise.allSettled([
+        service.register(socialOwner()),
+        service.register(socialOwner()),
+      ]);
+
+      expect(attempts.map((attempt) => attempt.status).sort()).toEqual([
+        'fulfilled',
+        'rejected',
+      ]);
+      expect(tx.user.create).toHaveBeenCalledTimes(1);
+    });
+
+    describe('the contact email', () => {
+      const appleLaterSignIn = {
+        ...kakaoTicket,
+        provider: 'apple',
+        email: null, // Apple's second-and-later sign-ins carry no email
+        emailVerified: false,
+      };
+
+      it.each([
+        ['no provider email (Apple, later sign-in)', appleLaterSignIn],
+        [
+          'an unverified provider email',
+          { ...kakaoTicket, emailVerified: false },
+        ],
+      ])('%s and nothing typed → 400, no account', async (_label, ticket) => {
+        signupTickets.consume.mockResolvedValue(ticket);
+
+        await expect(service.register(socialOwner())).rejects.toThrow(
+          new BadRequestException('A verified contact email is required'),
+        );
+        expect(tx.user.create).not.toHaveBeenCalled();
+      });
+
+      it('a typed address proven by an emailed code → spent in the same transaction, stored normalized', async () => {
+        signupTickets.consume.mockResolvedValue(appleLaterSignIn);
+
+        await service.register(
+          socialOwner({
+            ...social,
+            contactEmail: ' Owner@Example.COM ',
+            emailVerificationToken: 'raw-email-token',
+          }),
+        );
+
+        expect(emailVerification.consume).toHaveBeenCalledWith(tx, {
+          token: 'raw-email-token',
+          email: ' Owner@Example.COM ',
+        });
+        expect(createdOwner().contactEmail).toBe('owner@example.com');
+        // the login keeps what the PROVIDER said (none here)
+        expect(insertedLogin().email).toBeNull();
+      });
+
+      it("the user's typed, verified address wins over a verified provider email", async () => {
+        await service.register(
+          socialOwner({
+            ...social,
+            contactEmail: 'work@acme.com',
+            emailVerificationToken: 'raw-email-token',
+          }),
+        );
+
+        expect(createdOwner().contactEmail).toBe('work@acme.com');
+      });
+
+      it('an invalid email token → 400 from consume, no account (the ticket rolls back too)', async () => {
+        emailVerification.consume.mockRejectedValue(
+          new BadRequestException('Invalid or expired email verification'),
+        );
+
+        await expect(
+          service.register(
+            socialOwner({
+              ...social,
+              contactEmail: 'work@acme.com',
+              emailVerificationToken: 'wrong',
+            }),
+          ),
+        ).rejects.toThrow(BadRequestException);
+        expect(tx.user.create).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['an address without its code', { contactEmail: 'work@acme.com' }],
+        [
+          'a code without its address',
+          { emailVerificationToken: 'raw-email-token' },
+        ],
+      ])(
+        '%s → 400, even with a verified provider email',
+        async (_label, extra) => {
+          await expect(
+            service.register(socialOwner({ ...social, ...extra })),
+          ).rejects.toThrow(
+            new BadRequestException('A verified contact email is required'),
+          );
+        },
+      );
+    });
+
+    describe('the same identity registering twice at once (two tickets)', () => {
+      it('the login row is inserted right after the user, in the same transaction', async () => {
+        await service.register(socialOwner());
+
+        expect(tx.user.create.mock.invocationCallOrder[0]).toBeLessThan(
+          tx.userLoginMethod.createMany.mock.invocationCallOrder[0],
+        );
+      });
+
+      it('the identity got registered meanwhile → the insert is skipped (count 0) → 409', async () => {
+        tx.userLoginMethod.createMany.mockResolvedValue({ count: 0 });
+
+        await expect(service.register(socialOwner())).rejects.toThrow(
+          new ConflictException('This account is already registered'),
+        );
+        // thrown INSIDE the transaction → it rolls back (the new user row too)
+        await expect(prisma.$transaction.mock.results[0].value).rejects.toThrow(
+          ConflictException,
+        );
+        expect(eventEmitter.emit).not.toHaveBeenCalled();
+        expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+      });
+
+      it('any other failure passes through as is', async () => {
+        const failure = new Error('db down');
+        tx.userLoginMethod.createMany.mockRejectedValue(failure);
+
+        await expect(service.register(socialOwner())).rejects.toBe(failure);
+      });
+    });
+
+    describe('member signup', () => {
+      const socialMember = { ...memberDto, credentials: social } as any;
+
+      beforeEach(() => {
+        tx.user.create.mockResolvedValue({
+          id: 'member-1',
+          status: 'PENDING_APPROVAL',
+          companyId: 'company-1',
+          roleId: null,
+        });
+      });
+
+      it('creates the member with the provider login', async () => {
+        await service.registerMember(socialMember);
+
+        expect(tx.user.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            companyId: 'company-1',
+            contactEmail: 'owner@kakao.com',
+          }),
+        });
+        expect(insertedLogin()).toMatchObject({
+          method: 'kakao',
+          providerUserId: '4012345678',
+          userId: 'member-1',
+        });
+      });
+
+      it('spends the ticket only AFTER the join code is found', async () => {
+        await service.registerMember(socialMember);
+
+        expect(tx.company.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
+          signupTickets.consume.mock.invocationCallOrder[0],
+        );
+      });
+
+      it('a mistyped join code → 404 and the ticket is NOT spent (the phone token is)', async () => {
+        tx.company.findUnique.mockResolvedValue(null);
+
+        await expect(service.registerMember(socialMember)).rejects.toThrow(
+          new NotFoundException('Invalid join code'),
+        );
+        expect(signupTickets.consume).not.toHaveBeenCalled();
+        expect(phoneVerification.consume).toHaveBeenCalledTimes(1);
+      });
     });
   });
 
@@ -305,13 +581,18 @@ describe('AuthService', () => {
           companyId: 'company-1',
           roleId: null,
           status: UserStatus.PENDING_APPROVAL,
-          loginMethods: {
-            create: expect.objectContaining({
-              method: 'local',
-              email: 'sam@acme.com',
-            }),
-          },
         }),
+      });
+      expect(tx.userLoginMethod.createMany).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({
+            method: 'local',
+            email: 'sam@acme.com',
+            passwordHash: 'hashed-pw',
+            userId: 'member-1',
+          }),
+        ],
+        skipDuplicates: true,
       });
       expect(prisma.refreshToken.create).toHaveBeenCalled();
       expect(result).toEqual({

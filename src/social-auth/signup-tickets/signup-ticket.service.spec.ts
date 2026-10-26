@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { SignupTicketService } from './signup-ticket.service';
 import { decryptToken } from '../../common/token-cipher';
@@ -100,5 +101,74 @@ describe('SignupTicketService', () => {
     const second = await service.create(appleIdentity);
 
     expect(first.signupToken).not.toBe(second.signupToken);
+  });
+
+  describe('consume (inside the signup transaction)', () => {
+    let tx: {
+      socialSignupTicket: {
+        updateMany: jest.Mock;
+        findUniqueOrThrow: jest.Mock;
+      };
+    };
+    const storedRow = {
+      id: 'ticket-1',
+      tokenHash: sha256('raw-signup-token'),
+      provider: 'apple',
+      providerUserId: '001234.0a1b2c3d4e5f.0123',
+      email: null,
+      emailVerified: false,
+      name: '김 사장',
+      providerRefreshToken: 'already-encrypted-blob',
+      expiresAt: new Date('2026-10-22T10:15:00.000Z'),
+      consumedAt: now,
+      createdAt: now,
+    };
+
+    beforeEach(() => {
+      tx = {
+        socialSignupTicket: {
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          findUniqueOrThrow: jest.fn().mockResolvedValue(storedRow),
+        },
+      };
+    });
+
+    it("spends it in ONE conditional write, through the caller's transaction", async () => {
+      await service.consume(tx as any, 'raw-signup-token');
+
+      expect(tx.socialSignupTicket.updateMany).toHaveBeenCalledWith({
+        where: {
+          tokenHash: sha256('raw-signup-token'),
+          consumedAt: null,
+          expiresAt: { gt: now },
+        },
+        data: { consumedAt: now },
+      });
+      expect(prisma.socialSignupTicket.create).not.toHaveBeenCalled();
+    });
+
+    it('returns what it vouches for; the refresh token stays encrypted', async () => {
+      await expect(
+        service.consume(tx as any, 'raw-signup-token'),
+      ).resolves.toEqual({
+        provider: 'apple',
+        providerUserId: '001234.0a1b2c3d4e5f.0123',
+        email: null,
+        emailVerified: false,
+        name: '김 사장',
+        providerRefreshToken: 'already-encrypted-blob',
+      });
+    });
+
+    it('nothing matched (made up, expired, or already used) → 400, nothing read', async () => {
+      tx.socialSignupTicket.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.consume(tx as any, 'raw-signup-token'),
+      ).rejects.toThrow(
+        new BadRequestException('Invalid or expired signup token'),
+      );
+      expect(tx.socialSignupTicket.findUniqueOrThrow).not.toHaveBeenCalled();
+    });
   });
 });

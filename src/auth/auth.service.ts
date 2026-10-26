@@ -28,6 +28,21 @@ import { PhoneVerificationService } from '../phone-verification/phone-verificati
 import { generateUniqueJoinCode } from '../users/join-code';
 import { DevicesService } from '../devices/devices.service';
 import { LogoutDto } from './dto/logout.dto';
+import { Prisma } from '../generated/prisma/client';
+import type {
+  SignupCredentials,
+  SocialCredentialsDto,
+} from './dto/credentials.dto';
+import { SignupTicketService } from '../social-auth/signup-tickets/signup-ticket.service';
+import type { SpentSignupTicket } from '../social-auth/signup-tickets/signup-ticket.service';
+import { EmailVerificationService } from '../email-verification/email-verification.service';
+import { normalizeEmail } from '../email-verification/email';
+
+/** What a signup creates for its credentials, decided inside the transaction. */
+interface SignupLogin {
+  contactEmail: string; // where notifications go
+  loginMethod: Omit<Prisma.UserLoginMethodCreateManyInput, 'userId'>; // the user doesn't exist yet
+}
 
 @Injectable()
 export class AuthService {
@@ -38,6 +53,8 @@ export class AuthService {
     private readonly eventEmitter: EventEmitter2,
     private readonly phoneVerification: PhoneVerificationService,
     private readonly devices: DevicesService,
+    private readonly signupTickets: SignupTicketService,
+    private readonly emailVerification: EmailVerificationService,
   ) {}
 
   /** Our access + refresh tokens for a signed-in user: every way of signing in ends here. */
@@ -65,6 +82,113 @@ export class AuthService {
     });
   }
 
+  /** Password signups only: the login email must not be any login method's email. */
+  private async isLoginEmailTaken(
+    credentials: SignupCredentials,
+  ): Promise<boolean> {
+    if (credentials.type !== 'password') return false;
+    const existing = await this.prisma.userLoginMethod.findFirst({
+      where: { email: credentials.email },
+    });
+    return existing !== null;
+  }
+
+  /** Hashed BEFORE the transaction (argon2 is slow); social signups have no password. */
+  private passwordHashFor(
+    credentials: SignupCredentials,
+  ): Promise<string | null> {
+    return credentials.type === 'password'
+      ? this.passwordService.hash(credentials.password)
+      : Promise.resolve(null);
+  }
+
+  /**
+   * Inside the signup transaction: spend whatever proves the credentials and
+   * return the login method to create, plus where notifications go.
+   */
+  private async signupLogin(
+    transaction: Prisma.TransactionClient,
+    credentials: SignupCredentials,
+    passwordHash: string | null,
+  ): Promise<SignupLogin> {
+    if (credentials.type === 'password') {
+      return {
+        contactEmail: credentials.email, // notifications go to the login email
+        loginMethod: {
+          method: 'local',
+          email: credentials.email,
+          passwordHash: passwordHash!, // hashed by passwordHashFor for password credentials
+        },
+      };
+    }
+
+    const ticket = await this.signupTickets.consume(
+      transaction,
+      credentials.signupToken,
+    );
+    return {
+      contactEmail: await this.contactEmailFor(
+        transaction,
+        ticket,
+        credentials,
+      ),
+      loginMethod: {
+        method: ticket.provider,
+        providerUserId: ticket.providerUserId,
+        email: ticket.email,
+        emailVerified: ticket.emailVerified,
+        refreshToken: ticket.providerRefreshToken, // already encrypted
+      },
+    };
+  }
+
+  /**
+   * Where a social signup's notifications go: an address the user typed and
+   * proved with an emailed code (their explicit choice wins), else the
+   * provider's verified email, else 400. Never an unverified address.
+   */
+  private async contactEmailFor(
+    transaction: Prisma.TransactionClient,
+    ticket: SpentSignupTicket,
+    credentials: SocialCredentialsDto,
+  ): Promise<string> {
+    const { contactEmail, emailVerificationToken } = credentials;
+    if (contactEmail !== undefined && emailVerificationToken !== undefined) {
+      await this.emailVerification.consume(transaction, {
+        token: emailVerificationToken,
+        email: contactEmail,
+      });
+      return normalizeEmail(contactEmail) as string;
+    }
+    const neitherSent =
+      contactEmail === undefined && emailVerificationToken === undefined;
+    if (neitherSent && ticket.emailVerified && ticket.email !== null) {
+      return ticket.email;
+    }
+    throw new BadRequestException('A verified contact email is required');
+  }
+
+  /**
+   * The new user's first login method — unless that provider identity is
+   * already registered (two tickets for the same person, signed up at once).
+   * skipDuplicates makes it INSERT … ON CONFLICT DO NOTHING: a duplicate comes
+   * back as count 0 instead of an error. The throw rolls the whole signup back,
+   * the new user row included.
+   */
+  private async addFirstLoginMethod(
+    transaction: Prisma.TransactionClient,
+    userId: string,
+    loginMethod: SignupLogin['loginMethod'],
+  ): Promise<void> {
+    const inserted = await transaction.userLoginMethod.createMany({
+      data: [{ ...loginMethod, userId: userId }],
+      skipDuplicates: true,
+    });
+    if (inserted.count === 0) {
+      throw new ConflictException('This account is already registered');
+    }
+  }
+
   async register(dto: RegisterDto): Promise<{
     accessToken: string;
     refreshToken: string;
@@ -78,15 +202,9 @@ export class AuthService {
       ownerPhoneVerificationToken,
       credentials,
     } = dto;
-    // Narrowing: below this line TypeScript knows it's the password variant.
-    if (credentials.type !== 'password') {
-      throw new BadRequestException('Social signup not available yet');
-    }
-    const ownerEmail = credentials.email;
-    const ownerPassword = credentials.password;
 
     const [emailTaken, taxIdTaken, phoneTaken] = await Promise.all([
-      this.prisma.userLoginMethod.findFirst({ where: { email: ownerEmail } }),
+      this.isLoginEmailTaken(credentials),
       this.prisma.company.findUnique({ where: { taxId: taxId } }),
       this.findPhoneOwner(ownerPhone),
     ]);
@@ -95,7 +213,7 @@ export class AuthService {
     if (taxIdTaken) throw new ConflictException('Tax ID already registered');
     if (phoneTaken) throw new ConflictException('Phone already registered');
 
-    const passwordHash = await this.passwordService.hash(ownerPassword);
+    const passwordHash = await this.passwordHashFor(credentials);
 
     const role = await this.prisma.role.findUniqueOrThrow({
       where: {
@@ -107,30 +225,33 @@ export class AuthService {
 
     const { user, company } = await this.prisma.$transaction(
       async (transaction) => {
-        // Spend the proof first: if anything below fails, this rolls back too.
+        // Spend the proofs first: if anything below fails, they roll back too.
         await this.phoneVerification.consume(transaction, {
           token: ownerPhoneVerificationToken,
           phone: ownerPhone,
           purpose: PhoneVerificationPurpose.SIGNUP,
         });
+        const login = await this.signupLogin(
+          transaction,
+          credentials,
+          passwordHash,
+        );
 
         const newUser = await transaction.user.create({
           data: {
             name: ownerName,
             phone: ownerPhone,
-            contactEmail: ownerEmail, // notifications go to the login email
+            contactEmail: login.contactEmail,
             companyId: null,
             status: 'PENDING_APPROVAL',
             roleId: role.id,
-            loginMethods: {
-              create: {
-                method: 'local',
-                email: ownerEmail,
-                passwordHash: passwordHash,
-              },
-            },
           },
         });
+        await this.addFirstLoginMethod(
+          transaction,
+          newUser.id,
+          login.loginMethod,
+        );
 
         const newCompany = await transaction.company.create({
           data: {
@@ -180,21 +301,16 @@ export class AuthService {
     user: Partial<UserModel>;
   }> {
     const { joinCode, name, phone, phoneVerificationToken, credentials } = dto;
-    if (credentials.type !== 'password') {
-      throw new BadRequestException('Social signup not available yet');
-    }
-    const email = credentials.email;
-    const password = credentials.password;
 
     const [emailTaken, phoneTaken] = await Promise.all([
-      this.prisma.userLoginMethod.findFirst({ where: { email: email } }),
+      this.isLoginEmailTaken(credentials),
       this.findPhoneOwner(phone),
     ]);
 
     if (emailTaken) throw new ConflictException('Email already registered');
     if (phoneTaken) throw new ConflictException('Phone already registered');
 
-    const passwordHash = await this.passwordService.hash(password);
+    const passwordHash = await this.passwordHashFor(credentials);
 
     // The phone token is spent BEFORE the join code is looked at, so learning
     // whether a code exists costs a real phone verification. An unknown code
@@ -211,23 +327,24 @@ export class AuthService {
       });
       if (!company) return null;
 
+      // Only now: a mistyped join code must not burn the user's signup ticket.
+      const login = await this.signupLogin(
+        transaction,
+        credentials,
+        passwordHash,
+      );
+
       const user = await transaction.user.create({
         data: {
           name: name,
           phone: phone,
-          contactEmail: email, // notifications go to the login email
+          contactEmail: login.contactEmail,
           companyId: company.id,
           roleId: null, // role assigned by the owner at approval
           status: UserStatus.PENDING_APPROVAL,
-          loginMethods: {
-            create: {
-              method: 'local',
-              email: email,
-              passwordHash: passwordHash,
-            },
-          },
         },
       });
+      await this.addFirstLoginMethod(transaction, user.id, login.loginMethod);
       return { user: user, companyId: company.id };
     });
 

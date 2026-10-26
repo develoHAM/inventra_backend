@@ -27,7 +27,7 @@ export class PasswordCredentialsDto {
   password!: string;
 }
 
-/** Sign up with a social identity vouched for by POST /auth/social/:provider. */
+/** Sign up with a social identity vouched for by POST /auth/social/login (SIGNUP_REQUIRED). */
 export class SocialCredentialsDto {
   @Equals('social')
   type!: 'social';
@@ -37,12 +37,13 @@ export class SocialCredentialsDto {
   @IsNotEmpty()
   signupToken!: string;
 
-  // only when the provider shared no verified email: a typed address…
+  // a typed address for notifications (required when the provider shared no
+  // verified email; otherwise it overrides the provider email)…
   @IsOptional()
   @IsEmail()
   contactEmail?: string;
 
-  // …proven by POST /auth/email/confirm
+  // …always with its proof from POST /auth/email/confirm (both or neither)
   @IsOptional()
   @IsString()
   @IsNotEmpty()
