@@ -1,8 +1,15 @@
 import { UnauthorizedException } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { Test } from '@nestjs/testing';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildSocialVerifiers } from './social-auth.module';
+import { PrismaModule } from '../prisma/prisma.module';
+import { PrismaService } from '../prisma/prisma.service';
+import { SocialAuthController } from './social-auth.controller';
+import { SocialAuthModule, buildSocialVerifiers } from './social-auth.module';
+import { SocialAuthService } from './social-auth.service';
 import { AppleVerifier } from './verifiers/apple.verifier';
 import { FacebookVerifier } from './verifiers/facebook.verifier';
 import { FakeSocialVerifier } from './verifiers/fake.verifier';
@@ -130,5 +137,44 @@ describe('buildSocialVerifiers', () => {
         ),
       ).toThrow(/ENOENT/);
     });
+  });
+});
+
+describe('SocialAuthModule wiring', () => {
+  // Builds the REAL module graph (SocialAuthModule → AuthModule,
+  // SignupTicketsModule, …) with only the database swapped out: a missing
+  // export or a circular import fails here instead of at app start.
+  it('Nest can resolve every dependency of the social sign-in endpoints', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({
+          isGlobal: true,
+          ignoreEnvFile: true,
+          load: [
+            () => ({
+              SOCIAL_VERIFIER: 'fake',
+              PHONE_VERIFIER: 'fake',
+              PUSH_SENDER: 'fake',
+              LOGIN_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString(
+                'base64',
+              ),
+              VERIFICATION_CODE_SECRET: 'v'.repeat(32),
+            }),
+          ],
+        }),
+        EventEmitterModule.forRoot(),
+        PrismaModule,
+        SocialAuthModule,
+      ],
+    })
+      .overrideProvider(PrismaService)
+      .useValue({})
+      .compile();
+
+    expect(moduleRef.get(SocialAuthService)).toBeInstanceOf(SocialAuthService);
+    expect(moduleRef.get(SocialAuthController)).toBeInstanceOf(
+      SocialAuthController,
+    );
+    await moduleRef.close();
   });
 });

@@ -2,8 +2,12 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { readFileSync } from 'node:fs';
 import { Env } from '../config/env.schema';
+import { AuthModule } from '../auth/auth.module';
 import { SOCIAL_VERIFIERS } from './social-auth.constants';
+import { SocialAuthController } from './social-auth.controller';
+import { SocialAuthService } from './social-auth.service';
 import { SocialNonceService } from './social-nonce.service';
+import { SignupTicketsModule } from './signup-tickets/signup-tickets.module';
 import { AppleVerifier } from './verifiers/apple.verifier';
 import { FacebookVerifier } from './verifiers/facebook.verifier';
 import { FakeSocialVerifier } from './verifiers/fake.verifier';
@@ -61,7 +65,10 @@ export function buildSocialVerifiers(
 }
 
 @Module({
+  imports: [AuthModule, SignupTicketsModule],
+  controllers: [SocialAuthController],
   providers: [
+    SocialAuthService,
     SocialNonceService,
     FakeSocialVerifier,
     {

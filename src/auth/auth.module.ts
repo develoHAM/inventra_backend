@@ -21,6 +21,6 @@ import { DevicesModule } from '../devices/devices.module';
     AuthService,
     AccountRecoveryService,
   ],
-  exports: [TokenService, PasswordService],
+  exports: [TokenService, PasswordService, AuthService], // AuthService: social sign-in issues sessions
 })
 export class AuthModule {}

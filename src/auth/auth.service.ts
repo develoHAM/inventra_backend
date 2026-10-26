@@ -40,7 +40,8 @@ export class AuthService {
     private readonly devices: DevicesService,
   ) {}
 
-  private async issueTokens(userId: string) {
+  /** Our access + refresh tokens for a signed-in user: every way of signing in ends here. */
+  async issueSessionFor(userId: string) {
     const accessToken = await this.tokenService.signAccess(userId);
     const { token: refreshToken, expiresAt } =
       await this.tokenService.signRefresh(userId);
@@ -159,7 +160,7 @@ export class AuthService {
       registeredEvent,
     );
 
-    const tokens = await this.issueTokens(user.id);
+    const tokens = await this.issueSessionFor(user.id);
 
     return {
       accessToken: tokens.accessToken,
@@ -242,7 +243,7 @@ export class AuthService {
       joinRequestedEvent,
     );
 
-    const tokens = await this.issueTokens(user.id);
+    const tokens = await this.issueSessionFor(user.id);
 
     return {
       accessToken: tokens.accessToken,
@@ -288,7 +289,7 @@ export class AuthService {
     if (user.deletedAt || !CAN_AUTHENTICATE.includes(user.status))
       throw new UnauthorizedException('Account cannot sign in');
 
-    const tokens = await this.issueTokens(user.id);
+    const tokens = await this.issueSessionFor(user.id);
 
     return {
       accessToken: tokens.accessToken,
@@ -328,7 +329,7 @@ export class AuthService {
       where: { tokenHash: tokenHash },
       data: { revokedAt: new Date() },
     });
-    const tokens = await this.issueTokens(stored.userId);
+    const tokens = await this.issueSessionFor(stored.userId);
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,

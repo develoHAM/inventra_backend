@@ -15,7 +15,7 @@
 ## Global Constraints
 - Providers: `kakao | google | facebook | apple`. `method` column values: `local | kakao | google | facebook | apple`.
 - Never auto-link by email; an unknown identity is always `SIGNUP_REQUIRED`.
-- `POST /auth/social/:provider` always answers **200** with `status: 'LOGGED_IN' | 'SIGNUP_REQUIRED'`.
+- `POST /auth/social/login` (provider in the body) always answers **200** with `status: 'LOGGED_IN' | 'SIGNUP_REQUIRED'`.
 - Signup ticket: single-use, hashed, **15 min**. Nonce: single-use, hashed, **5 min**. Email code: 6 digits, HMAC-hashed, **10 min**, max **5** attempts, **60 s** resend cooldown, **10** sends per address per 24 h; email token **10 min**, single-use.
 - Nonce: required for Apple, Kakao and Facebook iOS; Google only if the token carries one. Token claim must equal `SHA-256(nonce)` (hex).
 - Contact email = a provider email with `emailVerified: true`, else `contactEmail` + a valid `emailVerificationToken`, else 400.
@@ -53,7 +53,7 @@
 | `src/social-auth/social-nonce.service.ts` | issue / consume nonces |
 | `src/social-auth/social-auth.service.ts` | sign-in (LOGGED_IN / SIGNUP_REQUIRED), tickets |
 | `src/social-auth/login-methods.service.ts` + controller | list / link / link-local / unlink |
-| `src/social-auth/social-auth.controller.ts` | `/auth/social/nonce`, `/auth/social/:provider` |
+| `src/social-auth/social-auth.controller.ts` | `/auth/social/nonce`, `/auth/social/login` |
 | `src/social-auth/social-auth.module.ts` | wiring + verifier selection |
 | `test/helpers/*`, every e2e signup call | the `credentials` shape |
 | `test/social-auth.e2e-spec.ts` | the flows end to end |
@@ -245,8 +245,9 @@ export const SOCIAL_VERIFIERS = 'SOCIAL_VERIFIERS'; // Record<SocialProvider, So
 
 ### Task 11: Social sign-in (`LOGGED_IN` / `SIGNUP_REQUIRED`)
 **Files:** `social-auth.service.ts`, `social-auth.controller.ts`, `dto/social-sign-in.dto.ts` + specs.
-**Produces:** `POST /auth/social/nonce`, `POST /auth/social/:provider` (public, 200); `AuthService.issueSessionFor(userId)` (extracted from `issueTokens`, exported for social); `SocialAuthService.signIn(provider, body)`.
+**Produces:** `POST /auth/social/nonce`, `POST /auth/social/login` (public, 200; body `{ provider, credential, nonce? }`); `AuthService.issueSessionFor(userId)` (extracted from `issueTokens`, exported for social); `SocialAuthService.signIn(body)`.
 - consume the nonce first (when given/required) → verify → find `UserLoginMethod { method: provider, providerUserId }` with its live user → login rules (`CAN_AUTHENTICATE`, not deleted) → update `refreshToken` (encrypted) + `lastLoginAt` → `{ status: 'LOGGED_IN', …tokens, user }`; else create a ticket (raw token returned, SHA-256 stored, `providerRefreshToken` encrypted) → `{ status: 'SIGNUP_REQUIRED', signupToken, expiresInSeconds: 900, profile }`.
+- **As built (2026-10-22):** `SignupTicketService` lives in its own `SignupTicketsModule` (imported by `SocialAuthModule` now and by `AuthModule` in Task 12) so the two never import each other; it caps the ticket name at 100 chars and returns the stored `profile`. `AuthService.issueTokens` → public `issueSessionFor`; `AuthModule` exports `AuthService`. A sign-in with no new provider refresh token keeps the stored one. The provider travels in the BODY (`SocialSignInDto.provider`, `@IsIn(SOCIAL_PROVIDERS)`, 400), not the path (changed 2026-10-23: no route shares a level with a variable segment); `credential` is `@IsObject()` (each verifier checks its fields). Because the nonce is spent first, a 503 from the provider means the app restarts the login (new nonce). A wiring spec compiles the real `SocialAuthModule` graph (database stubbed).
 
 ### Task 12: Social signup (`credentials.type = 'social'`)
 **Files:** Modify `auth.service.ts` + spec · `SignupTicketService.consume(tx, token): Promise<Ticket>`.
@@ -256,7 +257,7 @@ export const SOCIAL_VERIFIERS = 'SOCIAL_VERIFIERS'; // Record<SocialProvider, So
 ### Task 13: Login methods (list / link / link-local / unlink)
 **Files:** `login-methods.service.ts`, `login-methods.controller.ts` + specs (routes under `/users/me/login-methods`, logged in, no permission).
 - list → `[{ id, method, email: method === 'local' ? maskEmail(email) : null }]`.
-- link `:provider` (same body + nonce) → verify → 409 if the identity belongs to another user (`UQ_login_methods_identity`) or the user already has this provider (`UQ_login_methods_user_method`) → create.
+- link `POST /users/me/login-methods` (body `{ provider, credential, nonce? }`, like social login) → verify → 409 if the identity belongs to another user (`UQ_login_methods_identity`) or the user already has this provider (`UQ_login_methods_user_method`) → create.
 - link `local` `{ email, password, emailVerificationToken }` → consume email token → email unused by any local login (409) → hash → create.
 - unlink `:id` → own row (404 otherwise) → count of the user's methods = 1 → 409 → delete → best-effort `verifiers[method].disconnect(…)` (decrypting the refresh token) with a logged warning on failure.
 

@@ -43,7 +43,7 @@ Nonce: the app calls `POST /auth/social/nonce`, passes `SHA-256(nonce)` to the p
 
 ```
 app: native SDK → provider credential
-app: POST /auth/social/:provider { credential, nonce? }
+app: POST /auth/social/login { provider, credential, nonce? }
 api: SocialIdentityVerifier[provider].verify() → SocialIdentity
      ├─ known (UserLoginMethod(method = provider, providerUserId)) → our tokens
      └─ unknown → SocialSignupTicket → SIGNUP_REQUIRED
@@ -75,15 +75,15 @@ JWT checks use **`jose`** (`createRemoteJWKSet` caches provider keys): signature
 | Route | Auth | Behavior |
 |---|---|---|
 | `POST /auth/social/nonce` | public | `{ nonce, expiresInSeconds: 300 }`; stored hashed, single-use |
-| `POST /auth/social/:provider` | public | verify → `200 { status: 'LOGGED_IN', accessToken, refreshToken, user }` or `200 { status: 'SIGNUP_REQUIRED', signupToken, expiresInSeconds: 900, profile: { email, emailVerified, name } }` |
+| `POST /auth/social/login` | public | body `{ provider, credential, nonce? }`; verify → `200 { status: 'LOGGED_IN', accessToken, refreshToken, user }` or `200 { status: 'SIGNUP_REQUIRED', signupToken, expiresInSeconds: 900, profile: { email, emailVerified, name } }` |
 | `POST /auth/register` · `POST /auth/register/member` | public | body carries `credentials` (tagged union, below) |
 | `POST /auth/email/start` · `POST /auth/email/confirm` | public | emailed 6-digit code → `emailVerificationToken` |
 | `GET /users/me/login-methods` | logged in | `[{ id, method, email? (masked for local) }]` |
-| `POST /users/me/login-methods/:provider` | logged in | link (same body as social login); 409 if the identity belongs to another account or the user already has this provider |
+| `POST /users/me/login-methods` | logged in | link a provider (same body as social login: `{ provider, credential, nonce? }`); 409 if the identity belongs to another account or the user already has this provider |
 | `POST /users/me/login-methods/local` | logged in | `{ email, password, emailVerificationToken }` — add a password to a social-only account; email code-verified and unused by any other local login |
 | `DELETE /users/me/login-methods/:id` | logged in | own rows only; **409 if it is the last one**; best-effort `disconnect()` at the provider |
 
-`:provider` ∈ `kakao | google | facebook | apple`.
+`provider` (in the body, never the path) ∈ `kakao | google | facebook | apple`. Changed from a `:provider` path variable on 2026-10-23 so no route shares a level with a variable segment.
 
 ### Signup body (tagged `credentials`)
 
