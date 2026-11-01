@@ -27,7 +27,7 @@ import {
   EMAIL_VERIFICATION_CODE_EVENT,
   MAX_EMAIL_CODE_ATTEMPTS,
 } from './email-verification.constants';
-import { normalizeEmail } from './email';
+import { normalizeEmail } from '../common/email';
 
 @Injectable()
 export class EmailVerificationService {

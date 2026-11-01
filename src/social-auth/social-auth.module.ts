@@ -8,6 +8,9 @@ import { SocialAuthController } from './social-auth.controller';
 import { SocialAuthService } from './social-auth.service';
 import { SocialNonceService } from './social-nonce.service';
 import { SignupTicketsModule } from './signup-tickets/signup-tickets.module';
+import { EmailVerificationModule } from '../email-verification/email-verification.module';
+import { LoginMethodsController } from './login-methods/login-methods.controller';
+import { LoginMethodsService } from './login-methods/login-methods.service';
 import { AppleVerifier } from './verifiers/apple.verifier';
 import { FacebookVerifier } from './verifiers/facebook.verifier';
 import { FakeSocialVerifier } from './verifiers/fake.verifier';
@@ -65,10 +68,11 @@ export function buildSocialVerifiers(
 }
 
 @Module({
-  imports: [AuthModule, SignupTicketsModule],
-  controllers: [SocialAuthController],
+  imports: [AuthModule, SignupTicketsModule, EmailVerificationModule],
+  controllers: [SocialAuthController, LoginMethodsController],
   providers: [
     SocialAuthService,
+    LoginMethodsService,
     SocialNonceService,
     FakeSocialVerifier,
     {

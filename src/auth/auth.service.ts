@@ -36,7 +36,7 @@ import type {
 import { SignupTicketService } from '../social-auth/signup-tickets/signup-ticket.service';
 import type { SpentSignupTicket } from '../social-auth/signup-tickets/signup-ticket.service';
 import { EmailVerificationService } from '../email-verification/email-verification.service';
-import { normalizeEmail } from '../email-verification/email';
+import { normalizeEmail } from '../common/email';
 
 /** What a signup creates for its credentials, decided inside the transaction. */
 interface SignupLogin {
@@ -169,11 +169,12 @@ export class AuthService {
   }
 
   /**
-   * The new user's first login method — unless that provider identity is
-   * already registered (two tickets for the same person, signed up at once).
-   * skipDuplicates makes it INSERT … ON CONFLICT DO NOTHING: a duplicate comes
-   * back as count 0 instead of an error. The throw rolls the whole signup back,
-   * the new user row included.
+   * The new user's first login method — unless the database already has it:
+   * the same provider identity (UQ_login_methods_identity) or, for a password
+   * login, the same email (UQ_login_methods_local_email), registered by a
+   * signup that got there first. skipDuplicates makes it INSERT … ON CONFLICT
+   * DO NOTHING: a duplicate comes back as count 0 instead of an error. The
+   * throw rolls the whole signup back, the new user row included.
    */
   private async addFirstLoginMethod(
     transaction: Prisma.TransactionClient,
@@ -185,7 +186,12 @@ export class AuthService {
       skipDuplicates: true,
     });
     if (inserted.count === 0) {
-      throw new ConflictException('This account is already registered');
+      // a brand-new user can't collide on (userId, method): it's the other rule
+      throw new ConflictException(
+        loginMethod.method === 'local'
+          ? 'Email already registered'
+          : 'This account is already registered',
+      );
     }
   }
 

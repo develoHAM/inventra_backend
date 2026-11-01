@@ -1,7 +1,7 @@
 // @Type reads decorator metadata: load the polyfill even when Nest isn't
 // running (unit tests importing only DTOs). Idempotent if already loaded.
 import 'reflect-metadata';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   Equals,
   IsEmail,
@@ -11,6 +11,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { normalizeEmail } from '../../common/email';
 
 /** Sign up with an email + password (a `local` login). */
 export class PasswordCredentialsDto {
@@ -18,6 +19,8 @@ export class PasswordCredentialsDto {
   @Equals('password')
   type!: 'password';
 
+  // stored lowercase: emails are case-insensitive
+  @Transform(({ value }) => normalizeEmail(value))
   @IsEmail()
   email!: string;
 
@@ -40,6 +43,7 @@ export class SocialCredentialsDto {
   // a typed address for notifications (required when the provider shared no
   // verified email; otherwise it overrides the provider email)…
   @IsOptional()
+  @Transform(({ value }) => normalizeEmail(value))
   @IsEmail()
   contactEmail?: string;
 

@@ -236,7 +236,8 @@ async function main() {
   }
 
   // 4) Platform admin (company_id = null — the nullable column from Task 1)
-  const email = process.env.SEED_ADMIN_EMAIL;
+  // stored lowercase like every email (login compares the lowercased input)
+  const email = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
   const password = process.env.SEED_ADMIN_PASSWORD;
   if (!email || !password) {
     throw new Error('SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD must be set');

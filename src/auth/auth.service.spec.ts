@@ -502,6 +502,18 @@ describe('AuthService', () => {
         expect(prisma.refreshToken.create).not.toHaveBeenCalled();
       });
 
+      it('a PASSWORD signup whose email got taken meanwhile (UQ_login_methods_local_email) → 409 Email already registered', async () => {
+        tx.userLoginMethod.createMany.mockResolvedValue({ count: 0 });
+
+        await expect(service.register(registerDto as any)).rejects.toThrow(
+          new ConflictException('Email already registered'),
+        );
+        await expect(prisma.$transaction.mock.results[0].value).rejects.toThrow(
+          ConflictException,
+        );
+        expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+      });
+
       it('any other failure passes through as is', async () => {
         const failure = new Error('db down');
         tx.userLoginMethod.createMany.mockRejectedValue(failure);

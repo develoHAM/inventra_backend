@@ -46,6 +46,16 @@ describe('ResetPasswordDto', () => {
     newPassword: 'brand-new-password',
   };
 
+  it('lowercases the email, so the account is found however it is typed', async () => {
+    const { instance, failedFields } = await check(ResetPasswordDto, {
+      ...validBody,
+      email: ' Owner@Example.COM ',
+    });
+
+    expect(failedFields).toEqual([]);
+    expect(instance.email).toBe('owner@example.com');
+  });
+
   it('accepts a valid body and normalizes the phone', async () => {
     const { instance, failedFields } = await check(ResetPasswordDto, validBody);
 

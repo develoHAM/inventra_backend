@@ -11,9 +11,11 @@ import {
   KOREAN_MOBILE_PATTERN,
   normalizePhone,
 } from '../../phone-verification/phone';
+import { normalizeEmail } from '../../common/email';
 
 export class ResetPasswordDto {
-  // factor 1: the login ID (find-ID only ever shows it masked)
+  // factor 1: the login ID (find-ID only ever shows it masked); stored lowercase
+  @Transform(({ value }) => normalizeEmail(value))
   @IsEmail()
   email!: string;
 

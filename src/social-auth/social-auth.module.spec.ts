@@ -13,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SocialAuthController } from './social-auth.controller';
 import { SocialAuthModule, buildSocialVerifiers } from './social-auth.module';
 import { SocialAuthService } from './social-auth.service';
+import { LoginMethodsService } from './login-methods/login-methods.service';
 import { AppleVerifier } from './verifiers/apple.verifier';
 import { FacebookVerifier } from './verifiers/facebook.verifier';
 import { FakeSocialVerifier } from './verifiers/fake.verifier';
@@ -192,6 +193,10 @@ describe('SocialAuthModule wiring', () => {
     );
     // AuthModule now spends signup tickets and email proofs (Task 12)
     expect(moduleRef.get(AuthService)).toBeInstanceOf(AuthService);
+    // …and the login-methods endpoints (Task 13)
+    expect(moduleRef.get(LoginMethodsService)).toBeInstanceOf(
+      LoginMethodsService,
+    );
     await moduleRef.close();
   });
 });

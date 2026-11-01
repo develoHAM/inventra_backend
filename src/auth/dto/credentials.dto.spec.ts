@@ -188,3 +188,34 @@ describe.each([
     ).toBe(true);
   });
 });
+
+describe('emails are stored lowercase (case-insensitive)', () => {
+  it('a password signup email is trimmed and lowercased', async () => {
+    const { instance, messages } = await check(RegisterMemberDto, {
+      ...memberBase,
+      credentials: { ...password, email: '  Sam@Acme.COM ' },
+    });
+
+    expect(messages).toEqual([]);
+    expect(
+      (instance.credentials as unknown as PasswordCredentialsDto).email,
+    ).toBe('sam@acme.com');
+  });
+
+  it("a social signup's typed contact email too", async () => {
+    const { instance, messages } = await check(RegisterDto, {
+      ...ownerBase,
+      credentials: {
+        type: 'social',
+        signupToken: 'raw-signup-token',
+        contactEmail: 'Work@Acme.COM',
+        emailVerificationToken: 'raw-email-token',
+      },
+    });
+
+    expect(messages).toEqual([]);
+    expect(
+      (instance.credentials as unknown as SocialCredentialsDto).contactEmail,
+    ).toBe('work@acme.com');
+  });
+});

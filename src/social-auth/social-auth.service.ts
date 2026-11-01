@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { CAN_AUTHENTICATE } from '../auth/auth.constants';
 import { encryptToken } from '../common/token-cipher';
+import { normalizeEmail } from '../common/email';
 import { SOCIAL_VERIFIERS } from './social-auth.constants';
 import { SocialNonceService } from './social-nonce.service';
 import { SignupTicketService } from './signup-tickets/signup-ticket.service';
@@ -12,6 +13,7 @@ import type { SignupProfile } from './signup-tickets/signup-ticket.service';
 import type { SocialSignInDto } from './dto/social-sign-in.dto';
 import type { UserStatus } from '../generated/prisma/enums';
 import type {
+  SocialIdentity,
   SocialIdentityVerifier,
   SocialProvider,
 } from './verifiers/social-identity-verifier';
@@ -58,26 +60,39 @@ export class SocialAuthService {
   }
 
   /**
+   * Who does this provider credential prove? Shared by sign-in and linking.
+   * 1. Spend the nonce first: a replayed request stops here, before any
+   *    provider call. (Whether one is REQUIRED is the verifier's call.)
+   * 2. Ask that provider's verifier (401 bad credential, 503 unreachable).
+   */
+  async identify(body: SocialSignInDto): Promise<SocialIdentity> {
+    if (body.nonce !== undefined && !(await this.nonces.consume(body.nonce))) {
+      throw new UnauthorizedException('Invalid social credential');
+    }
+    const identity = await this.verifiers[body.provider].verify(
+      body.credential,
+      body.nonce,
+    );
+    // stored like every other email: lowercase (tickets, linked logins)
+    return {
+      ...identity,
+      email:
+        identity.email === null
+          ? null
+          : (normalizeEmail(identity.email) as string),
+    };
+  }
+
+  /**
    * Sign in with a provider's credential. A known identity gets our tokens;
    * an unknown one gets a signup ticket. Never matched by email: the same
    * address at another provider is NOT the same account.
    */
   async signIn(body: SocialSignInDto): Promise<SocialSignInResult> {
     const provider = body.provider;
+    const identity = await this.identify(body);
 
-    // 1. Spend the nonce first: a replayed request stops here, before any
-    //    provider call. (Whether one is REQUIRED is the verifier's call.)
-    if (body.nonce !== undefined && !(await this.nonces.consume(body.nonce))) {
-      throw new UnauthorizedException('Invalid social credential');
-    }
-
-    // 2. Who is this? (401 bad credential, 503 provider unreachable)
-    const identity = await this.verifiers[provider].verify(
-      body.credential,
-      body.nonce,
-    );
-
-    // 3. Have we seen this identity before?
+    // Have we seen this identity before?
     const login = await this.prisma.userLoginMethod.findUnique({
       where: {
         method_providerUserId: {
@@ -103,7 +118,7 @@ export class SocialAuthService {
       return { status: 'SIGNUP_REQUIRED', ...ticket };
     }
 
-    // 4. Known: the same rules as password login
+    // Known: the same rules as password login
     const user = login.user;
     if (user.deletedAt || !CAN_AUTHENTICATE.includes(user.status)) {
       throw new UnauthorizedException('Account cannot sign in');

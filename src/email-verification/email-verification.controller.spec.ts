@@ -6,7 +6,7 @@ import { EmailVerificationController } from './email-verification.controller';
 import { IS_PUBLIC_KEY } from '../auth/decorators/public.decorator';
 import { StartEmailVerificationDto } from './dto/start-email-verification.dto';
 import { ConfirmEmailVerificationDto } from './dto/confirm-email-verification.dto';
-import { normalizeEmail } from './email';
+import { normalizeEmail } from '../common/email';
 import { notificationTemplates } from '../notifications/notification-templates';
 
 describe('EmailVerificationController', () => {

@@ -110,6 +110,32 @@ describe('SocialAuthService', () => {
     jest.useRealTimers();
   });
 
+  it('identify: spends the nonce, then returns what the verifier proved — and touches no account (linking reuses it)', async () => {
+    await expect(service.identify(kakaoBody)).resolves.toEqual(kakaoIdentity);
+
+    expect(nonces.consume).toHaveBeenCalledWith('raw-nonce');
+    expect(prisma.userLoginMethod.findUnique).not.toHaveBeenCalled();
+    expect(tickets.create).not.toHaveBeenCalled();
+  });
+
+  it('identify lowercases the provider email (stored like every email); a missing one stays null', async () => {
+    verifiers.kakao.verify.mockResolvedValueOnce({
+      ...kakaoIdentity,
+      email: 'Owner@Kakao.COM',
+    });
+    await expect(service.identify(kakaoBody)).resolves.toMatchObject({
+      email: 'owner@kakao.com',
+    });
+
+    verifiers.kakao.verify.mockResolvedValueOnce({
+      ...kakaoIdentity,
+      email: null,
+    });
+    await expect(service.identify(kakaoBody)).resolves.toMatchObject({
+      email: null,
+    });
+  });
+
   it('issueNonce hands out a nonce from SocialNonceService', async () => {
     await expect(service.issueNonce()).resolves.toEqual({
       nonce: 'n',

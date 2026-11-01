@@ -4,9 +4,10 @@
 // Get a free hosted Postgres database in seconds: `npx create-db`
 
 generator client {
-  provider     = "prisma-client"
-  output       = "../src/generated/prisma"
-  moduleFormat = "cjs"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  moduleFormat    = "cjs"
+  previewFeatures = ["partialIndexes"] // UQ_login_methods_local_email: unique only among password logins
 }
 
 datasource db {
@@ -130,6 +131,13 @@ model UserLoginMethod {
   @@unique([method, providerUserId], map: "UQ_login_methods_identity")
   // one login per provider per account
   @@unique([userId, method], map: "UQ_login_methods_user_method")
+  // a password login's email is its login ID: one account per email. Only
+  // local rows — provider rows' emails are information and may repeat.
+  // Written exactly as Postgres stores the condition (method is varchar, so it
+  // spells out the casts): Prisma compares the text, and `{ method: "local" }`
+  // renders as ("method" = 'local'), which it then sees as a changed index on
+  // every `migrate dev` and tries to drop and recreate.
+  @@unique([email], map: "UQ_login_methods_local_email", where: raw("((method)::text = 'local'::text)"))
   @@map("user_login_methods")
 }
 
