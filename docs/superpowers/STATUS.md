@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-10-07.
+> Last updated: 2026-11-01.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -26,8 +26,26 @@
 | 10b+ | More cross-cutting concerns / Redis caching (only when measured) | ⏳ not started |
 | Files | **File uploads** (product/brand/avatar images) + **data import/export** (order/audit CSV·xlsx) | ✅ Slices 1–3 complete |
 | Notify | **Notifications** (email · SMS · push) + **account security** (OCTOMO phone verification · find ID · password reset) | ✅ complete (Slices 1a–4) |
+| Social | **Social login** (Kakao · Google · Facebook · Apple, native app-to-app) + **login methods** (link · add a password · unlink) | ✅ complete (Tasks 1–14) |
 
-## Where we are right now — Notifications track complete (Slices 1a–4: email events, OCTOMO phone verification, account recovery, push)
+## Where we are right now — Social login track complete (Tasks 1–14)
+
+Spec `docs/superpowers/specs/2026-10-09-social-login-design.md`, plan `docs/superpowers/plans/2026-10-09-social-login.md` (every task has an **"As built"** note; **"Decisions beyond the spec"** lists every deviation). Sub-project 2 (account deletion incl. owners / company closure) is designed separately, later.
+
+**Shape.** Native SDKs in the app (Expo dev build) hand the app a provider proof; **our backend verifies it** (no Firebase/Supabase broker) and issues **our** JWTs. One interface, `SocialIdentityVerifier` (`verify(credential, nonce?) → SocialIdentity`, `disconnect(login)`), one class per provider, chosen by `SOCIAL_VERIFIER=real|fake` (`buildSocialVerifiers`; prod refuses `fake`; `real` needs all ten provider env vars).
+- **Verifiers** (`src/social-auth/verifiers/`): shared `verifyIdToken` (jose `jwtVerify` + cached `createRemoteJWKSet`, RS256 only, iss/aud/exp/sub; token faults → 401, key server unreachable → 503) and `checkNonce` (claim = SHA-256(raw nonce); required for Kakao/Apple/Facebook iOS, optional for Google). **Kakao** — no `email_verified` claim, so an admin-key `GET /v2/user/me` lookup decides it (fail-soft); unlink by admin key. **Google** — `serverAuthCode` → refresh token (web client + secret). **Apple** — client secret = an ES256 JWT we sign per call with the `.p8`; code → refresh token; revoke on unlink (App Store rule); name only on the first sign-in, unsigned. **Facebook** — iOS Limited Login ID token (JWKS `https://www.facebook.com/.well-known/oauth/openid/jwks/`); Android access token via `debug_token` (our app token, `app_id` must be ours) + `/me` with `appsecret_proof`. Google/Apple share `exchangeCodeForRefreshToken` (fail-soft; the answer's `id_token` must name the same `sub`). Refresh tokens stored **AES-256-GCM encrypted** (`LOGIN_TOKEN_ENCRYPTION_KEY`).
+- **Endpoints:** `POST /auth/social/nonce` (single-use, 5 min, SHA-256 stored) · `POST /auth/social/login { provider, credential, nonce? }` → always 200: `LOGGED_IN` (password-login status rules, our tokens via `AuthService.issueSessionFor`) or `SIGNUP_REQUIRED` + a 15-min single-use **signup ticket** · signup through the existing `POST /auth/register` / `register/member` with `credentials: { type: 'social', signupToken, contactEmail?, emailVerificationToken? }` · email proof `POST /auth/email/start|confirm` (6-digit HMAC code, 60 s cooldown + `retryAfterSeconds`, 10/day, 5 attempts; sent as a **redacted** notification — the row stores `******`) · `GET|POST /users/me/login-methods`, `POST /users/me/login-methods/local`, `DELETE /users/me/login-methods/:id` · `POST /auth/find-id` → `{ email: masked password email | null, providers: [...] }`.
+- **Rules:** never match accounts by email (an unknown identity is always `SIGNUP_REQUIRED`); contact email = a typed, code-proven address, else the provider's verified email, else 400; never unlink the last login (a write to the user's row serialises concurrent unlinks); provider disconnect after commit, best-effort.
+- **Emails are stored lowercase** everywhere (`src/common/email.ts` `normalizeEmail` at every entry point: DTOs, `identify()` for provider emails, the seed). Migration `20261026150000_lowercase_emails` fixed stored data (refuses to run if two password logins would collide).
+- **Database rules on `user_login_methods`:** `UQ_login_methods_identity (method, provider_user_id)`, `UQ_login_methods_user_method (user_id, method)`, and the **partial** `UQ_login_methods_local_email (email) WHERE method = 'local'` (migration `20261029090000_unique_local_email`, preview feature `partialIndexes`) — one account per password-login email.
+- **Duplicates and races: conditional writes + count, never caught database errors** (project rule since 2026-10-26): `createMany`/`createManyAndReturn` with `skipDuplicates` (`ON CONFLICT DO NOTHING`) → `count 0` / `[]` → 409 with the reason read afterwards; spends via `updateMany` with the condition in `where`.
+- **880 unit tests green (67 suites)** — measured 2026-11-01. **e2e: 15 suites, all green** (2026-11-03) incl. `test/social-auth.e2e-spec.ts` (phone suite 15; fake verifier, Mailpit-read codes) — the run was reported as "all green"; the measured total goes here once a `Tests:` line is recorded (never a predicted one).
+- ⚠️ **Gotchas:** (1) `jose` 6 is ESM-only → in the unit Jest `transformIgnorePatterns`. (2) **Prisma partial indexes:** write `where: raw("<the predicate exactly as Postgres stores it>")` — Postgres normalizes `method = 'local'` to `((method)::text = 'local'::text)`, and with the object form `migrate dev` sees drift forever and generates a DROP + CREATE migration. Check with `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script` → empty. The generated client also offers `findUnique({ where: { email } })`, which ignores the `method = 'local'` condition — use `findFirst({ where: { email, method: 'local' } })`. (3) Prisma timestamps new migrations in **UTC**. (4) **Never edit a migration once it may have been applied** — add a new one; on divergence, restore the applied file (its `_prisma_migrations.checksum` must match) instead of `migrate reset`. (5) Prisma 7 + pg adapter put P2002 details at `meta.driverAdapterError.cause.constraint.fields` (no `meta.target`) — moot now that duplicates are detected by count.
+- **To go live (user-side console work):** Kakao (OIDC on, native app key, admin key), Google (web + iOS + Android client ids, web secret — `GOOGLE_CLIENT_IDS` lists the **web** id first), Apple (Sign in with Apple key `.p8` + key id + team id + bundle id; register our sending domain for private-relay emails), Meta (app id + secret, Limited Login on iOS). Confirm on a device that Facebook's Limited Login `sub` equals the Android app-scoped id.
+
+**Next:** decide with the user — sub-project 2 (account deletion + company closure; needs the provider `disconnect`s built here), the React Native client, or Phase 10b+.
+
+## Prior — Notifications track complete (Slices 1a–4: email events, OCTOMO phone verification, account recovery, push)
 
 New track, designed in `docs/superpowers/specs/2026-09-23-notifications-and-account-security-design.md` (slices 1a → 1b → 2 → 3 → 4). Decisions: fixed channels per event (in code); **domain events + BullMQ queue**; SMTP via nodemailer with **Mailpit** for dev/e2e; SMS via a Korean provider adapter (Slice 2); push via FCM (Slice 4); a verified phone is **required + unique** at signup; password reset and find-my-ID use an **SMS one-time code**; find-my-ID returns a masked email.
 
@@ -78,7 +96,7 @@ New track, designed in `docs/superpowers/specs/2026-09-23-notifications-and-acco
 - † e2e totals marked † in this track were Claude's running *predictions* (the runs were reported only as "all green"), not measured counts; the measured total is the 140 above. Unit counts were always measured. `test/push.e2e-spec.ts` (phone suite 14).
 - **Live in dev:** `.env` has `PUSH_SENDER=fcm` + `FIREBASE_SERVICE_ACCOUNT_PATH` (key git-ignored: `/secrets/`, `*firebase-adminsdk*.json`, `*service-account*.json`); `.env.test` stays `fake`. iOS additionally needs an APNs key uploaded to Firebase. The mobile app must `POST /devices` on launch, after login, and in the token-refresh callback (`onNewToken` / `didReceiveRegistrationToken`), and send `deviceToken` on logout.
 
-**Next:** notifications track is done. Deferred: reservation SMS (needs an outbound SMS provider); the web push click URL (needs web routes). Candidates: Phase 10b+ (caching only when measured) or a new track — decide with the user.
+**Deferred from this track:** reservation SMS (needs an outbound SMS provider); the web push click URL (needs web routes).
 
 ## Prior — File-upload + import/export track complete (Slices 1–3)
 
@@ -152,16 +170,18 @@ Orders → audits → purchase reservations → cross-cutting concerns → Redis
 ## Resume on a new machine
 The DB, secrets, and generated client are **not** in the repo. After `git pull`:
 1. `npm install`
-2. Recreate the gitignored env files (copy from the other laptop): **`.env`** and **`.env.test`** (both now carry the `MINIO_*` + `S3_*` block). `DATABASE_URL` must **not** include `sslmode=require` for the local container. Keep each file's `MINIO_ROOT_PASSWORD` and `S3_SECRET_KEY` equal — a mismatch triggers `SignatureDoesNotMatch` on boot.
+2. Recreate the gitignored env files (copy from the other laptop): **`.env`** and **`.env.test`** (both carry the `MINIO_*` + `S3_*` block, `PHONE_VERIFIER`, `PUSH_SENDER`, `SOCIAL_VERIFIER`, `LOGIN_TOKEN_ENCRYPTION_KEY` (32 bytes base64), `VERIFICATION_CODE_SECRET`; with `SOCIAL_VERIFIER=real`, the ten provider vars and the Apple `.p8` file, which is git-ignored). `DATABASE_URL` must **not** include `sslmode=require` for the local container. Keep each file's `MINIO_ROOT_PASSWORD` and `S3_SECRET_KEY` equal — a mismatch triggers `SignatureDoesNotMatch` on boot.
 3. `docker compose up -d` (postgres + redis + **minio** + **mailpit** — MinIO console at `localhost:${MINIO_CONSOLE_PORT}`, Mailpit inbox at `localhost:${MAILPIT_UI_PORT}`). The app and **every** e2e suite need Redis up (BullMQ connects at boot).
 4. `npx prisma generate` (client generates into `src/generated/prisma`, which is gitignored)
 5. `npx prisma migrate deploy` then `npm run seed` (or `npx prisma migrate reset --force` which also seeds via `prisma/seed.ts`)
-6. `npm test` (unit — should be 233 green across 25 suites) and `npm run test:e2e` (87 green across 10 suites, incl. uploads, order/audit CSV·xlsx export/import, and notifications via Mailpit)
+6. `npm test` (unit — 880 green across 67 suites) and `npm run test:e2e` (15 suites, incl. uploads, CSV·xlsx import/export, notifications via Mailpit, phone verification, account recovery, push and social login)
 
-Latest migration: `prisma/migrations/20260909162034_reservation_expired_at`. **Keep the `prisma` CLI + `@prisma/client` + `@prisma/adapter-pg` all on the same major (v7); don't bump to the v8 RC.**
+Latest migration: `prisma/migrations/20261029090000_unique_local_email`. **Keep the `prisma` CLI + `@prisma/client` + `@prisma/adapter-pg` all on the same major (v7); don't bump to the v8 RC.**
 
 ## Key references in-repo
-- `docs/superpowers/specs/2026-09-07-phase-9-purchase-reservations-design.md` — Phase 9 design (latest full spec; Phase 10a was built directly from an in-session design, no spec file)
+- `docs/superpowers/specs/2026-10-09-social-login-design.md` + `docs/superpowers/plans/2026-10-09-social-login.md` — the social login track (latest)
+- `docs/superpowers/specs/2026-09-23-notifications-and-account-security-design.md` — the notifications track
+- `docs/superpowers/specs/2026-09-07-phase-9-purchase-reservations-design.md` — Phase 9 design (Phase 10a was built directly from an in-session design, no spec file)
 - `docs/superpowers/plans/2026-09-07-phase-9-purchase-reservations.md` — Phase 9 implementation plan
 - `docs/superpowers/specs/` + `docs/superpowers/plans/` — Phase 1–9 specs & plans
 - `blog/en` + `blog/ko` — Phase 1–9 + 10a retrospectives

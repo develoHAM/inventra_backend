@@ -6,6 +6,7 @@ import { NotificationEvent } from '../notifications/notification-events';
 describe('AccountRecoveryService', () => {
   let service: AccountRecoveryService;
   let tx: {
+    user: { findFirst: jest.Mock };
     userLoginMethod: { findFirst: jest.Mock; update: jest.Mock };
     refreshToken: { updateMany: jest.Mock };
   };
@@ -18,6 +19,12 @@ describe('AccountRecoveryService', () => {
 
   beforeEach(() => {
     tx = {
+      // find-ID: the user on the phone, with each way they sign in (oldest first)
+      user: {
+        findFirst: jest.fn().mockResolvedValue({
+          loginMethods: [{ method: 'local', email: 'owner@example.com' }],
+        }),
+      },
       userLoginMethod: {
         findFirst: jest.fn().mockResolvedValue({ email: 'owner@example.com' }),
         update: jest.fn().mockResolvedValue({}),
@@ -37,9 +44,38 @@ describe('AccountRecoveryService', () => {
   });
 
   describe('findId', () => {
-    it('returns the masked email of the account that owns the phone', async () => {
+    it('a password user: the masked email, no providers', async () => {
       await expect(service.findId(phone, 'find-token')).resolves.toEqual({
         email: 'ow***@example.com',
+        providers: [],
+      });
+    });
+
+    it('a social-only user: no email, but how they sign in (instead of a dead end)', async () => {
+      tx.user.findFirst.mockResolvedValue({
+        loginMethods: [
+          { method: 'kakao', email: 'owner@kakao.com' },
+          { method: 'apple', email: null },
+        ],
+      });
+
+      await expect(service.findId(phone, 'find-token')).resolves.toEqual({
+        email: null,
+        providers: ['kakao', 'apple'],
+      });
+    });
+
+    it('both: the password email AND the providers (a provider email is never shown)', async () => {
+      tx.user.findFirst.mockResolvedValue({
+        loginMethods: [
+          { method: 'local', email: 'owner@example.com' },
+          { method: 'google', email: 'owner@gmail.com' },
+        ],
+      });
+
+      await expect(service.findId(phone, 'find-token')).resolves.toEqual({
+        email: 'ow***@example.com',
+        providers: ['google'],
       });
     });
 
@@ -53,19 +89,20 @@ describe('AccountRecoveryService', () => {
       });
       expect(
         phoneVerification.consume.mock.invocationCallOrder[0],
-      ).toBeLessThan(tx.userLoginMethod.findFirst.mock.invocationCallOrder[0]);
+      ).toBeLessThan(tx.user.findFirst.mock.invocationCallOrder[0]);
     });
 
-    it('looks only at a live user’s local (email) login on that phone', async () => {
+    it('looks up the live user on that phone, with their logins oldest first', async () => {
       await service.findId(phone, 'find-token');
 
-      expect(tx.userLoginMethod.findFirst).toHaveBeenCalledWith({
-        where: {
-          method: 'local',
-          email: { not: null },
-          user: { phone: phone, deletedAt: null },
+      expect(tx.user.findFirst).toHaveBeenCalledWith({
+        where: { phone: phone, deletedAt: null },
+        select: {
+          loginMethods: {
+            select: { method: true, email: true },
+            orderBy: { createdAt: 'asc' },
+          },
         },
-        select: { email: true },
       });
     });
 
@@ -77,11 +114,11 @@ describe('AccountRecoveryService', () => {
       await expect(service.findId(phone, 'signup-token')).rejects.toThrow(
         BadRequestException,
       );
-      expect(tx.userLoginMethod.findFirst).not.toHaveBeenCalled();
+      expect(tx.user.findFirst).not.toHaveBeenCalled();
     });
 
     it('404s when no account uses the phone — and the token stays spent (committed)', async () => {
-      tx.userLoginMethod.findFirst.mockResolvedValue(null);
+      tx.user.findFirst.mockResolvedValue(null);
 
       await expect(service.findId(phone, 'find-token')).rejects.toThrow(
         new NotFoundException('No account uses this phone'),

@@ -119,7 +119,7 @@ describe('Account recovery (e2e)', () => {
 
       // typed with dashes, as people do
       const response = await findId(ownerPhoneDashed, token).expect(200);
-      expect(response.body).toEqual({ email: 'ow***@ar.test' });
+      expect(response.body).toEqual({ email: 'ow***@ar.test', providers: [] });
     });
 
     it('the token is single-use', async () => {

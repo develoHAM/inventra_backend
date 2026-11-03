@@ -23,30 +23,44 @@ export class AccountRecoveryService {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  /** The login email of the account on a verified phone, masked. */
-  async findId(phone: string, token: string): Promise<{ email: string }> {
+  /**
+   * How the account on a verified phone signs in: its password-login email
+   * (masked; null if it has none) and the providers it can use. A user who
+   * signed up with Kakao learns "Kakao", not a dead end.
+   */
+  async findId(
+    phone: string,
+    token: string,
+  ): Promise<{ email: string | null; providers: string[] }> {
     // Spend the token first; "no account" still commits, so every lookup
     // costs a fresh phone verification.
-    const loginMethod = await this.prisma.$transaction(async (transaction) => {
+    const user = await this.prisma.$transaction(async (transaction) => {
       await this.phoneVerification.consume(transaction, {
         token: token,
         phone: phone,
         purpose: PhoneVerificationPurpose.FIND_ID,
       });
-      return transaction.userLoginMethod.findFirst({
-        where: {
-          method: 'local',
-          email: { not: null },
-          user: { phone: phone, deletedAt: null },
+      return transaction.user.findFirst({
+        where: { phone: phone, deletedAt: null },
+        select: {
+          loginMethods: {
+            select: { method: true, email: true },
+            orderBy: { createdAt: 'asc' },
+          },
         },
-        select: { email: true },
       });
     });
 
-    if (!loginMethod?.email) {
-      throw new NotFoundException('No account uses this phone');
-    }
-    return { email: maskEmail(loginMethod.email) };
+    if (!user) throw new NotFoundException('No account uses this phone');
+    const passwordLogin = user.loginMethods.find(
+      (loginMethod) => loginMethod.method === 'local',
+    );
+    return {
+      email: passwordLogin?.email ? maskEmail(passwordLogin.email) : null,
+      providers: user.loginMethods
+        .filter((loginMethod) => loginMethod.method !== 'local')
+        .map((loginMethod) => loginMethod.method),
+    };
   }
 
   /**
