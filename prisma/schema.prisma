@@ -103,6 +103,8 @@ model User {
   createdReservations     PurchaseReservation[] @relation("ReservationsCreatedBy")
   receivedNotifications Notification[] @relation("NotificationRecipient")
   deviceTokens            DeviceToken[]
+  membershipChanges       MembershipChange[]    @relation("MembershipChangeMember")
+  madeMembershipChanges   MembershipChange[]    @relation("MembershipChangeActor")
 
   @@index([companyId], map: "IDX_users_company")
   @@map("users")
@@ -151,6 +153,8 @@ model Role {
 
   users           User[]
   rolePermissions RolePermission[]
+  changesFrom     MembershipChange[] @relation("MembershipChangeFromRole")
+  changesTo       MembershipChange[] @relation("MembershipChangeToRole")
 
   @@map("roles")
 }
@@ -285,10 +289,11 @@ model Company {
   deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   createdByUser User           @relation("CompanyCreator", fields: [createdByUserId], references: [id])
-  users         User[]         @relation("CompanyEmployees")
-  brands        Brand[]
-  products      Product[]
-  companyStores CompanyStore[]
+  users             User[]             @relation("CompanyEmployees")
+  brands            Brand[]
+  products          Product[]
+  companyStores     CompanyStore[]
+  membershipChanges MembershipChange[]
 
   @@map("companies")
 }
@@ -316,8 +321,50 @@ model CompanyStore {
   companyStoreProducts CompanyStoreProduct[]
   orders               Order[]
   inventoryAudits      InventoryAudit[]
+  membershipChangesFrom MembershipChange[]   @relation("MembershipChangeFromBranch")
+  membershipChangesTo   MembershipChange[]   @relation("MembershipChangeToBranch")
 
   @@map("company_stores")
+}
+
+enum MembershipChangeReason {
+  APPROVED
+  MOVED
+  ROLE_CHANGED
+  BRANCH_DELETED
+
+  @@map("membership_change_reason")
+}
+
+// Append-only history of who joined, moved or changed role. Each row is a
+// full snapshot: the role and the branch both before and after, even the
+// parts that didn't change, so a branch's history also shows role changes
+// made inside it. Rows are never updated or deleted.
+model MembershipChange {
+  id                 String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId          String                 @map("company_id") @db.Uuid
+  userId             String                 @map("user_id") @db.Uuid
+  reason             MembershipChangeReason
+  fromRoleId         Int?                   @map("from_role_id")
+  toRoleId           Int?                   @map("to_role_id")
+  fromCompanyStoreId String?                @map("from_company_store_id") @db.Uuid
+  toCompanyStoreId   String?                @map("to_company_store_id") @db.Uuid
+  changedByUserId    String?                @map("changed_by_user_id") @db.Uuid // null = made by the system
+  createdAt          DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  company          Company       @relation(fields: [companyId], references: [id])
+  user             User          @relation("MembershipChangeMember", fields: [userId], references: [id])
+  changedByUser    User?         @relation("MembershipChangeActor", fields: [changedByUserId], references: [id])
+  fromRole         Role?         @relation("MembershipChangeFromRole", fields: [fromRoleId], references: [id])
+  toRole           Role?         @relation("MembershipChangeToRole", fields: [toRoleId], references: [id])
+  fromCompanyStore CompanyStore? @relation("MembershipChangeFromBranch", fields: [fromCompanyStoreId], references: [id])
+  toCompanyStore   CompanyStore? @relation("MembershipChangeToBranch", fields: [toCompanyStoreId], references: [id])
+
+  @@index([userId, createdAt], map: "IDX_membership_changes_user_created")
+  @@index([companyId, createdAt], map: "IDX_membership_changes_company_created")
+  @@index([fromCompanyStoreId], map: "IDX_membership_changes_from_branch")
+  @@index([toCompanyStoreId], map: "IDX_membership_changes_to_branch")
+  @@map("membership_changes")
 }
 
 model Category {

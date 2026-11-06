@@ -31,6 +31,8 @@ const PERMISSIONS = [
   { code: 'users.update', name: 'Update users' },
   { code: 'users.delete', name: 'Delete users' },
   { code: 'users.approve', name: 'Approve users' },
+  { code: 'users.move', name: 'Move members between branches' },
+  { code: 'users.changeRole', name: 'Change member roles' },
   { code: 'companies.read', name: 'Read companies' },
   { code: 'companies.update', name: 'Update companies' },
   { code: 'companies.approve', name: 'Approve companies' },
@@ -86,6 +88,8 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'users.update',
     'users.delete',
     'users.approve',
+    'users.move',
+    'users.changeRole',
     'companies.read',
     'companies.update',
     'products.create',
@@ -130,7 +134,8 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'users.read',
     'users.update',
     'users.delete',
-    'users.approve',
+    'users.approve', // own branch, as staff only (MembersService)
+    'users.changeRole', // staff → manager in their own branch only
     'companies.read',
     'products.create',
     'products.read',
