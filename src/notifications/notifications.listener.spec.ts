@@ -11,6 +11,7 @@ describe('NotificationsListener', () => {
     order: { findFirst: jest.Mock };
     inventoryAudit: { findFirst: jest.Mock };
     companyStoreProduct: { findUnique: jest.Mock };
+    companyStore: { findUnique: jest.Mock };
   };
   let notifications: {
     findUserEmail: jest.Mock;
@@ -28,6 +29,7 @@ describe('NotificationsListener', () => {
       order: { findFirst: jest.fn() },
       inventoryAudit: { findFirst: jest.fn() },
       companyStoreProduct: { findUnique: jest.fn() },
+      companyStore: { findUnique: jest.fn() },
     };
     notifications = {
       findUserEmail: jest.fn().mockResolvedValue('owner@example.com'),
@@ -321,6 +323,71 @@ describe('NotificationsListener', () => {
       expect(message.subject).toBe('[Inventra] 비밀번호가 변경되었습니다');
       expect(message.body).toContain('본인이 변경하지 않았다면');
       expect(message.body).toContain('비밀번호 찾기');
+    });
+  });
+
+  describe('member.moved', () => {
+    const event = {
+      memberUserId: 'member-1',
+      changedByUserId: 'owner-1',
+      fromCornerId: 'corner-a',
+      toCornerId: 'corner-b',
+      reason: 'MOVED' as const,
+    };
+
+    beforeEach(() => {
+      prisma.user.findUnique.mockResolvedValue({
+        company: { id: 'company-1', name: 'UPL Co' },
+      });
+      prisma.companyStore.findUnique.mockResolvedValue({ name: 'Branch B' });
+    });
+
+    it('tells the member their new branch, excluding whoever moved them', async () => {
+      await listener.handleMemberMoved(event);
+
+      expect(prisma.companyStore.findUnique).toHaveBeenCalledWith({
+        where: { id: 'corner-b' },
+        select: { name: true },
+      });
+      expect(notifications.notifyUsers).toHaveBeenCalledWith({
+        userIds: ['member-1'],
+        excludeUserId: 'owner-1',
+        eventType: NotificationEvent.MEMBER_MOVED,
+        message: notificationTemplates.memberMoved('UPL Co', 'Branch B'),
+        data: { companyId: 'company-1', cornerId: 'corner-b' },
+      });
+    });
+
+    it('says they have no branch when moved off it (no cornerId in the push)', async () => {
+      await listener.handleMemberMoved({ ...event, toCornerId: null });
+
+      expect(prisma.companyStore.findUnique).not.toHaveBeenCalled();
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: notificationTemplates.memberMoved('UPL Co', null),
+          data: { companyId: 'company-1' },
+        }),
+      );
+    });
+
+    it('sends nothing when the member is gone or has no company', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await listener.handleMemberMoved(event);
+
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('memberMoved template', () => {
+    it('names the company and the new branch, or says there is none', () => {
+      const moved = notificationTemplates.memberMoved('UPL Co', 'Branch B');
+      expect(moved.body).toContain('UPL Co');
+      expect(moved.body).toContain('Branch B');
+
+      const released = notificationTemplates.memberMoved('UPL Co', null);
+      expect(released.body).toContain('UPL Co');
+      expect(released.body).not.toContain('null');
     });
   });
 });

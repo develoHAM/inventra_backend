@@ -103,7 +103,10 @@ describe('CornersService', () => {
     it('validates a supplied managerUserId (400 when not an active MANAGER)', async () => {
       users.findActiveMember.mockResolvedValue(null);
       await expect(
-        service.create(owner, { storeId: 'store-1', managerUserId: 'bad' } as any),
+        service.create(owner, {
+          storeId: 'store-1',
+          managerUserId: 'bad',
+        } as any),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.companyStore.create).not.toHaveBeenCalled();
     });
@@ -277,7 +280,10 @@ describe('CornersService', () => {
         companyId: 'company-1',
         managerUserId: 'mgr-1',
       });
-      prisma.user.findFirst.mockResolvedValue({ id: 'u2', companyStoreId: 'c1' });
+      prisma.user.findFirst.mockResolvedValue({
+        id: 'u2',
+        companyStoreId: 'c1',
+      });
 
       await service.removeStaff(manager, 'c1', 'u2');
 
@@ -373,6 +379,36 @@ describe('CornersService', () => {
       await expect(service.assertWorksCorner(owner, 'c9')).resolves.toEqual(
         expect.objectContaining({ id: 'c9' }),
       );
+    });
+  });
+
+  describe('lockLiveCorner', () => {
+    it("writes the live corner's row (taking its lock) and reports that it exists", async () => {
+      const transaction = {
+        companyStore: {
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+      };
+
+      await expect(
+        service.lockLiveCorner(transaction as any, 'corner-b', 'company-1'),
+      ).resolves.toBe(true);
+      expect(transaction.companyStore.updateMany).toHaveBeenCalledWith({
+        where: { id: 'corner-b', companyId: 'company-1', deletedAt: null },
+        data: { updatedAt: expect.any(Date) },
+      });
+    });
+
+    it('reports false for a corner that is deleted or in another company', async () => {
+      const transaction = {
+        companyStore: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+      };
+
+      await expect(
+        service.lockLiveCorner(transaction as any, 'corner-x', 'company-1'),
+      ).resolves.toBe(false);
     });
   });
 });

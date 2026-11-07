@@ -10,6 +10,7 @@ import type {
   CompanyRegisteredEvent,
   MemberApprovedEvent,
   MemberJoinRequestedEvent,
+  MemberMovedEvent,
   OrderCreatedEvent,
   StockBelowTargetEvent,
   AccountPasswordResetEvent,
@@ -93,6 +94,33 @@ export class NotificationsListener {
       eventType: NotificationEvent.MEMBER_APPROVED,
       message: notificationTemplates.memberApproved(member.company.name),
       data: { companyId: member.company.id },
+    });
+  }
+
+  @OnEvent(NotificationEvent.MEMBER_MOVED)
+  async handleMemberMoved(event: MemberMovedEvent): Promise<void> {
+    const member = await this.prisma.user.findUnique({
+      where: { id: event.memberUserId },
+      select: { company: { select: { id: true, name: true } } },
+    });
+    if (!member?.company) return;
+    const toCorner = event.toCornerId
+      ? await this.prisma.companyStore.findUnique({
+          where: { id: event.toCornerId },
+          select: { name: true },
+        })
+      : null;
+    await this.notifications.notifyUsers({
+      userIds: [event.memberUserId],
+      excludeUserId: event.changedByUserId ?? undefined,
+      eventType: NotificationEvent.MEMBER_MOVED,
+      message: notificationTemplates.memberMoved(
+        member.company.name,
+        toCorner?.name ?? null,
+      ),
+      data: event.toCornerId
+        ? { companyId: member.company.id, cornerId: event.toCornerId }
+        : { companyId: member.company.id },
     });
   }
 

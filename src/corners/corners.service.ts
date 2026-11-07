@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '../generated/prisma/client';
 import { OwnershipService } from '../authorization/ownership.service';
 import { StoresService } from '../stores/stores.service';
 import { UsersService } from '../users/users.service';
@@ -65,6 +66,24 @@ export class CornersService {
         managerUserId: managerUserId ?? null,
       },
     });
+  }
+
+  /**
+   * Inside a transaction: is this a live corner of that company? Answers by
+   * writing the corner's row, which also takes the row's lock, so a delete
+   * of the same corner waits for this transaction (and vice versa). The
+   * caller decides what "false" means (404, usually).
+   */
+  async lockLiveCorner(
+    transaction: Prisma.TransactionClient,
+    cornerId: string,
+    companyId: string,
+  ): Promise<boolean> {
+    const locked = await transaction.companyStore.updateMany({
+      where: { id: cornerId, companyId: companyId, deletedAt: null },
+      data: { updatedAt: new Date() },
+    });
+    return locked.count === 1;
   }
 
   async findAll(caller: AuthUser) {

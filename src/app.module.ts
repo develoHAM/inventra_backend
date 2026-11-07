@@ -12,6 +12,7 @@ import { BrandsModule } from './brands/brands.module';
 import { ProductsModule } from './products/products.module';
 import { StoresModule } from './stores/stores.module';
 import { CornersModule } from './corners/corners.module';
+import { MembersModule } from './members/members.module';
 import { PlacementsModule } from './placements/placements.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { OrdersModule } from './orders/orders.module';
@@ -61,6 +62,7 @@ import { SocialAuthModule } from './social-auth/social-auth.module';
     ProductsModule,
     StoresModule,
     CornersModule,
+    MembersModule,
     PlacementsModule,
     InventoryModule,
     OrdersModule,

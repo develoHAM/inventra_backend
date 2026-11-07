@@ -29,6 +29,15 @@ export const notificationTemplates = {
     subject: '[Inventra] 가입이 승인되었습니다',
     body: `${companyName}의 구성원으로 승인되었습니다. 이제 Inventra에 로그인할 수 있습니다.`,
   }),
+  memberMoved: (
+    companyName: string,
+    cornerName: string | null,
+  ): RenderedMessage => ({
+    subject: '[Inventra] 소속 지점이 변경되었습니다',
+    body: cornerName
+      ? `${companyName}에서 소속 지점이 ${cornerName}(으)로 변경되었습니다.`
+      : `${companyName}에서 소속 지점 배정이 해제되었습니다. 새 지점이 배정되면 다시 알려 드립니다.`,
+  }),
   orderCreated: (
     cornerName: string,
     orderTitle: string,
