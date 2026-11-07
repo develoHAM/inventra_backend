@@ -29,10 +29,5 @@ export class CreateCornerDto {
   @IsOptional()
   @IsUUID()
   @IsNotEmpty()
-  managerUserId?: string;
-
-  @IsOptional()
-  @IsUUID()
-  @IsNotEmpty()
   companyId?: string; // ADMIN target company
 }

@@ -90,20 +90,6 @@ export class UsersService {
     return approvedMember;
   }
 
-  async findActiveMember(userId: string, companyId: string) {
-    return this.prisma.user.findFirst({
-      where: {
-        id: userId,
-        companyId: companyId,
-        deletedAt: null,
-        status: UserStatus.ACTIVE,
-      },
-      include: {
-        role: true,
-      },
-    });
-  }
-
   async uploadAvatar(caller: AuthUser, file: Express.Multer.File) {
     const user = await this.findSelf(caller);
     const key = this.avatarKey(caller.id, file.mimetype);

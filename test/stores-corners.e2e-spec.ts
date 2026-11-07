@@ -195,43 +195,72 @@ describe('Stores & Corners (e2e)', () => {
       .expect(400);
   });
 
-  it('OWNER appoints a MANAGER; a STAFF-role target is 400', async () => {
+  const moveTo = (userId: string, toCornerId: string | null) =>
+    request(http)
+      .put(`/users/${userId}/branch`)
+      .set('Authorization', `Bearer ${ownerAccess}`)
+      .send({ cornerId: toCornerId });
+
+  // Reads are company-wide; writes check the branch (assertWorksCorner).
+  // A made-up product passes the branch check (→ 400 Invalid product) only
+  // for someone who works in that branch; anyone else is stopped first (403).
+  const placeMissingProduct = (access: string, inCornerId: string) =>
+    request(http)
+      .post(`/corners/${inCornerId}/products`)
+      .set('Authorization', `Bearer ${access}`)
+      .send({ productId: MISSING_UUID });
+
+  it('OWNER puts the manager and the staff member in the corner', async () => {
+    const manager = await moveTo(managerUserId, cornerId).expect(200);
+    expect(manager.body.branch).toEqual({ id: cornerId, name: 'A-1' });
+
+    await moveTo(staffUserId, cornerId).expect(200);
+  });
+
+  it("the corner's MANAGER works it; a manager of no branch is 403", async () => {
+    await placeMissingProduct(managerAccess, cornerId).expect(400);
+    await placeMissingProduct(otherManagerAccess, cornerId).expect(403);
+  });
+
+  it('a manager moved to another branch is judged by the new one, with the same token', async () => {
+    const otherCornerId = (
+      await request(http)
+        .post('/corners')
+        .set('Authorization', `Bearer ${ownerAccess}`)
+        .send({ storeId: storeId, name: 'A-2' })
+        .expect(201)
+    ).body.id;
+
+    await moveTo(managerUserId, otherCornerId).expect(200);
+
+    await placeMissingProduct(managerAccess, cornerId).expect(403);
+    await placeMissingProduct(managerAccess, otherCornerId).expect(400);
+
+    await moveTo(managerUserId, cornerId).expect(200); // back, for the rest of the suite
+  });
+
+  it('a corner no longer takes a manager (400: managerUserId is not a field)', async () => {
+    await request(http)
+      .post('/corners')
+      .set('Authorization', `Bearer ${ownerAccess}`)
+      .send({ storeId: storeId, name: 'X', managerUserId: managerUserId })
+      .expect(400);
+  });
+
+  it('the old corner assignment routes are gone (404)', async () => {
     await request(http)
       .put(`/corners/${cornerId}/manager`)
       .set('Authorization', `Bearer ${ownerAccess}`)
       .send({ userId: managerUserId })
-      .expect(200);
-
+      .expect(404);
     await request(http)
-      .put(`/corners/${cornerId}/manager`)
+      .post(`/corners/${cornerId}/staff`)
       .set('Authorization', `Bearer ${ownerAccess}`)
       .send({ userId: staffUserId })
-      .expect(400);
-  });
-
-  it('the corner MANAGER adds staff; a foreign MANAGER is 403', async () => {
-    await request(http)
-      .post(`/corners/${cornerId}/staff`)
-      .set('Authorization', `Bearer ${managerAccess}`)
-      .send({ userId: staffUserId })
-      .expect(201);
-
-    await request(http)
-      .post(`/corners/${cornerId}/staff`)
-      .set('Authorization', `Bearer ${otherManagerAccess}`)
-      .send({ userId: staffUserId })
-      .expect(403);
-  });
-
-  it('the corner MANAGER removes staff; removing a non-staff user is 404', async () => {
+      .expect(404);
     await request(http)
       .delete(`/corners/${cornerId}/staff/${staffUserId}`)
-      .set('Authorization', `Bearer ${managerAccess}`)
-      .expect(200);
-
-    await request(http)
-      .delete(`/corners/${cornerId}/staff/${staffUserId}`)
-      .set('Authorization', `Bearer ${managerAccess}`)
+      .set('Authorization', `Bearer ${ownerAccess}`)
       .expect(404);
   });
 

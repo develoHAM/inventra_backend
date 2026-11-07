@@ -80,10 +80,9 @@ model User {
 
   company      Company?      @relation("CompanyEmployees", fields: [companyId], references: [id])
   role         Role?         @relation(fields: [roleId], references: [id])
-  companyStore CompanyStore? @relation("CompanyStoreStaff", fields: [companyStoreId], references: [id])
+  companyStore CompanyStore? @relation("CompanyStoreMembers", fields: [companyStoreId], references: [id]) // a manager's or staff member's branch
 
   createdCompanies        Company[]             @relation("CompanyCreator")
-  managedStores           CompanyStore[]        @relation("CompanyStoreManager")
   loginMethods            UserLoginMethod[]
   permissions             UserPermission[]
   createdProducts         Product[]             @relation("ProductCreatedBy")
@@ -302,7 +301,6 @@ model CompanyStore {
   id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   companyId         String      @map("company_id") @db.Uuid
   storeId           String      @map("store_id") @db.Uuid
-  managerUserId     String?     @map("manager_user_id") @db.Uuid
   name              String      @db.VarChar(255)
   description       String?     @db.Text
   location          String?     @db.VarChar(255)
@@ -314,10 +312,9 @@ model CompanyStore {
 
   company Company       @relation(fields: [companyId], references: [id])
   store   Store         @relation(fields: [storeId], references: [id])
-  manager User?         @relation("CompanyStoreManager", fields: [managerUserId], references: [id])
   deletedByUser User?   @relation("CompanyStoreDeletedBy", fields: [deletedByUserId], references: [id])
 
-  users                User[]                @relation("CompanyStoreStaff")
+  users                User[]                @relation("CompanyStoreMembers") // its managers and staff
   companyStoreProducts CompanyStoreProduct[]
   orders               Order[]
   inventoryAudits      InventoryAudit[]

@@ -222,15 +222,15 @@ describe('Inventory Audits (e2e)', () => {
         .expect(201)
     ).body.id;
     await request(http)
-      .put(`/corners/${cornerId}/manager`)
+      .put(`/users/${managerUserId}/branch`)
       .set(...auth(ownerAccess))
-      .send({ userId: managerUserId })
+      .send({ cornerId: cornerId })
       .expect(200);
     await request(http)
-      .post(`/corners/${cornerId}/staff`)
+      .put(`/users/${staffUserId}/branch`)
       .set(...auth(ownerAccess))
-      .send({ userId: staffUserId })
-      .expect(201);
+      .send({ cornerId: cornerId })
+      .expect(200);
 
     placementAId = await placeProduct('AUD-BC-A', 5);
     placementBId = await placeProduct('AUD-BC-B', 5);

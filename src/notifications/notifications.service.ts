@@ -96,17 +96,24 @@ export class NotificationsService {
     return owners.map((owner) => owner.id);
   }
 
-  /** Corner manager (if any) + the corner company's owner(s). */
+  /** Every active manager whose branch is this corner, then the company's owner(s). */
   async findCornerRecipientIds(cornerId: string): Promise<string[]> {
     const corner = await this.prisma.companyStore.findUnique({
       where: { id: cornerId },
-      select: { companyId: true, managerUserId: true },
+      select: { companyId: true },
     });
     if (!corner) return [];
+    const managers = await this.prisma.user.findMany({
+      where: {
+        companyStoreId: cornerId,
+        role: { code: 'MANAGER' },
+        status: UserStatus.ACTIVE,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
     const ownerIds = await this.findCompanyOwnerIds(corner.companyId);
-    return corner.managerUserId
-      ? [corner.managerUserId, ...ownerIds]
-      : ownerIds;
+    return [...managers.map((manager) => manager.id), ...ownerIds];
   }
 
   /**

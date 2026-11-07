@@ -30,7 +30,6 @@ describe('PlacementsService', () => {
   const CORNER = {
     id: 'corner-1',
     companyId: 'company-1',
-    managerUserId: 'mgr-1',
   };
 
   beforeEach(() => {

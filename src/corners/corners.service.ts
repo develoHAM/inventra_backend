@@ -8,11 +8,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '../generated/prisma/client';
 import { OwnershipService } from '../authorization/ownership.service';
 import { StoresService } from '../stores/stores.service';
-import { UsersService } from '../users/users.service';
 import type { AuthUser } from '../auth/types/auth-user';
 import { CreateCornerDto } from './dto/create-corner.dto';
 import { UpdateCornerDto } from './dto/update-corner.dto';
-import { AssignUserDto } from './dto/assign-user.dto';
 
 @Injectable()
 export class CornersService {
@@ -20,28 +18,16 @@ export class CornersService {
     private readonly prisma: PrismaService,
     private readonly ownership: OwnershipService,
     private readonly stores: StoresService,
-    private readonly users: UsersService,
   ) {}
 
-  private async resolveManager(userId: string, companyId: string) {
-    const user = await this.users.findActiveMember(userId, companyId);
-    if (!user || user.role?.code !== 'MANAGER')
-      throw new BadRequestException(
-        'Manager must be an active MANAGER in the company',
-      );
-    return user;
-  }
-
-  async assertManages(caller: AuthUser, cornerId: string) {
-    const corner = await this.findOne(caller, cornerId); // scoped → 404
-    if (caller.roleCode === 'MANAGER' && corner.managerUserId !== caller.id)
-      throw new ForbiddenException('You can only manage corners you manage');
-    return corner;
-  }
-
+  /**
+   * May the caller work in this corner? Managers and staff only in their
+   * own branch (`caller.companyStoreId`, reloaded from the database on every
+   * request); owners and the admin anywhere in scope.
+   */
   async assertWorksCorner(caller: AuthUser, cornerId: string) {
     const corner = await this.findOne(caller, cornerId); // company-scoped → 404
-    if (caller.roleCode === 'MANAGER' && corner.managerUserId !== caller.id)
+    if (caller.roleCode === 'MANAGER' && caller.companyStoreId !== cornerId)
       throw new ForbiddenException('You can only manage corners you manage');
     if (caller.roleCode === 'STAFF' && caller.companyStoreId !== cornerId)
       throw new ForbiddenException(
@@ -51,20 +37,14 @@ export class CornersService {
   }
 
   async create(caller: AuthUser, dto: CreateCornerDto) {
-    const { companyId: requested, managerUserId, ...data } = dto;
+    const { companyId: requested, ...data } = dto;
     const companyId = this.ownership.resolveCompanyForCreate(caller, requested);
 
     const store = await this.stores.findActive(data.storeId);
     if (!store) throw new BadRequestException('Invalid store');
 
-    if (managerUserId) await this.resolveManager(managerUserId, companyId);
-
     return this.prisma.companyStore.create({
-      data: {
-        ...data,
-        companyId: companyId,
-        managerUserId: managerUserId ?? null,
-      },
+      data: { ...data, companyId: companyId },
     });
   }
 
@@ -114,45 +94,6 @@ export class CornersService {
     return this.prisma.companyStore.update({
       where: { id: id },
       data: { deletedAt: new Date(), deletedByUserId: caller.id },
-    });
-  }
-
-  async assignManager(caller: AuthUser, cornerId: string, dto: AssignUserDto) {
-    const corner = await this.findOne(caller, cornerId); // scoped → 404
-    if (caller.roleCode === 'MANAGER')
-      throw new ForbiddenException('Only an owner can appoint a manager');
-    await this.resolveManager(dto.userId, corner.companyId); // 400 if ineligible
-    return this.prisma.companyStore.update({
-      where: { id: cornerId },
-      data: { managerUserId: dto.userId },
-    });
-  }
-
-  async addStaff(caller: AuthUser, cornerId: string, dto: AssignUserDto) {
-    const corner = await this.assertManages(caller, cornerId);
-    const member = await this.users.findActiveMember(
-      dto.userId,
-      corner.companyId,
-    );
-    if (!member)
-      throw new BadRequestException(
-        'Staff must be an active member of the company',
-      );
-    return this.prisma.user.update({
-      where: { id: dto.userId },
-      data: { companyStoreId: cornerId },
-    });
-  }
-
-  async removeStaff(caller: AuthUser, cornerId: string, userId: string) {
-    await this.assertManages(caller, cornerId);
-    const staff = await this.prisma.user.findFirst({
-      where: { id: userId, companyStoreId: cornerId },
-    });
-    if (!staff) throw new NotFoundException('User is not staff of this corner');
-    return this.prisma.user.update({
-      where: { id: userId },
-      data: { companyStoreId: null },
     });
   }
 }

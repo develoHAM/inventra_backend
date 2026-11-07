@@ -235,29 +235,41 @@ describe('NotificationsService', () => {
       });
     });
 
-    it('findCornerRecipientIds returns the corner manager first, then the owners', async () => {
+    it('findCornerRecipientIds returns every active manager of the branch first, then the owners', async () => {
       prisma.companyStore.findUnique.mockResolvedValue({
         companyId: 'company-1',
-        managerUserId: 'manager-1',
       });
-      prisma.user.findMany.mockResolvedValue([{ id: 'owner-1' }]);
+      prisma.user.findMany
+        .mockResolvedValueOnce([{ id: 'manager-1' }, { id: 'manager-2' }]) // the branch's managers
+        .mockResolvedValueOnce([{ id: 'owner-1' }]); // the owners
 
       expect(await service.findCornerRecipientIds('corner-1')).toEqual([
         'manager-1',
+        'manager-2',
         'owner-1',
       ]);
       expect(prisma.companyStore.findUnique).toHaveBeenCalledWith({
         where: { id: 'corner-1' },
-        select: { companyId: true, managerUserId: true },
+        select: { companyId: true },
+      });
+      expect(prisma.user.findMany).toHaveBeenNthCalledWith(1, {
+        where: {
+          companyStoreId: 'corner-1',
+          role: { code: 'MANAGER' },
+          status: UserStatus.ACTIVE,
+          deletedAt: null,
+        },
+        select: { id: true },
       });
     });
 
-    it('findCornerRecipientIds returns just the owners when the corner has no manager', async () => {
+    it('findCornerRecipientIds returns just the owners when the branch has no manager', async () => {
       prisma.companyStore.findUnique.mockResolvedValue({
         companyId: 'company-1',
-        managerUserId: null,
       });
-      prisma.user.findMany.mockResolvedValue([{ id: 'owner-1' }]);
+      prisma.user.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 'owner-1' }]);
 
       expect(await service.findCornerRecipientIds('corner-1')).toEqual([
         'owner-1',

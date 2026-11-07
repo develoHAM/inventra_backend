@@ -17,10 +17,8 @@ describe('CornersService', () => {
       findFirst: jest.Mock;
       update: jest.Mock;
     };
-    user: { findFirst: jest.Mock; update: jest.Mock };
   };
   let stores: { findActive: jest.Mock };
-  let users: { findActiveMember: jest.Mock };
 
   const owner: AuthUser = {
     id: 'owner-1',
@@ -39,6 +37,7 @@ describe('CornersService', () => {
   const manager: AuthUser = {
     id: 'mgr-1',
     companyId: 'company-1',
+    companyStoreId: 'c1', // the manager's branch
     roleId: 3,
     roleCode: 'MANAGER',
     status: UserStatus.ACTIVE,
@@ -60,20 +59,13 @@ describe('CornersService', () => {
         findFirst: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
       },
-      user: { findFirst: jest.fn(), update: jest.fn().mockResolvedValue({}) },
     };
     stores = { findActive: jest.fn().mockResolvedValue({ id: 'store-1' }) };
-    users = {
-      findActiveMember: jest
-        .fn()
-        .mockResolvedValue({ id: 'u1', role: { code: 'MANAGER' } }),
-    };
-    // constructor order: (prisma, ownership, stores, users)
+    // constructor order: (prisma, ownership, stores)
     service = new CornersService(
       prisma as any,
       new OwnershipService(),
       stores as any,
-      users as any,
     );
   });
 
@@ -87,7 +79,6 @@ describe('CornersService', () => {
           storeId: 'store-1',
           name: 'A1',
           companyId: 'company-1',
-          managerUserId: null,
         },
       });
     });
@@ -96,17 +87,6 @@ describe('CornersService', () => {
       stores.findActive.mockResolvedValue(null);
       await expect(
         service.create(owner, { storeId: 'bad' } as any),
-      ).rejects.toThrow(BadRequestException);
-      expect(prisma.companyStore.create).not.toHaveBeenCalled();
-    });
-
-    it('validates a supplied managerUserId (400 when not an active MANAGER)', async () => {
-      users.findActiveMember.mockResolvedValue(null);
-      await expect(
-        service.create(owner, {
-          storeId: 'store-1',
-          managerUserId: 'bad',
-        } as any),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.companyStore.create).not.toHaveBeenCalled();
     });
@@ -160,224 +140,55 @@ describe('CornersService', () => {
     });
   });
 
-  describe('assignManager', () => {
-    it('sets managerUserId for an eligible MANAGER target (owner caller)', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c1',
-        companyId: 'company-1',
-        managerUserId: null,
-      });
-      users.findActiveMember.mockResolvedValue({
-        id: 'u1',
-        role: { code: 'MANAGER' },
-      });
-
-      await service.assignManager(owner, 'c1', { userId: 'u1' } as any);
-
-      expect(users.findActiveMember).toHaveBeenCalledWith('u1', 'company-1');
-      expect(prisma.companyStore.update).toHaveBeenCalledWith({
-        where: { id: 'c1' },
-        data: { managerUserId: 'u1' },
-      });
-    });
-
-    it('rejects a non-MANAGER target with 400', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c1',
-        companyId: 'company-1',
-        managerUserId: null,
-      });
-      users.findActiveMember.mockResolvedValue({
-        id: 'u1',
-        role: { code: 'STAFF' },
-      });
-
-      await expect(
-        service.assignManager(owner, 'c1', { userId: 'u1' } as any),
-      ).rejects.toThrow(BadRequestException);
-      expect(prisma.companyStore.update).not.toHaveBeenCalled();
-    });
-
-    it('forbids a MANAGER caller from appointing a manager (403)', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c1',
-        companyId: 'company-1',
-        managerUserId: 'mgr-1',
-      });
-
-      await expect(
-        service.assignManager(manager, 'c1', { userId: 'u1' } as any),
-      ).rejects.toThrow(ForbiddenException);
-      expect(prisma.companyStore.update).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('addStaff', () => {
-    it('lets the corner MANAGER add an active member (sets companyStoreId)', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c1',
-        companyId: 'company-1',
-        managerUserId: 'mgr-1',
-      });
-      users.findActiveMember.mockResolvedValue({
-        id: 'u2',
-        role: { code: 'STAFF' },
-      });
-
-      await service.addStaff(manager, 'c1', { userId: 'u2' } as any);
-
-      expect(prisma.user.update).toHaveBeenCalledWith({
-        where: { id: 'u2' },
-        data: { companyStoreId: 'c1' },
-      });
-    });
-
-    it('forbids a MANAGER from staffing a corner they do not manage (403)', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c1',
-        companyId: 'company-1',
-        managerUserId: 'someone-else',
-      });
-
-      await expect(
-        service.addStaff(manager, 'c1', { userId: 'u2' } as any),
-      ).rejects.toThrow(ForbiddenException);
-      expect(prisma.user.update).not.toHaveBeenCalled();
-    });
-
-    it('rejects an ineligible staff target with 400', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c1',
-        companyId: 'company-1',
-        managerUserId: 'mgr-1',
-      });
-      users.findActiveMember.mockResolvedValue(null);
-
-      await expect(
-        service.addStaff(manager, 'c1', { userId: 'bad' } as any),
-      ).rejects.toThrow(BadRequestException);
-    });
-  });
-
-  describe('removeStaff', () => {
-    it('404s when the user is not staff of this corner', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c1',
-        companyId: 'company-1',
-        managerUserId: 'mgr-1',
-      });
-      prisma.user.findFirst.mockResolvedValue(null);
-
-      await expect(service.removeStaff(manager, 'c1', 'u2')).rejects.toThrow(
-        NotFoundException,
-      );
-      expect(prisma.user.update).not.toHaveBeenCalled();
-    });
-
-    it('unsets companyStoreId for a current staff member', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c1',
-        companyId: 'company-1',
-        managerUserId: 'mgr-1',
-      });
-      prisma.user.findFirst.mockResolvedValue({
-        id: 'u2',
-        companyStoreId: 'c1',
-      });
-
-      await service.removeStaff(manager, 'c1', 'u2');
-
-      expect(prisma.user.update).toHaveBeenCalledWith({
-        where: { id: 'u2' },
-        data: { companyStoreId: null },
-      });
-    });
-  });
-
-  describe('assertManages', () => {
-    it('returns the corner for an OWNER', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c1',
-        companyId: 'company-1',
-        managerUserId: 'x',
-      });
-      await expect(service.assertManages(owner, 'c1')).resolves.toEqual(
-        expect.objectContaining({ id: 'c1' }),
-      );
-    });
-
-    it('403s a MANAGER who does not manage the corner', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c1',
-        companyId: 'company-1',
-        managerUserId: 'someone-else',
-      });
-      await expect(service.assertManages(manager, 'c1')).rejects.toThrow(
-        ForbiddenException,
-      );
-    });
-
-    it('404s a cross-tenant / absent corner', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue(null);
-      await expect(service.assertManages(owner, 'c9')).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-  });
-
   describe('assertWorksCorner', () => {
-    it('lets the corner MANAGER through', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c1',
-        companyId: 'company-1',
-        managerUserId: 'mgr-1',
-      });
+    const cornerRow = (id: string) => ({ id: id, companyId: 'company-1' });
+
+    it('lets a MANAGER through their own branch', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue(cornerRow('c1'));
       await expect(service.assertWorksCorner(manager, 'c1')).resolves.toEqual(
         expect.objectContaining({ id: 'c1' }),
       );
     });
 
-    it('403s a MANAGER who does not manage the corner', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c1',
-        companyId: 'company-1',
-        managerUserId: 'someone-else',
-      });
-      await expect(service.assertWorksCorner(manager, 'c1')).rejects.toThrow(
+    it('403s a MANAGER on a branch that is not theirs', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue(cornerRow('c2'));
+      await expect(service.assertWorksCorner(manager, 'c2')).rejects.toThrow(
         ForbiddenException,
       );
     });
 
+    it('403s a MANAGER who has no branch, on every branch', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue(cornerRow('c1'));
+      await expect(
+        service.assertWorksCorner({ ...manager, companyStoreId: null }, 'c1'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
     it('lets the STAFF member assigned to the corner through', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c1',
-        companyId: 'company-1',
-        managerUserId: 'mgr-1',
-      });
+      prisma.companyStore.findFirst.mockResolvedValue(cornerRow('c1'));
       await expect(service.assertWorksCorner(staff, 'c1')).resolves.toEqual(
         expect.objectContaining({ id: 'c1' }),
       );
     });
 
     it('403s a STAFF member not assigned to the corner', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c2',
-        companyId: 'company-1',
-        managerUserId: 'mgr-1',
-      });
+      prisma.companyStore.findFirst.mockResolvedValue(cornerRow('c2'));
       await expect(service.assertWorksCorner(staff, 'c2')).rejects.toThrow(
         ForbiddenException,
       );
     });
 
     it('lets an OWNER through any corner', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue({
-        id: 'c9',
-        companyId: 'company-1',
-        managerUserId: 'x',
-      });
+      prisma.companyStore.findFirst.mockResolvedValue(cornerRow('c9'));
       await expect(service.assertWorksCorner(owner, 'c9')).resolves.toEqual(
         expect.objectContaining({ id: 'c9' }),
+      );
+    });
+
+    it('404s a cross-tenant / absent corner before any role check', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue(null);
+      await expect(service.assertWorksCorner(manager, 'c1')).rejects.toThrow(
+        NotFoundException,
       );
     });
   });
