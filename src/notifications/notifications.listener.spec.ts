@@ -379,6 +379,58 @@ describe('NotificationsListener', () => {
     });
   });
 
+  describe('member.roleChanged', () => {
+    const event = {
+      memberUserId: 'member-1',
+      changedByUserId: 'owner-1',
+      toRoleCode: 'MANAGER' as const,
+    };
+
+    it('tells the member their new role, excluding whoever changed it', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        company: { id: 'company-1', name: 'UPL Co' },
+      });
+
+      await listener.handleMemberRoleChanged(event);
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: 'member-1' },
+        select: { company: { select: { id: true, name: true } } },
+      });
+      expect(notifications.notifyUsers).toHaveBeenCalledWith({
+        userIds: ['member-1'],
+        excludeUserId: 'owner-1',
+        eventType: NotificationEvent.MEMBER_ROLE_CHANGED,
+        message: notificationTemplates.memberRoleChanged('UPL Co', 'MANAGER'),
+        data: { companyId: 'company-1' },
+      });
+    });
+
+    it('sends nothing when the member is gone or has no company', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await listener.handleMemberRoleChanged(event);
+
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('memberRoleChanged template', () => {
+    it.each([
+      ['OWNER', '대표'],
+      ['MANAGER', '매니저'],
+      ['STAFF', '직원'],
+    ] as const)('names the company and %s as %s', (roleCode, label) => {
+      const message = notificationTemplates.memberRoleChanged(
+        'UPL Co',
+        roleCode,
+      );
+      expect(message.body).toContain('UPL Co');
+      expect(message.body).toContain(label);
+      expect(message.body).not.toContain(roleCode);
+    });
+  });
+
   describe('memberMoved template', () => {
     it('names the company and the new branch, or says there is none', () => {
       const moved = notificationTemplates.memberMoved('UPL Co', 'Branch B');

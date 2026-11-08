@@ -12,10 +12,13 @@ import { NotificationEvent } from '../notifications/notification-events';
 
 describe('MembersService', () => {
   let service: MembersService;
-  let tx: { user: { updateMany: jest.Mock } };
+  let tx: {
+    user: { updateMany: jest.Mock; count: jest.Mock };
+    company: { updateMany: jest.Mock };
+  };
   let prisma: {
     user: { findFirst: jest.Mock; findUniqueOrThrow: jest.Mock };
-    role: { findUnique: jest.Mock };
+    role: { findUnique: jest.Mock; findUniqueOrThrow: jest.Mock };
     $transaction: jest.Mock;
   };
   let corners: { lockLiveCorner: jest.Mock };
@@ -83,6 +86,16 @@ describe('MembersService', () => {
           timeline.push('write');
           return Promise.resolve({ count: 1 });
         }),
+        count: jest.fn().mockImplementation(() => {
+          timeline.push('count owners');
+          return Promise.resolve(2);
+        }),
+      },
+      company: {
+        updateMany: jest.fn().mockImplementation(() => {
+          timeline.push('lock company');
+          return Promise.resolve({ count: 1 });
+        }),
       },
     };
     prisma = {
@@ -95,7 +108,7 @@ describe('MembersService', () => {
           }),
         ),
       },
-      role: { findUnique: jest.fn() },
+      role: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn() },
       $transaction: jest.fn(async (callback: (client: unknown) => unknown) => {
         const result = await callback(tx);
         timeline.push('commit');
@@ -622,6 +635,289 @@ describe('MembersService', () => {
           roleId: 4,
           cornerId: 'corner-a',
         }),
+      ).rejects.toThrow(
+        new ConflictException('This member was just changed; reload'),
+      );
+      expect(history.record).not.toHaveBeenCalled();
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('changeRole', () => {
+    const ROLE_IDS: Record<string, number> = { OWNER: 2, MANAGER: 3, STAFF: 4 };
+    const ownerRow = (overrides: Record<string, unknown> = {}) =>
+      memberRow({
+        id: 'owner-2',
+        roleId: 2,
+        role: { code: 'OWNER', name: 'Company Owner' },
+        companyStoreId: null,
+        companyStore: null,
+        ...overrides,
+      });
+
+    beforeEach(() => {
+      prisma.role.findUniqueOrThrow.mockImplementation(
+        ({ where }: { where: { code: string } }) =>
+          Promise.resolve({ id: ROLE_IDS[where.code], code: where.code }),
+      );
+      corners.lockLiveCorner.mockImplementation(() => {
+        timeline.push('lock branch');
+        return Promise.resolve(true);
+      });
+    });
+
+    it('promotes staff to owner: role by code, branch cleared, one guarded write', async () => {
+      await service.changeRole(owner, 'staff-1', { role: 'OWNER' });
+
+      expect(prisma.role.findUniqueOrThrow).toHaveBeenCalledWith({
+        where: { code: 'OWNER' },
+      });
+      expect(tx.user.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'staff-1',
+          companyId: 'company-1',
+          roleId: 4,
+          companyStoreId: 'corner-a',
+          status: UserStatus.ACTIVE,
+          deletedAt: null,
+        },
+        data: { roleId: 2, companyStoreId: null },
+      });
+      // promotions can't break "at least one owner": no company lock, no count
+      expect(tx.company.updateMany).not.toHaveBeenCalled();
+      expect(tx.user.count).not.toHaveBeenCalled();
+    });
+
+    it('records one snapshot row: STAFF @ A → OWNER @ no branch', async () => {
+      await service.changeRole(owner, 'staff-1', { role: 'OWNER' });
+
+      expect(history.record).toHaveBeenCalledWith(tx, [
+        {
+          companyId: 'company-1',
+          userId: 'staff-1',
+          reason: MembershipChangeReason.ROLE_CHANGED,
+          fromRoleId: 4,
+          toRoleId: 2,
+          fromCornerId: 'corner-a',
+          toCornerId: null,
+          changedByUserId: 'owner-1',
+        },
+      ]);
+    });
+
+    it('keeps the branch for staff → manager', async () => {
+      await service.changeRole(owner, 'staff-1', { role: 'MANAGER' });
+
+      expect(tx.user.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { roleId: 3, companyStoreId: 'corner-a' },
+        }),
+      );
+    });
+
+    it('lets a manager promote staff of their own branch', async () => {
+      await service.changeRole(manager, 'staff-1', { role: 'MANAGER' });
+
+      expect(tx.user.updateMany).toHaveBeenCalled();
+      expect(history.record.mock.calls[0][1][0]).toMatchObject({
+        changedByUserId: 'manager-1',
+      });
+    });
+
+    it('emits member.roleChanged only after the transaction commits', async () => {
+      await service.changeRole(owner, 'staff-1', { role: 'MANAGER' });
+
+      expect(eventEmitter.emit).toHaveBeenCalledWith(
+        NotificationEvent.MEMBER_ROLE_CHANGED,
+        {
+          memberUserId: 'staff-1',
+          changedByUserId: 'owner-1',
+          toRoleCode: 'MANAGER',
+        },
+      );
+      expect(timeline).toEqual(['write', 'commit', 'emit']);
+    });
+
+    it('a no-op decision writes nothing and returns the member', async () => {
+      const view = await service.changeRole(owner, 'staff-1', {
+        role: 'STAFF',
+      });
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+      expect(view.role).toEqual({ code: 'STAFF', name: 'Staff' });
+    });
+
+    describe('the admin demoting an owner', () => {
+      beforeEach(() => {
+        prisma.user.findFirst.mockResolvedValue(ownerRow());
+      });
+
+      it('locks the company row, then counts owners, then the branch, then writes', async () => {
+        await service.changeRole(admin, 'owner-2', {
+          role: 'STAFF',
+          cornerId: 'corner-b',
+        });
+
+        expect(tx.company.updateMany).toHaveBeenCalledWith({
+          where: { id: 'company-1' },
+          data: { updatedAt: expect.any(Date) },
+        });
+        expect(tx.user.count).toHaveBeenCalledWith({
+          where: {
+            companyId: 'company-1',
+            role: { code: 'OWNER' },
+            status: UserStatus.ACTIVE,
+            deletedAt: null,
+          },
+        });
+        expect(corners.lockLiveCorner).toHaveBeenCalledWith(
+          tx,
+          'corner-b',
+          'company-1',
+        );
+        expect(tx.user.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: { roleId: 4, companyStoreId: 'corner-b' },
+          }),
+        );
+        expect(timeline).toEqual([
+          'lock company',
+          'count owners',
+          'lock branch',
+          'write',
+          'commit',
+          'emit',
+        ]);
+      });
+
+      it('cornerId null lands them in no branch, without locking a branch', async () => {
+        await service.changeRole(admin, 'owner-2', {
+          role: 'MANAGER',
+          cornerId: null,
+        });
+
+        expect(corners.lockLiveCorner).not.toHaveBeenCalled();
+        expect(tx.user.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: { roleId: 3, companyStoreId: null },
+          }),
+        );
+      });
+
+      it('409 when they are the last active owner; nobody is changed', async () => {
+        tx.user.count.mockResolvedValue(1);
+
+        await expect(
+          service.changeRole(admin, 'owner-2', {
+            role: 'STAFF',
+            cornerId: null,
+          }),
+        ).rejects.toThrow(
+          new ConflictException('A company needs at least one owner'),
+        );
+        expect(tx.user.updateMany).not.toHaveBeenCalled();
+        expect(history.record).not.toHaveBeenCalled();
+        expect(eventEmitter.emit).not.toHaveBeenCalled();
+      });
+
+      it('404 when the branch is not a live corner of their company', async () => {
+        corners.lockLiveCorner.mockResolvedValue(false);
+
+        await expect(
+          service.changeRole(admin, 'owner-2', {
+            role: 'STAFF',
+            cornerId: 'corner-x',
+          }),
+        ).rejects.toThrow(new NotFoundException('Branch not found'));
+        expect(tx.user.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('400 when no cornerId is sent (decided before any write)', async () => {
+        await expect(
+          service.changeRole(admin, 'owner-2', { role: 'STAFF' }),
+        ).rejects.toThrow(BadRequestException);
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+    });
+
+    it('treats cornerId: null as sent (refused for anything but demoting an owner)', async () => {
+      await expect(
+        service.changeRole(owner, 'staff-1', {
+          role: 'MANAGER',
+          cornerId: null,
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    describe('refusals (nothing written, nothing emitted)', () => {
+      const expectNothingChanged = () => {
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(history.record).not.toHaveBeenCalled();
+        expect(eventEmitter.emit).not.toHaveBeenCalled();
+      };
+
+      it('403 when an owner tries to demote another owner', async () => {
+        prisma.user.findFirst.mockResolvedValue(ownerRow());
+
+        await expect(
+          service.changeRole(owner, 'owner-2', { role: 'MANAGER' }),
+        ).rejects.toThrow(ForbiddenException);
+        expectNothingChanged();
+      });
+
+      it('403 when a manager promotes staff of another branch', async () => {
+        prisma.user.findFirst.mockResolvedValue(
+          memberRow({
+            companyStoreId: 'corner-b',
+            companyStore: { id: 'corner-b', name: 'Branch B' },
+          }),
+        );
+
+        await expect(
+          service.changeRole(manager, 'staff-1', { role: 'MANAGER' }),
+        ).rejects.toThrow(ForbiddenException);
+        expectNothingChanged();
+      });
+
+      it('404 when the admin targets the platform admin (no company)', async () => {
+        prisma.user.findFirst.mockResolvedValue(
+          memberRow({
+            id: 'admin-2',
+            companyId: null,
+            companyStoreId: null,
+            roleId: 1,
+            role: { code: 'ADMIN', name: 'Platform Admin' },
+            companyStore: null,
+          }),
+        );
+
+        await expect(
+          service.changeRole(admin, 'admin-2', { role: 'STAFF' }),
+        ).rejects.toThrow(new NotFoundException('Member not found'));
+        expectNothingChanged();
+      });
+
+      it('400 for a member who is not active', async () => {
+        prisma.user.findFirst.mockResolvedValue(
+          memberRow({ status: UserStatus.SUSPENDED }),
+        );
+
+        await expect(
+          service.changeRole(owner, 'staff-1', { role: 'MANAGER' }),
+        ).rejects.toThrow(
+          new BadRequestException('Only active members can be changed'),
+        );
+        expectNothingChanged();
+      });
+    });
+
+    it('409 when the member changed between the read and the write', async () => {
+      tx.user.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.changeRole(owner, 'staff-1', { role: 'MANAGER' }),
       ).rejects.toThrow(
         new ConflictException('This member was just changed; reload'),
       );

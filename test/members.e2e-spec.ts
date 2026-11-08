@@ -29,6 +29,9 @@ describe('Members (e2e)', () => {
   let branchBId: string;
   let company2BranchId: string;
   let joinCode1: string;
+  let joinCode2: string;
+  let company2Id: string;
+  let owner2UserId: string;
 
   // users.phone is unique across the shared DB: suite 16's own block
   const nextPhone = testPhones(16);
@@ -108,12 +111,12 @@ describe('Members (e2e)', () => {
   };
 
   // member self-registers via join code and waits for approval (not approved here)
-  const registerPending = async (tag: string) => {
+  const registerPending = async (tag: string, joinCode: string = joinCode1) => {
     const { phone, token } = await verifiedPhone(app, nextPhone);
     await request(http)
       .post('/auth/register/member')
       .send({
-        joinCode: joinCode1,
+        joinCode: joinCode,
         credentials: {
           type: 'password',
           email: `${tag}@mbr.test`,
@@ -143,6 +146,25 @@ describe('Members (e2e)', () => {
 
   const roleIdOf = async (code: string) =>
     (await prisma.role.findUniqueOrThrow({ where: { code: code } })).id;
+
+  const setRole = (
+    access: string,
+    userId: string,
+    role: string,
+    cornerId?: string | null,
+  ) =>
+    request(http)
+      .put(`/users/${userId}/role`)
+      .set('Authorization', `Bearer ${access}`)
+      // cornerId left undefined is dropped from the JSON: "not sent"
+      .send({ role: role, cornerId: cornerId });
+
+  const userIdByEmail = async (email: string) =>
+    (
+      await prisma.user.findFirstOrThrow({
+        where: { loginMethods: { some: { email: email } } },
+      })
+    ).id;
 
   const openBranch = async (access: string, storeId: string, name: string) => {
     const response = await request(http)
@@ -209,6 +231,9 @@ describe('Members (e2e)', () => {
     ownerUserId = company1.userId;
     const company2 = await registerCompany(2);
     owner2Access = company2.access;
+    owner2UserId = company2.userId;
+    company2Id = company2.companyId;
+    joinCode2 = company2.joinCode;
 
     const store = await request(http)
       .post('/stores')
@@ -487,6 +512,144 @@ describe('Members (e2e)', () => {
         .set('Authorization', `Bearer ${ownerAccess}`)
         .send({ roleId: await roleIdOf('STAFF') })
         .expect(400);
+    });
+  });
+
+  describe('changing roles', () => {
+    let promotedId: string; // newcomer1: STAFF in Branch A, approved by the manager
+
+    beforeAll(async () => {
+      promotedId = await userIdByEmail('newcomer1@mbr.test');
+    });
+
+    it('a manager promotes staff of their own branch to manager; they stay there', async () => {
+      const changed = await setRole(
+        managerAccess,
+        promotedId,
+        'MANAGER',
+      ).expect(200);
+
+      expect(changed.body).toMatchObject({
+        role: { code: 'MANAGER' },
+        branch: { id: branchAId },
+      });
+      const rows = await historyOf(promotedId);
+      expect(rows[rows.length - 1]).toMatchObject({
+        reason: 'ROLE_CHANGED',
+        fromRoleId: await roleIdOf('STAFF'),
+        toRoleId: await roleIdOf('MANAGER'),
+        fromCompanyStoreId: branchAId,
+        toCompanyStoreId: branchAId, // a snapshot: the branch didn't change
+        changedByUserId: managerUserId,
+      });
+    });
+
+    it('the promoted member is notified', async () => {
+      await waitFor(() =>
+        prisma.notification.findFirst({
+          where: {
+            recipientUserId: promotedId,
+            eventType: 'member.roleChanged',
+          },
+        }),
+      );
+    });
+
+    it('a manager cannot promote outside their branch, demote a manager, or touch an owner (403)', async () => {
+      await setRole(managerAccess, staffUserId, 'MANAGER').expect(403); // staff has no branch
+      await setRole(managerAccess, promotedId, 'STAFF').expect(403);
+      await setRole(managerAccess, ownerUserId, 'STAFF').expect(403);
+    });
+
+    it('staff cannot change roles at all (403)', async () => {
+      await setRole(staffAccess, promotedId, 'STAFF').expect(403);
+    });
+
+    it('the owner demotes a manager to staff; they stay in their branch', async () => {
+      const changed = await setRole(ownerAccess, promotedId, 'STAFF').expect(
+        200,
+      );
+
+      expect(changed.body).toMatchObject({
+        role: { code: 'STAFF' },
+        branch: { id: branchAId },
+      });
+    });
+
+    it('cornerId is refused unless the admin is demoting an owner (400)', async () => {
+      await setRole(ownerAccess, promotedId, 'MANAGER', branchBId).expect(400);
+      await setRole(ownerAccess, promotedId, 'MANAGER', null).expect(400);
+    });
+
+    it('the owner promotes staff to owner; they leave their branch', async () => {
+      const changed = await setRole(ownerAccess, staff2UserId, 'OWNER').expect(
+        200,
+      );
+
+      expect(changed.body).toMatchObject({
+        role: { code: 'OWNER' },
+        branch: null,
+      });
+    });
+
+    it('owners cannot demote another owner, or themselves (403)', async () => {
+      await setRole(ownerAccess, staff2UserId, 'MANAGER').expect(403);
+      await setRole(ownerAccess, ownerUserId, 'MANAGER').expect(403);
+    });
+
+    it('the admin demotes one of two owners into Branch B; the last owner stays (409)', async () => {
+      await setRole(adminAccess, staff2UserId, 'STAFF').expect(400); // must say where they go
+
+      const demoted = await setRole(
+        adminAccess,
+        staff2UserId,
+        'STAFF',
+        branchBId,
+      ).expect(200);
+      expect(demoted.body).toMatchObject({
+        role: { code: 'STAFF' },
+        branch: { id: branchBId },
+      });
+
+      await setRole(adminAccess, ownerUserId, 'STAFF', null).expect(409);
+      const owner = await prisma.user.findUniqueOrThrow({
+        where: { id: ownerUserId },
+        include: { role: true },
+      });
+      expect(owner.role!.code).toBe('OWNER');
+    });
+
+    it('two admin demotions of the last two owners at once leave exactly one owner', async () => {
+      // company 2: its owner + one promoted member = two owners
+      const secondOwnerId = await registerPending('c2owner', joinCode2);
+      await approve(
+        owner2Access,
+        secondOwnerId,
+        await roleIdOf('MANAGER'),
+        company2BranchId,
+      ).expect(200);
+      await setRole(owner2Access, secondOwnerId, 'OWNER').expect(200);
+
+      const results = await Promise.all([
+        setRole(adminAccess, owner2UserId, 'STAFF', null),
+        setRole(adminAccess, secondOwnerId, 'STAFF', null),
+      ]);
+
+      expect(results.map((result) => result.status).sort()).toEqual([200, 409]);
+      const owners = await prisma.user.findMany({
+        where: {
+          companyId: company2Id,
+          role: { code: 'OWNER' },
+          status: 'ACTIVE',
+          deletedAt: null,
+        },
+      });
+      expect(owners).toHaveLength(1);
+
+      // keep company 2's original owner an owner for the rest of the suite
+      if (owners[0].id !== owner2UserId) {
+        await setRole(adminAccess, owner2UserId, 'OWNER').expect(200);
+      }
     });
   });
 });

@@ -12,6 +12,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth-user';
 import { ChangeBranchDto } from './dto/change-branch.dto';
 import { ApproveMemberDto } from './dto/approve-member.dto';
+import { ChangeRoleDto } from './dto/change-role.dto';
 
 /** Company members: who is where, in which role. Shares the /users prefix. */
 @Controller('users')
@@ -36,5 +37,15 @@ export class MembersController {
     @Body() dto: ChangeBranchDto,
   ) {
     return this.members.changeBranch(caller, id, dto);
+  }
+
+  @RequirePermissions('users.changeRole')
+  @Put(':id/role')
+  changeRole(
+    @CurrentUser() caller: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ChangeRoleDto,
+  ) {
+    return this.members.changeRole(caller, id, dto);
   }
 }

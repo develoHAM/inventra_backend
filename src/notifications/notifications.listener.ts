@@ -11,6 +11,7 @@ import type {
   MemberApprovedEvent,
   MemberJoinRequestedEvent,
   MemberMovedEvent,
+  MemberRoleChangedEvent,
   OrderCreatedEvent,
   StockBelowTargetEvent,
   AccountPasswordResetEvent,
@@ -121,6 +122,25 @@ export class NotificationsListener {
       data: event.toCornerId
         ? { companyId: member.company.id, cornerId: event.toCornerId }
         : { companyId: member.company.id },
+    });
+  }
+
+  @OnEvent(NotificationEvent.MEMBER_ROLE_CHANGED)
+  async handleMemberRoleChanged(event: MemberRoleChangedEvent): Promise<void> {
+    const member = await this.prisma.user.findUnique({
+      where: { id: event.memberUserId },
+      select: { company: { select: { id: true, name: true } } },
+    });
+    if (!member?.company) return;
+    await this.notifications.notifyUsers({
+      userIds: [event.memberUserId],
+      excludeUserId: event.changedByUserId ?? undefined,
+      eventType: NotificationEvent.MEMBER_ROLE_CHANGED,
+      message: notificationTemplates.memberRoleChanged(
+        member.company.name,
+        event.toRoleCode,
+      ),
+      data: { companyId: member.company.id },
     });
   }
 

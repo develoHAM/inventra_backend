@@ -21,6 +21,7 @@ export const EVENT_CHANNELS: Record<
   [NotificationEvent.MEMBER_JOIN_REQUESTED]: EMAIL_AND_PUSH,
   [NotificationEvent.MEMBER_APPROVED]: EMAIL_AND_PUSH,
   [NotificationEvent.MEMBER_MOVED]: EMAIL_AND_PUSH,
+  [NotificationEvent.MEMBER_ROLE_CHANGED]: EMAIL_AND_PUSH,
   [NotificationEvent.ORDER_CREATED]: EMAIL_AND_PUSH,
   [NotificationEvent.AUDIT_APPLIED]: EMAIL_AND_PUSH,
   [NotificationEvent.STOCK_BELOW_TARGET]: EMAIL_AND_PUSH,

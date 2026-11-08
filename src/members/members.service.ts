@@ -17,12 +17,14 @@ import { NotificationEvent } from '../notifications/notification-events';
 import type {
   MemberMovedEvent,
   MemberApprovedEvent,
+  MemberRoleChangedEvent,
 } from '../notifications/notification-events';
-import { isMemberRole } from './member-rules';
+import { decideRoleChange, isMemberRole } from './member-rules';
 import { MEMBER_SELECT } from './member-view';
 import type { MemberRow, MemberView } from './member-view';
 import { ChangeBranchDto } from './dto/change-branch.dto';
 import { ApproveMemberDto } from './dto/approve-member.dto';
+import { ChangeRoleDto } from './dto/change-role.dto';
 
 @Injectable()
 export class MembersService {
@@ -201,6 +203,110 @@ export class MembersService {
       reason: 'MOVED',
     };
     this.eventEmitter.emit(NotificationEvent.MEMBER_MOVED, event);
+
+    return this.toView(await this.findRow(target.id));
+  }
+
+  /**
+   * Promote or demote a member, following decideRoleChange. Takes effect at
+   * once; the person is notified.
+   */
+  async changeRole(
+    caller: AuthUser,
+    userId: string,
+    dto: ChangeRoleDto,
+  ): Promise<MemberView> {
+    const target = await this.findTarget(caller, userId);
+    if (target.status !== UserStatus.ACTIVE)
+      throw new BadRequestException('Only active members can be changed');
+
+    // "Not sent" (undefined) is not the same answer as null ("no branch").
+    const cornerIdSent = dto.cornerId !== undefined;
+    const decision = decideRoleChange({
+      callerRole: caller.roleCode,
+      callerBranchId: caller.companyStoreId ?? null,
+      targetRole: target.roleCode,
+      targetBranchId: target.companyStoreId,
+      requestedRole: dto.role,
+      cornerIdSent: cornerIdSent,
+    });
+    if (decision === 'noop') return this.toView(target);
+
+    // Role ids differ between databases; the code is the stable name.
+    const role = await this.prisma.role.findUniqueOrThrow({
+      where: { code: dto.role },
+    });
+    const branchAfter =
+      decision.branch === 'keep'
+        ? target.companyStoreId
+        : decision.branch === 'clear'
+          ? null
+          : (dto.cornerId ?? null);
+
+    await this.prisma.$transaction(async (transaction) => {
+      // Locks always in this order: company, then branch, then member.
+      if (decision.checkOwnerCount) {
+        // Every owner demotion writes the company row first, so two of them
+        // run one after the other and the second counts what the first left.
+        await transaction.company.updateMany({
+          where: { id: target.companyId },
+          data: { updatedAt: new Date() },
+        });
+        const activeOwners = await transaction.user.count({
+          where: {
+            companyId: target.companyId,
+            role: { code: 'OWNER' },
+            status: UserStatus.ACTIVE,
+            deletedAt: null,
+          },
+        });
+        if (activeOwners < 2)
+          throw new ConflictException('A company needs at least one owner');
+      }
+
+      if (decision.branch === 'set' && branchAfter !== null) {
+        const isLive = await this.corners.lockLiveCorner(
+          transaction,
+          branchAfter,
+          target.companyId,
+        );
+        if (!isLive) throw new NotFoundException('Branch not found');
+      }
+
+      const changed = await transaction.user.updateMany({
+        where: {
+          id: target.id,
+          companyId: target.companyId,
+          roleId: target.roleId,
+          companyStoreId: target.companyStoreId,
+          status: UserStatus.ACTIVE,
+          deletedAt: null,
+        },
+        data: { roleId: role.id, companyStoreId: branchAfter },
+      });
+      if (changed.count === 0)
+        throw new ConflictException('This member was just changed; reload');
+
+      await this.history.record(transaction, [
+        {
+          companyId: target.companyId,
+          userId: target.id,
+          reason: MembershipChangeReason.ROLE_CHANGED,
+          fromRoleId: target.roleId,
+          toRoleId: role.id,
+          fromCornerId: target.companyStoreId,
+          toCornerId: branchAfter,
+          changedByUserId: caller.id,
+        },
+      ]);
+    });
+
+    const event: MemberRoleChangedEvent = {
+      memberUserId: target.id,
+      changedByUserId: caller.id,
+      toRoleCode: dto.role,
+    };
+    this.eventEmitter.emit(NotificationEvent.MEMBER_ROLE_CHANGED, event);
 
     return this.toView(await this.findRow(target.id));
   }

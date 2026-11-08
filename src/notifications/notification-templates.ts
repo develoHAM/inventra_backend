@@ -1,7 +1,16 @@
+import type { MemberRoleCode } from '../members/member-rules';
+
 export interface RenderedMessage {
   subject: string;
   body: string;
 }
+
+/** Korean role names. A Record over the union: a missing role won't compile. */
+const ROLE_LABELS_KO: Record<MemberRoleCode, string> = {
+  OWNER: '대표',
+  MANAGER: '매니저',
+  STAFF: '직원',
+};
 
 export const notificationTemplates = {
   // Called twice by email verification: once with the code (sent), once
@@ -37,6 +46,13 @@ export const notificationTemplates = {
     body: cornerName
       ? `${companyName}에서 소속 지점이 ${cornerName}(으)로 변경되었습니다.`
       : `${companyName}에서 소속 지점 배정이 해제되었습니다. 새 지점이 배정되면 다시 알려 드립니다.`,
+  }),
+  memberRoleChanged: (
+    companyName: string,
+    roleCode: MemberRoleCode,
+  ): RenderedMessage => ({
+    subject: '[Inventra] 역할이 변경되었습니다',
+    body: `${companyName}에서 회원님의 역할이 ${ROLE_LABELS_KO[roleCode]}(으)로 변경되었습니다.`,
   }),
   orderCreated: (
     cornerName: string,
