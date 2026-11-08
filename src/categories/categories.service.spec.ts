@@ -44,7 +44,10 @@ describe('CategoriesService', () => {
   it('findOne returns the category when present', async () => {
     prisma.category.findFirst.mockResolvedValue({ id: 5, name: 'Drinks' });
 
-    await expect(service.findOne(5)).resolves.toEqual({ id: 5, name: 'Drinks' });
+    await expect(service.findOne(5)).resolves.toEqual({
+      id: 5,
+      name: 'Drinks',
+    });
     expect(prisma.category.findFirst).toHaveBeenCalledWith({
       where: { id: 5, deletedAt: null },
     });
@@ -69,9 +72,9 @@ describe('CategoriesService', () => {
   it('update 404s an absent id before writing', async () => {
     prisma.category.findFirst.mockResolvedValue(null);
 
-    await expect(
-      service.update(999, { name: 'x' } as any),
-    ).rejects.toThrow(NotFoundException);
+    await expect(service.update(999, { name: 'x' } as any)).rejects.toThrow(
+      NotFoundException,
+    );
     expect(prisma.category.update).not.toHaveBeenCalled();
   });
 });

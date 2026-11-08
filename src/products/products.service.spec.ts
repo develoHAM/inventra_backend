@@ -30,20 +30,33 @@ describe('ProductsService', () => {
   };
 
   const owner: AuthUser = {
-    id: 'owner-1', companyId: 'company-1', roleId: 2,
-    roleCode: 'OWNER', status: UserStatus.ACTIVE,
+    id: 'owner-1',
+    companyId: 'company-1',
+    roleId: 2,
+    roleCode: 'OWNER',
+    status: UserStatus.ACTIVE,
   };
   const manager: AuthUser = {
-    id: 'mgr-1', companyId: 'company-1', roleId: 3,
-    roleCode: 'MANAGER', status: UserStatus.ACTIVE,
+    id: 'mgr-1',
+    companyId: 'company-1',
+    roleId: 3,
+    roleCode: 'MANAGER',
+    status: UserStatus.ACTIVE,
   };
   const admin: AuthUser = {
-    id: 'admin-1', companyId: null, roleId: 1,
-    roleCode: 'ADMIN', status: UserStatus.ACTIVE,
+    id: 'admin-1',
+    companyId: null,
+    roleId: 1,
+    roleCode: 'ADMIN',
+    status: UserStatus.ACTIVE,
   };
 
   const dto = {
-    name: 'Widget', barcode: 'BC-1', categoryId: 10, brandId: 20, priceKrw: 1000,
+    name: 'Widget',
+    barcode: 'BC-1',
+    categoryId: 10,
+    brandId: 20,
+    priceKrw: 1000,
   };
 
   beforeEach(() => {
@@ -139,7 +152,9 @@ describe('ProductsService', () => {
     it('404s a cross-tenant / absent product and scopes the lookup', async () => {
       prisma.product.findFirst.mockResolvedValue(null);
 
-      await expect(service.findOne(owner, 'x')).rejects.toThrow(NotFoundException);
+      await expect(service.findOne(owner, 'x')).rejects.toThrow(
+        NotFoundException,
+      );
       expect(prisma.product.findFirst).toHaveBeenCalledWith({
         where: { id: 'x', companyId: 'company-1', deletedAt: null },
       });
@@ -148,7 +163,10 @@ describe('ProductsService', () => {
 
   describe('update', () => {
     it('re-validates a changed brand against the product company (400)', async () => {
-      prisma.product.findFirst.mockResolvedValue({ id: 'p1', companyId: 'company-1' });
+      prisma.product.findFirst.mockResolvedValue({
+        id: 'p1',
+        companyId: 'company-1',
+      });
       brands.findInCompany.mockResolvedValue(null);
 
       await expect(
@@ -162,7 +180,9 @@ describe('ProductsService', () => {
   describe('remove (creator-scoped)', () => {
     it('lets an OWNER delete any company product and stamps the audit', async () => {
       prisma.product.findFirst.mockResolvedValue({
-        id: 'p1', companyId: 'company-1', createdByUserId: 'someone-else',
+        id: 'p1',
+        companyId: 'company-1',
+        createdByUserId: 'someone-else',
       });
 
       await service.remove(owner, 'p1');
@@ -175,7 +195,9 @@ describe('ProductsService', () => {
 
     it('blocks a MANAGER from deleting a product they did not create (403)', async () => {
       prisma.product.findFirst.mockResolvedValue({
-        id: 'p1', companyId: 'company-1', createdByUserId: 'someone-else',
+        id: 'p1',
+        companyId: 'company-1',
+        createdByUserId: 'someone-else',
       });
 
       await expect(service.remove(manager, 'p1')).rejects.toThrow(
@@ -186,7 +208,9 @@ describe('ProductsService', () => {
 
     it('lets a MANAGER delete their own product', async () => {
       prisma.product.findFirst.mockResolvedValue({
-        id: 'p1', companyId: 'company-1', createdByUserId: 'mgr-1',
+        id: 'p1',
+        companyId: 'company-1',
+        createdByUserId: 'mgr-1',
       });
 
       await service.remove(manager, 'p1');

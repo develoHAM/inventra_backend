@@ -12,7 +12,10 @@ describe('AuditsService', () => {
   let service: AuditsService;
   let prisma: any;
   let corners: { assertWorksCorner: jest.Mock; findOne: jest.Mock };
-  let inventory: { recordWithinTransaction: jest.Mock; emitStockAlerts: jest.Mock };
+  let inventory: {
+    recordWithinTransaction: jest.Mock;
+    emitStockAlerts: jest.Mock;
+  };
   let transaction: any;
   let spreadsheet: { toBuffer: jest.Mock; parse: jest.Mock };
   let eventEmitter: { emit: jest.Mock };
@@ -93,10 +96,15 @@ describe('AuditsService', () => {
       // see exactly which reports reach emitStockAlerts.
       recordWithinTransaction: jest
         .fn()
-        .mockImplementation(async (_tx: unknown, placementId: number, dto: any) => ({
-          ledgerEntry: { id: 1 },
-          stockChange: { placementId: placementId, reportFor: dto.transactionType },
-        })),
+        .mockImplementation(
+          async (_tx: unknown, placementId: number, dto: any) => ({
+            ledgerEntry: { id: 1 },
+            stockChange: {
+              placementId: placementId,
+              reportFor: dto.transactionType,
+            },
+          }),
+        ),
       emitStockAlerts: jest.fn(),
     };
     spreadsheet = {
@@ -344,7 +352,12 @@ describe('AuditsService', () => {
     it('format=xlsx sets the xlsx filename + content-type', async () => {
       prisma.inventoryAudit.findFirst.mockResolvedValue(auditRecord);
 
-      const result = await service.exportAudit(owner, cornerId, auditId, 'xlsx');
+      const result = await service.exportAudit(
+        owner,
+        cornerId,
+        auditId,
+        'xlsx',
+      );
 
       expect(spreadsheet.toBuffer.mock.calls[0][0]).toBe('xlsx');
       expect(result.filename).toBe(`audit-${auditId}.xlsx`);
@@ -452,8 +465,14 @@ describe('AuditsService', () => {
         };
         expect(response.errors).toEqual(
           expect.arrayContaining([
-            expect.objectContaining({ row: 2, error: expect.stringContaining('Unknown barcode') }),
-            expect.objectContaining({ row: 3, error: expect.stringContaining('Quantity') }),
+            expect.objectContaining({
+              row: 2,
+              error: expect.stringContaining('Unknown barcode'),
+            }),
+            expect.objectContaining({
+              row: 3,
+              error: expect.stringContaining('Quantity'),
+            }),
           ]),
         );
       }

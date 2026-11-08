@@ -61,7 +61,10 @@ describe('EFFECTS', () => {
   });
 
   it('ADJUSTMENT is an absolute set on available', () => {
-    expect(EFFECTS.ADJUSTMENT).toEqual({ kind: 'set', field: 'availableQuantity' });
+    expect(EFFECTS.ADJUSTMENT).toEqual({
+      kind: 'set',
+      field: 'availableQuantity',
+    });
   });
 
   it('the decrement is listed first in cross-field transfers (guard before add)', () => {
@@ -80,7 +83,9 @@ describe('EFFECTS', () => {
   it('every delta effect lists its primaryBucket among its deltas', () => {
     for (const effect of Object.values(EFFECTS)) {
       if (effect.kind === 'delta') {
-        expect(effect.deltas.some((delta) => delta.field === effect.primaryBucket)).toBe(true);
+        expect(
+          effect.deltas.some((delta) => delta.field === effect.primaryBucket),
+        ).toBe(true);
       }
     }
   });

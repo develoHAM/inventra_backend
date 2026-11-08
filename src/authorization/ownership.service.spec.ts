@@ -31,7 +31,9 @@ describe('OwnershipService', () => {
 
   describe('scopeToCompany', () => {
     it('scopes a regular caller to their own company', () => {
-      expect(service.scopeToCompany(member)).toEqual({ companyId: 'company-1' });
+      expect(service.scopeToCompany(member)).toEqual({
+        companyId: 'company-1',
+      });
     });
 
     it('returns an empty scope for ADMIN (all companies)', () => {

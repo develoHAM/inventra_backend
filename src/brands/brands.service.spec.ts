@@ -69,7 +69,10 @@ describe('BrandsService', () => {
   });
 
   it('lets ADMIN create a brand for a supplied companyId', async () => {
-    await service.create(admin, { name: 'Acme', companyId: 'company-9' } as any);
+    await service.create(admin, {
+      name: 'Acme',
+      companyId: 'company-9',
+    } as any);
     expect(prisma.brand.create).toHaveBeenCalledWith({
       data: { name: 'Acme', createdByCompanyId: 'company-9' },
     });
@@ -133,7 +136,9 @@ describe('BrandsService', () => {
       } as any);
 
       const putKey = storage.putObject.mock.calls[0][0];
-      expect(putKey).toMatch(new RegExp(`^brands/${brandId}/[0-9a-f-]+\\.png$`));
+      expect(putKey).toMatch(
+        new RegExp(`^brands/${brandId}/[0-9a-f-]+\\.png$`),
+      );
       expect(storage.putObject).toHaveBeenCalledWith(
         putKey,
         expect.any(Buffer),
@@ -157,7 +162,9 @@ describe('BrandsService', () => {
         contentType: 'image/jpeg',
       } as any);
 
-      expect(res.key).toMatch(new RegExp(`^brands/${brandId}/[0-9a-f-]+\\.jpg$`));
+      expect(res.key).toMatch(
+        new RegExp(`^brands/${brandId}/[0-9a-f-]+\\.jpg$`),
+      );
       expect(res.uploadUrl).toBe('https://minio/presigned-put');
       expect(prisma.brand.update).not.toHaveBeenCalled();
     });

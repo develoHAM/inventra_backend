@@ -36,7 +36,9 @@ describe('StoresService', () => {
 
   it('create passes the dto straight through', async () => {
     await service.create({ name: 'Lotte' } as any);
-    expect(prisma.store.create).toHaveBeenCalledWith({ data: { name: 'Lotte' } });
+    expect(prisma.store.create).toHaveBeenCalledWith({
+      data: { name: 'Lotte' },
+    });
   });
 
   it('findAll filters out soft-deleted rows', async () => {

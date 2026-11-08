@@ -7,7 +7,10 @@ describe('ReservationsService', () => {
   let service: ReservationsService;
   let prisma: any;
   let corners: { assertWorksCorner: jest.Mock; findOne: jest.Mock };
-  let inventory: { recordWithinTransaction: jest.Mock; emitStockAlerts: jest.Mock };
+  let inventory: {
+    recordWithinTransaction: jest.Mock;
+    emitStockAlerts: jest.Mock;
+  };
   let transaction: any;
 
   const owner: AuthUser = {
@@ -46,7 +49,9 @@ describe('ReservationsService', () => {
         findFirst: jest.fn().mockResolvedValue({ ...reservedRow }),
         findMany: jest.fn().mockResolvedValue([]),
       },
-      $transaction: jest.fn().mockImplementation(async (cb: any) => cb(transaction)),
+      $transaction: jest
+        .fn()
+        .mockImplementation(async (cb: any) => cb(transaction)),
     };
     corners = {
       assertWorksCorner: jest
@@ -59,10 +64,15 @@ describe('ReservationsService', () => {
       // see exactly which reports reach emitStockAlerts.
       recordWithinTransaction: jest
         .fn()
-        .mockImplementation(async (_tx: unknown, placementId: number, dto: any) => ({
-          ledgerEntry: { id: 1 },
-          stockChange: { placementId: placementId, reportFor: dto.transactionType },
-        })),
+        .mockImplementation(
+          async (_tx: unknown, placementId: number, dto: any) => ({
+            ledgerEntry: { id: 1 },
+            stockChange: {
+              placementId: placementId,
+              reportFor: dto.transactionType,
+            },
+          }),
+        ),
       emitStockAlerts: jest.fn(),
     };
     service = new ReservationsService(prisma, corners as any, inventory as any);

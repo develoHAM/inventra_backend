@@ -42,7 +42,9 @@ describe('InventoryService', () => {
         update: jest.fn().mockResolvedValue({}),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      inventoryTransaction: { create: jest.fn().mockResolvedValue({ id: 100 }) },
+      inventoryTransaction: {
+        create: jest.fn().mockResolvedValue({ id: 100 }),
+      },
     };
     prisma = {
       companyStoreProduct: {
@@ -81,7 +83,9 @@ describe('InventoryService', () => {
     } as any);
 
     expect(corners.assertWorksCorner).toHaveBeenCalledWith(owner, 'corner-1');
-    expect(transaction.companyStoreProductStock.updateMany).toHaveBeenCalledWith({
+    expect(
+      transaction.companyStoreProductStock.updateMany,
+    ).toHaveBeenCalledWith({
       where: { companyStoreProductId: 7, availableQuantity: { gte: 2 } },
       data: { availableQuantity: { decrement: 2 } },
     });
@@ -100,7 +104,9 @@ describe('InventoryService', () => {
   });
 
   it('409s when the guarded decrement finds insufficient stock (count 0)', async () => {
-    transaction.companyStoreProductStock.updateMany.mockResolvedValue({ count: 0 });
+    transaction.companyStoreProductStock.updateMany.mockResolvedValue({
+      count: 0,
+    });
 
     await expect(
       service.record(owner, 'corner-1', 7, {
@@ -144,7 +150,9 @@ describe('InventoryService', () => {
       quantity: 1,
     } as any);
 
-    expect(transaction.companyStoreProductStock.updateMany).toHaveBeenCalledWith({
+    expect(
+      transaction.companyStoreProductStock.updateMany,
+    ).toHaveBeenCalledWith({
       where: { companyStoreProductId: 7, availableQuantity: { gte: 1 } },
       data: { availableQuantity: { decrement: 1 } },
     });
@@ -327,8 +335,18 @@ describe('InventoryService', () => {
   describe('emitStockAlerts', () => {
     it('emits one event per placement that crossed, and nothing for the rest', () => {
       service.emitStockAlerts([
-        { placementId: 1, availableBefore: 10, availableAfter: 2, targetStockQuantity: 5 },
-        { placementId: 2, availableBefore: 10, availableAfter: 9, targetStockQuantity: 5 },
+        {
+          placementId: 1,
+          availableBefore: 10,
+          availableAfter: 2,
+          targetStockQuantity: 5,
+        },
+        {
+          placementId: 2,
+          availableBefore: 10,
+          availableAfter: 9,
+          targetStockQuantity: 5,
+        },
       ]);
 
       expect(eventEmitter.emit).toHaveBeenCalledTimes(1);

@@ -63,7 +63,10 @@ describe('PlacementsService', () => {
       } as any);
 
       expect(corners.assertWorksCorner).toHaveBeenCalledWith(owner, 'corner-1');
-      expect(products.findInCompany).toHaveBeenCalledWith('prod-1', 'company-1');
+      expect(products.findInCompany).toHaveBeenCalledWith(
+        'prod-1',
+        'company-1',
+      );
       expect(prisma.companyStoreProduct.create).toHaveBeenCalledWith({
         data: {
           companyStoreId: 'corner-1',
@@ -142,7 +145,10 @@ describe('PlacementsService', () => {
 
       expect(prisma.companyStoreProduct.update).toHaveBeenCalledWith({
         where: { id: 9 },
-        data: { isActive: true, stock: { update: { targetStockQuantity: 20 } } },
+        data: {
+          isActive: true,
+          stock: { update: { targetStockQuantity: 20 } },
+        },
         include: { stock: true },
       });
     });

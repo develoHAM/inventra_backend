@@ -300,7 +300,12 @@ describe('OrdersService', () => {
     it('format=xlsx sets the xlsx filename + content-type', async () => {
       prisma.order.findFirst.mockResolvedValue(orderRecord);
 
-      const result = await service.exportOrder(owner, cornerId, orderId, 'xlsx');
+      const result = await service.exportOrder(
+        owner,
+        cornerId,
+        orderId,
+        'xlsx',
+      );
 
       expect(spreadsheet.toBuffer.mock.calls[0][0]).toBe('xlsx');
       expect(result.filename).toBe(`order-${orderId}.xlsx`);
@@ -398,7 +403,10 @@ describe('OrdersService', () => {
 
       await service.importUpdate(owner, cornerId, orderId, file('o.xlsx'));
 
-      expect(spreadsheet.parse).toHaveBeenCalledWith('xlsx', expect.any(Buffer));
+      expect(spreadsheet.parse).toHaveBeenCalledWith(
+        'xlsx',
+        expect.any(Buffer),
+      );
       expect(updateSpy).toHaveBeenCalledWith(
         owner,
         cornerId,
@@ -430,10 +438,22 @@ describe('OrdersService', () => {
         };
         expect(response.errors).toEqual(
           expect.arrayContaining([
-            expect.objectContaining({ row: 2, error: expect.stringContaining('Quantity') }),
-            expect.objectContaining({ row: 3, error: expect.stringContaining('Unknown barcode') }),
-            expect.objectContaining({ row: 4, error: expect.stringContaining('Duplicate') }),
-            expect.objectContaining({ row: 5, error: expect.stringContaining('Title differs') }),
+            expect.objectContaining({
+              row: 2,
+              error: expect.stringContaining('Quantity'),
+            }),
+            expect.objectContaining({
+              row: 3,
+              error: expect.stringContaining('Unknown barcode'),
+            }),
+            expect.objectContaining({
+              row: 4,
+              error: expect.stringContaining('Duplicate'),
+            }),
+            expect.objectContaining({
+              row: 5,
+              error: expect.stringContaining('Title differs'),
+            }),
           ]),
         );
       }

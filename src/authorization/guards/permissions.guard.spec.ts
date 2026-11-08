@@ -73,9 +73,9 @@ describe('PermissionsGuard', () => {
     reflector.getAllAndOverride.mockReturnValue(['users.approve']);
     const pendingUser = { ...user, status: UserStatus.PENDING_APPROVAL };
 
-    await expect(
-      guard.canActivate(contextWith(pendingUser)),
-    ).rejects.toThrow(ForbiddenException);
+    await expect(guard.canActivate(contextWith(pendingUser))).rejects.toThrow(
+      ForbiddenException,
+    );
     // status is rejected before any permission lookup happens
     expect(permissionsService.getEffectivePermissions).not.toHaveBeenCalled();
   });
