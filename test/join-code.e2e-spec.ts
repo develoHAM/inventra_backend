@@ -69,7 +69,7 @@ describe('Company join code (e2e)', () => {
     await request(http)
       .patch(`/users/${user!.id}/approve`)
       .set(...auth(ownerAccess))
-      .send({ roleId: role!.id })
+      .send({ roleId: role!.id, cornerId: null })
       .expect(200);
     return login(email);
   };

@@ -180,7 +180,7 @@ describe('Auth & Authorization (e2e)', () => {
     await request(http)
       .patch(`/users/${memberId}/approve`)
       .set('Authorization', `Bearer ${ownerAccess}`)
-      .send({ roleId: staff!.id })
+      .send({ roleId: staff!.id, cornerId: null })
       .expect(200);
   });
 

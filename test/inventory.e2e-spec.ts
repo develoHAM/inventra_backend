@@ -96,7 +96,7 @@ describe('Inventory Transactions (e2e)', () => {
     await request(http)
       .patch(`/users/${user!.id}/approve`)
       .set(...auth(ownerToken))
-      .send({ roleId: role!.id })
+      .send({ roleId: role!.id, cornerId: null })
       .expect(200);
     const login = await request(http)
       .post('/auth/login')

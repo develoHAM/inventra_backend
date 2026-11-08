@@ -268,7 +268,7 @@ describe('Notifications (e2e)', () => {
       await request(http)
         .patch(`/users/${managerUserId}/approve`)
         .set(...auth(ownerAccess))
-        .send({ roleId: managerRole!.id })
+        .send({ roleId: managerRole!.id, cornerId: null })
         .expect(200);
 
       await sentTo(NotificationEvent.MEMBER_APPROVED, managerEmail);

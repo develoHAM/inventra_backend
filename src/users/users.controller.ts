@@ -3,18 +3,14 @@ import {
   Controller,
   FileTypeValidator,
   MaxFileSizeValidator,
-  Param,
   ParseFilePipe,
-  Patch,
   Post,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
-import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth-user';
-import { ApproveMemberDto } from './dto/approve-member.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ConfirmUploadDto } from '../storage/dto/confirm-upload.dto';
 import { PresignUploadDto } from '../storage/dto/presign-upload.dto';
@@ -22,16 +18,6 @@ import { PresignUploadDto } from '../storage/dto/presign-upload.dto';
 @Controller('users')
 export class UsersController {
   constructor(private usersService: UsersService) {}
-
-  @RequirePermissions('users.approve')
-  @Patch(':id/approve')
-  approveMember(
-    @CurrentUser() caller: AuthUser,
-    @Param('id') id: string,
-    @Body() dto: ApproveMemberDto,
-  ) {
-    return this.usersService.approveMember(caller, id, dto);
-  }
 
   @Post('me/avatar')
   @UseInterceptors(FileInterceptor('file'))

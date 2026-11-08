@@ -28,6 +28,7 @@ describe('Members (e2e)', () => {
   let branchAId: string;
   let branchBId: string;
   let company2BranchId: string;
+  let joinCode1: string;
 
   // users.phone is unique across the shared DB: suite 16's own block
   const nextPhone = testPhones(16);
@@ -97,7 +98,7 @@ describe('Members (e2e)', () => {
     await request(http)
       .patch(`/users/${user!.id}/approve`)
       .set('Authorization', `Bearer ${ownerAccess}`)
-      .send({ roleId: role!.id })
+      .send({ roleId: role!.id, cornerId: null })
       .expect(200);
     const login = await request(http)
       .post('/auth/login')
@@ -105,6 +106,43 @@ describe('Members (e2e)', () => {
       .expect(201);
     return { access: login.body.accessToken as string, userId: user!.id };
   };
+
+  // member self-registers via join code and waits for approval (not approved here)
+  const registerPending = async (tag: string) => {
+    const { phone, token } = await verifiedPhone(app, nextPhone);
+    await request(http)
+      .post('/auth/register/member')
+      .send({
+        joinCode: joinCode1,
+        credentials: {
+          type: 'password',
+          email: `${tag}@mbr.test`,
+          password: 'password123',
+        },
+        name: tag,
+        phone: phone,
+        phoneVerificationToken: token,
+      })
+      .expect(201);
+    const user = await prisma.user.findFirst({
+      where: { loginMethods: { some: { email: `${tag}@mbr.test` } } },
+    });
+    return user!.id;
+  };
+
+  const approve = (
+    access: string,
+    userId: string,
+    roleId: number,
+    cornerId: string | null,
+  ) =>
+    request(http)
+      .patch(`/users/${userId}/approve`)
+      .set('Authorization', `Bearer ${access}`)
+      .send({ roleId: roleId, cornerId: cornerId });
+
+  const roleIdOf = async (code: string) =>
+    (await prisma.role.findUniqueOrThrow({ where: { code: code } })).id;
 
   const openBranch = async (access: string, storeId: string, name: string) => {
     const response = await request(http)
@@ -166,6 +204,7 @@ describe('Members (e2e)', () => {
     adminAccess = adminLogin.body.accessToken;
 
     const company1 = await registerCompany(1);
+    joinCode1 = company1.joinCode;
     ownerAccess = company1.access;
     ownerUserId = company1.userId;
     const company2 = await registerCompany(2);
@@ -195,6 +234,17 @@ describe('Members (e2e)', () => {
   });
 
   afterAll(async () => {
+    // Let this suite's emails finish sending before closing the app, so the
+    // queue isn't shut down mid-job ("Connection is closed").
+    await waitFor(async () => {
+      const pending = await prisma.notification.count({
+        where: {
+          status: 'PENDING',
+          recipientAddress: { endsWith: '@mbr.test' },
+        },
+      });
+      return pending === 0 ? true : null;
+    });
     await app.close();
   });
 
@@ -317,6 +367,126 @@ describe('Members (e2e)', () => {
         });
         return sent === 3 ? sent : null;
       });
+    });
+  });
+
+  describe('approval picks the role and the branch', () => {
+    it('a manager approves a newcomer into their own branch, as staff', async () => {
+      const newcomerId = await registerPending('newcomer1');
+
+      const approved = await approve(
+        managerAccess,
+        newcomerId,
+        await roleIdOf('STAFF'),
+        branchAId,
+      ).expect(200);
+
+      expect(approved.body).toMatchObject({
+        id: newcomerId,
+        status: 'ACTIVE',
+        role: { code: 'STAFF' },
+        branch: { id: branchAId, name: 'Branch A' },
+      });
+      const [firstRow] = await historyOf(newcomerId);
+      expect(firstRow).toMatchObject({
+        reason: 'APPROVED',
+        fromRoleId: null,
+        toRoleId: await roleIdOf('STAFF'),
+        fromCompanyStoreId: null,
+        toCompanyStoreId: branchAId,
+        changedByUserId: managerUserId,
+      });
+    });
+
+    it('a manager cannot approve as a manager, into another branch, or into no branch (403)', async () => {
+      const newcomerId = await registerPending('newcomer2');
+
+      await approve(
+        managerAccess,
+        newcomerId,
+        await roleIdOf('MANAGER'),
+        branchAId,
+      ).expect(403);
+      await approve(
+        managerAccess,
+        newcomerId,
+        await roleIdOf('STAFF'),
+        branchBId,
+      ).expect(403);
+      await approve(
+        managerAccess,
+        newcomerId,
+        await roleIdOf('STAFF'),
+        null,
+      ).expect(403);
+
+      const stillPending = await prisma.user.findUniqueOrThrow({
+        where: { id: newcomerId },
+      });
+      expect(stillPending.status).toBe('PENDING_APPROVAL');
+    });
+
+    it('the owner approves a manager with "no branch yet"', async () => {
+      const newcomerId = await registerPending('newcomer3');
+
+      const approved = await approve(
+        ownerAccess,
+        newcomerId,
+        await roleIdOf('MANAGER'),
+        null,
+      ).expect(200);
+
+      expect(approved.body).toMatchObject({
+        role: { code: 'MANAGER' },
+        branch: null,
+      });
+    });
+
+    it('a branch of another company is not found (404) and the member stays pending', async () => {
+      const newcomerId = await registerPending('newcomer4');
+
+      await approve(
+        ownerAccess,
+        newcomerId,
+        await roleIdOf('STAFF'),
+        company2BranchId,
+      ).expect(404);
+
+      const stillPending = await prisma.user.findUniqueOrThrow({
+        where: { id: newcomerId },
+      });
+      expect(stillPending.status).toBe('PENDING_APPROVAL');
+      expect(await historyOf(newcomerId)).toHaveLength(0);
+    });
+
+    it('two approvals of the same person at once: exactly one wins', async () => {
+      const newcomerId = await registerPending('newcomer5');
+      const staffRoleId = await roleIdOf('STAFF');
+
+      const results = await Promise.all([
+        approve(ownerAccess, newcomerId, staffRoleId, branchBId),
+        approve(managerAccess, newcomerId, staffRoleId, branchAId),
+      ]);
+
+      const statuses = results.map((result) => result.status);
+      expect(statuses.filter((status) => status === 200)).toHaveLength(1);
+      // the loser either read "pending" and lost the write (409), or read
+      // the already-approved member (400 not pending)
+      expect([400, 409]).toContain(statuses.find((status) => status !== 200));
+      const approvals = (await historyOf(newcomerId)).filter(
+        (row) => row.reason === 'APPROVED',
+      );
+      expect(approvals).toHaveLength(1);
+    });
+
+    it('cornerId is required: leaving it out is 400', async () => {
+      const newcomerId = await registerPending('newcomer6');
+
+      await request(http)
+        .patch(`/users/${newcomerId}/approve`)
+        .set('Authorization', `Bearer ${ownerAccess}`)
+        .send({ roleId: await roleIdOf('STAFF') })
+        .expect(400);
     });
   });
 });

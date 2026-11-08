@@ -4,17 +4,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AuthUser } from '../auth/types/auth-user';
-import { ApproveMemberDto } from './dto/approve-member.dto';
 import { PrismaService } from '../prisma/prisma.service';
-import { UserStatus } from '../generated/prisma/enums';
-import { OwnershipService } from '../authorization/ownership.service';
 import { StorageService } from '../storage/storage.service';
 import { randomUUID } from 'node:crypto';
 import { ConfirmUploadDto } from '../storage/dto/confirm-upload.dto';
 import { PresignUploadDto } from '../storage/dto/presign-upload.dto';
-import { EventEmitter2 } from '@nestjs/event-emitter';
-import { NotificationEvent } from '../notifications/notification-events';
-import type { MemberApprovedEvent } from '../notifications/notification-events';
 
 const IMAGE_EXT: Record<string, string> = {
   'image/jpeg': 'jpg',
@@ -26,9 +20,7 @@ const IMAGE_EXT: Record<string, string> = {
 export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly ownership: OwnershipService,
     private readonly storage: StorageService,
-    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   private avatarKey(userId: string, contentType: string): string {
@@ -52,42 +44,6 @@ export class UsersService {
     });
     if (!user) throw new NotFoundException('User not found');
     return user;
-  }
-
-  async approveMember(
-    caller: AuthUser,
-    targetUserId: string,
-    dto: ApproveMemberDto,
-  ) {
-    const target = await this.prisma.user.findFirst({
-      where: {
-        id: targetUserId,
-        ...this.ownership.scopeToCompany(caller),
-      },
-    });
-    if (!target) throw new NotFoundException('Member not found');
-
-    if (target.status !== UserStatus.PENDING_APPROVAL)
-      throw new BadRequestException('Member is not pending approval');
-
-    const role = await this.prisma.role.findUnique({
-      where: { id: dto.roleId },
-    });
-    if (!role || !['MANAGER', 'STAFF'].includes(role.code))
-      throw new BadRequestException('Invalid role for a member');
-
-    const approvedMember = await this.prisma.user.update({
-      where: { id: target.id },
-      data: { roleId: dto.roleId, status: UserStatus.ACTIVE },
-    });
-
-    const event: MemberApprovedEvent = {
-      memberUserId: target.id,
-      approvedByUserId: caller.id,
-    };
-    this.eventEmitter.emit(NotificationEvent.MEMBER_APPROVED, event);
-
-    return approvedMember;
   }
 
   async uploadAvatar(caller: AuthUser, file: Express.Multer.File) {

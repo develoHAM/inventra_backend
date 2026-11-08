@@ -14,11 +14,15 @@ import { StorageService } from '../storage/storage.service';
 import type { AuthUser } from '../auth/types/auth-user';
 import { MembershipChangeReason, UserStatus } from '../generated/prisma/enums';
 import { NotificationEvent } from '../notifications/notification-events';
-import type { MemberMovedEvent } from '../notifications/notification-events';
+import type {
+  MemberMovedEvent,
+  MemberApprovedEvent,
+} from '../notifications/notification-events';
 import { isMemberRole } from './member-rules';
 import { MEMBER_SELECT } from './member-view';
 import type { MemberRow, MemberView } from './member-view';
 import { ChangeBranchDto } from './dto/change-branch.dto';
+import { ApproveMemberDto } from './dto/approve-member.dto';
 
 @Injectable()
 export class MembersService {
@@ -30,6 +34,104 @@ export class MembersService {
     private readonly storage: StorageService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  /**
+   * Approve someone who joined with the company code, choosing their role
+   * and branch in one step. Managers approve only as staff, into their own
+   * branch.
+   */
+  async approve(
+    caller: AuthUser,
+    userId: string,
+    dto: ApproveMemberDto,
+  ): Promise<MemberView> {
+    // A pending member has no role yet, so this is the plain scoped lookup
+    // (findTarget would treat them as "not found").
+    const target = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        ...this.ownership.scopeToCompany(caller),
+        deletedAt: null,
+      },
+      select: MEMBER_SELECT,
+    });
+    if (!target || target.companyId === null)
+      throw new NotFoundException('Member not found');
+    if (target.status !== UserStatus.PENDING_APPROVAL)
+      throw new BadRequestException('Member is not pending approval');
+
+    const role = await this.prisma.role.findUnique({
+      where: {
+        id: dto.roleId,
+      },
+    });
+    if (!role || (role.code !== 'MANAGER' && role.code !== 'STAFF'))
+      throw new BadRequestException('Invalid role for a member');
+
+    if (caller.roleCode === 'MANAGER') {
+      if (role.code !== 'STAFF')
+        throw new ForbiddenException('Managers can approve only as staff');
+      // A manager with no branch has null, and so does cornerId: null.
+      // null === null must not count as "their own branch".
+      const callerBranchId = caller.companyStoreId ?? null;
+      const intoOwnBranch =
+        callerBranchId !== null && dto.cornerId === callerBranchId;
+      if (!intoOwnBranch)
+        throw new ForbiddenException(
+          'Managers can approve only into their own branch',
+        );
+    }
+
+    const companyId = target.companyId;
+    await this.prisma.$transaction(async (transaction) => {
+      if (dto.cornerId !== null) {
+        const isLive = await this.corners.lockLiveCorner(
+          transaction,
+          dto.cornerId,
+          companyId,
+        );
+        if (!isLive) throw new NotFoundException('Branch not found');
+      }
+
+      // Still pending? If someone approved them a moment ago, nothing
+      // matches and count is 0.
+      const approved = await transaction.user.updateMany({
+        where: {
+          id: target.id,
+          status: UserStatus.PENDING_APPROVAL,
+          deletedAt: null,
+        },
+        data: {
+          roleId: role.id,
+          status: UserStatus.ACTIVE,
+          companyStoreId: dto.cornerId,
+        },
+      });
+      if (approved.count === 0)
+        throw new ConflictException('This member was just changed; reload');
+
+      await this.history.record(transaction, [
+        {
+          companyId: companyId,
+          userId: target.id,
+          reason: MembershipChangeReason.APPROVED,
+          fromRoleId: target.roleId,
+          toRoleId: role.id,
+          fromCornerId: target.companyStoreId,
+          toCornerId: dto.cornerId,
+          changedByUserId: caller.id,
+        },
+      ]);
+    });
+
+    const event: MemberApprovedEvent = {
+      memberUserId: target.id,
+      approvedByUserId: caller.id,
+    };
+    this.eventEmitter.emit(NotificationEvent.MEMBER_APPROVED, event);
+
+    return this.toView(await this.findRow(target.id));
+  }
 
   /** Move a manager or staff member to another branch, or off theirs (null). */
   async changeBranch(

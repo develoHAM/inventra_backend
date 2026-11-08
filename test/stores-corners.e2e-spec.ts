@@ -91,7 +91,7 @@ describe('Stores & Corners (e2e)', () => {
     await request(http)
       .patch(`/users/${user!.id}/approve`)
       .set('Authorization', `Bearer ${ownerToken}`)
-      .send({ roleId: role!.id })
+      .send({ roleId: role!.id, cornerId: null })
       .expect(200);
     const login = await request(http)
       .post('/auth/login')
