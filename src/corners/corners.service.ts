@@ -4,10 +4,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '../generated/prisma/client';
+import { MembershipChangeReason } from '../generated/prisma/enums';
 import { OwnershipService } from '../authorization/ownership.service';
 import { StoresService } from '../stores/stores.service';
+import { MembershipHistoryService } from '../membership-history/membership-history.service';
+import { NotificationEvent } from '../notifications/notification-events';
+import type { MemberMovedEvent } from '../notifications/notification-events';
 import type { AuthUser } from '../auth/types/auth-user';
 import { CreateCornerDto } from './dto/create-corner.dto';
 import { UpdateCornerDto } from './dto/update-corner.dto';
@@ -18,6 +23,8 @@ export class CornersService {
     private readonly prisma: PrismaService,
     private readonly ownership: OwnershipService,
     private readonly stores: StoresService,
+    private readonly history: MembershipHistoryService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -89,11 +96,60 @@ export class CornersService {
     return this.prisma.companyStore.update({ where: { id: id }, data: dto });
   }
 
+  /**
+   * Soft-delete a branch and move everyone in it to "no branch", with a
+   * history row and a notification each. A soft delete is an UPDATE, so no
+   * foreign key clears the members for us: we do it in the same transaction.
+   */
   async remove(caller: AuthUser, id: string) {
-    await this.findOne(caller, id);
-    return this.prisma.companyStore.update({
-      where: { id: id },
-      data: { deletedAt: new Date(), deletedByUserId: caller.id },
+    const corner = await this.findOne(caller, id); // company-scoped → 404
+
+    const released = await this.prisma.$transaction(async (transaction) => {
+      // The guarded soft delete: a second delete finds deletedAt already set
+      // (count 0 → 404), and writing the row locks it, so moves and approvals
+      // into this branch wait and then see it deleted.
+      const deleted = await transaction.companyStore.updateMany({
+        where: { id: id, deletedAt: null },
+        data: { deletedAt: new Date(), deletedByUserId: caller.id },
+      });
+      if (deleted.count === 0) throw new NotFoundException('Corner not found');
+
+      // One statement clears the branch AND reports exactly who it changed,
+      // so the history and the notifications can't include someone who was
+      // moved out a moment earlier.
+      const releasedMembers = await transaction.user.updateManyAndReturn({
+        where: { companyStoreId: id, deletedAt: null },
+        data: { companyStoreId: null },
+        select: { id: true, roleId: true },
+      });
+
+      await this.history.record(
+        transaction,
+        releasedMembers.map((member) => ({
+          companyId: corner.companyId,
+          userId: member.id,
+          reason: MembershipChangeReason.BRANCH_DELETED,
+          fromRoleId: member.roleId,
+          toRoleId: member.roleId,
+          fromCornerId: id,
+          toCornerId: null,
+          changedByUserId: caller.id,
+        })),
+      );
+      return releasedMembers;
     });
+
+    for (const member of released) {
+      const event: MemberMovedEvent = {
+        memberUserId: member.id,
+        changedByUserId: caller.id,
+        fromCornerId: id,
+        toCornerId: null,
+        reason: 'BRANCH_DELETED',
+      };
+      this.eventEmitter.emit(NotificationEvent.MEMBER_MOVED, event);
+    }
+
+    return this.prisma.companyStore.findUniqueOrThrow({ where: { id: id } });
   }
 }

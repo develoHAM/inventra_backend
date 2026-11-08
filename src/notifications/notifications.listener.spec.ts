@@ -431,6 +431,64 @@ describe('NotificationsListener', () => {
     });
   });
 
+  describe('member.moved because the branch was deleted', () => {
+    const event = {
+      memberUserId: 'member-1',
+      changedByUserId: 'owner-1',
+      fromCornerId: 'corner-a',
+      toCornerId: null,
+      reason: 'BRANCH_DELETED' as const,
+    };
+
+    beforeEach(() => {
+      prisma.user.findUnique.mockResolvedValue({
+        company: { id: 'company-1', name: 'UPL Co' },
+      });
+    });
+
+    it('names the closed branch, read even though it is soft-deleted', async () => {
+      prisma.companyStore.findUnique.mockResolvedValue({ name: 'Branch A' });
+
+      await listener.handleMemberMoved(event);
+
+      // by id only: no deletedAt filter, the row is deleted by now
+      expect(prisma.companyStore.findUnique).toHaveBeenCalledWith({
+        where: { id: 'corner-a' },
+        select: { name: true },
+      });
+      expect(notifications.notifyUsers).toHaveBeenCalledWith({
+        userIds: ['member-1'],
+        excludeUserId: 'owner-1',
+        eventType: NotificationEvent.MEMBER_MOVED,
+        message: notificationTemplates.memberBranchClosed('UPL Co', 'Branch A'),
+        data: { companyId: 'company-1' },
+      });
+    });
+
+    it('still tells them they have no branch if the branch row cannot be read', async () => {
+      prisma.companyStore.findUnique.mockResolvedValue(null);
+
+      await listener.handleMemberMoved(event);
+
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: notificationTemplates.memberMoved('UPL Co', null),
+        }),
+      );
+    });
+  });
+
+  describe('memberBranchClosed template', () => {
+    it('names the company and the closed branch', () => {
+      const message = notificationTemplates.memberBranchClosed(
+        'UPL Co',
+        'Branch A',
+      );
+      expect(message.body).toContain('UPL Co');
+      expect(message.body).toContain('Branch A');
+    });
+  });
+
   describe('memberMoved template', () => {
     it('names the company and the new branch, or says there is none', () => {
       const moved = notificationTemplates.memberMoved('UPL Co', 'Branch B');

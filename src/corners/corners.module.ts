@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { StoresModule } from '../stores/stores.module';
+import { MembershipHistoryModule } from '../membership-history/membership-history.module';
 import { CornersService } from './corners.service';
 import { CornersController } from './corners.controller';
 
 @Module({
-  imports: [AuthorizationModule, StoresModule],
+  imports: [AuthorizationModule, StoresModule, MembershipHistoryModule],
   providers: [CornersService],
   controllers: [CornersController],
   exports: [CornersService],

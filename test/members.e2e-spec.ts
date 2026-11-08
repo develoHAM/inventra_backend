@@ -27,6 +27,7 @@ describe('Members (e2e)', () => {
 
   let branchAId: string;
   let branchBId: string;
+  let storeId: string;
   let company2BranchId: string;
   let joinCode1: string;
   let joinCode2: string;
@@ -240,6 +241,7 @@ describe('Members (e2e)', () => {
       .set('Authorization', `Bearer ${adminAccess}`)
       .send({ name: 'Members Mall' })
       .expect(201);
+    storeId = store.body.id;
     branchAId = await openBranch(ownerAccess, store.body.id, 'Branch A');
     branchBId = await openBranch(ownerAccess, store.body.id, 'Branch B');
     company2BranchId = await openBranch(owner2Access, store.body.id, 'Other');
@@ -650,6 +652,81 @@ describe('Members (e2e)', () => {
       if (owners[0].id !== owner2UserId) {
         await setRole(adminAccess, owner2UserId, 'OWNER').expect(200);
       }
+    });
+  });
+
+  describe('deleting a branch releases its people', () => {
+    let branchCId: string;
+    let releasedManagerId: string; // newcomer3: MANAGER, no branch until now
+
+    beforeAll(async () => {
+      branchCId = await openBranch(ownerAccess, storeId, 'Branch C');
+      releasedManagerId = await userIdByEmail('newcomer3@mbr.test');
+      await moveTo(ownerAccess, releasedManagerId, branchCId).expect(200);
+      await moveTo(ownerAccess, staffUserId, branchCId).expect(200);
+    });
+
+    it('the owner deletes Branch C: its manager and staff now have no branch', async () => {
+      await request(http)
+        .delete(`/corners/${branchCId}`)
+        .set('Authorization', `Bearer ${ownerAccess}`)
+        .expect(200);
+
+      for (const userId of [releasedManagerId, staffUserId]) {
+        const member = await prisma.user.findUniqueOrThrow({
+          where: { id: userId },
+        });
+        expect(member.companyStoreId).toBeNull();
+      }
+    });
+
+    it('each released person gets one BRANCH_DELETED history row', async () => {
+      const rows = await prisma.membershipChange.findMany({
+        where: { reason: 'BRANCH_DELETED', fromCompanyStoreId: branchCId },
+      });
+
+      expect(rows.map((row) => row.userId).sort()).toEqual(
+        [releasedManagerId, staffUserId].sort(),
+      );
+      for (const row of rows) {
+        expect(row.toCompanyStoreId).toBeNull();
+        expect(row.fromRoleId).toBe(row.toRoleId); // a snapshot: role unchanged
+        expect(row.changedByUserId).toBe(ownerUserId);
+      }
+    });
+
+    it('each released person is told their branch was closed', async () => {
+      for (const userId of [releasedManagerId, staffUserId]) {
+        await waitFor(() =>
+          prisma.notification.findFirst({
+            where: {
+              recipientUserId: userId,
+              eventType: 'member.moved',
+              AND: [
+                { body: { contains: 'Branch C' } },
+                { body: { contains: '삭제' } },
+              ],
+            },
+          }),
+        );
+      }
+    });
+
+    it('nobody can be moved into the deleted branch (404)', async () => {
+      await moveTo(ownerAccess, staff2UserId, branchCId).expect(404);
+    });
+
+    it('deleting it again is 404, and writes no more history', async () => {
+      await request(http)
+        .delete(`/corners/${branchCId}`)
+        .set('Authorization', `Bearer ${ownerAccess}`)
+        .expect(404);
+
+      expect(
+        await prisma.membershipChange.count({
+          where: { reason: 'BRANCH_DELETED', fromCompanyStoreId: branchCId },
+        }),
+      ).toBe(2);
     });
   });
 });

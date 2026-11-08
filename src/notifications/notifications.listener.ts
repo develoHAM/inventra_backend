@@ -105,6 +105,31 @@ export class NotificationsListener {
       select: { company: { select: { id: true, name: true } } },
     });
     if (!member?.company) return;
+
+    if (event.reason === 'BRANCH_DELETED') {
+      // The branch is soft-deleted by now: read it by id, with no deletedAt
+      // filter, to name it in the message.
+      const closedBranch = event.fromCornerId
+        ? await this.prisma.companyStore.findUnique({
+            where: { id: event.fromCornerId },
+            select: { name: true },
+          })
+        : null;
+      await this.notifications.notifyUsers({
+        userIds: [event.memberUserId],
+        excludeUserId: event.changedByUserId ?? undefined,
+        eventType: NotificationEvent.MEMBER_MOVED,
+        message: closedBranch
+          ? notificationTemplates.memberBranchClosed(
+              member.company.name,
+              closedBranch.name,
+            )
+          : notificationTemplates.memberMoved(member.company.name, null),
+        data: { companyId: member.company.id },
+      });
+      return;
+    }
+
     const toCorner = event.toCornerId
       ? await this.prisma.companyStore.findUnique({
           where: { id: event.toCornerId },
