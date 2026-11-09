@@ -74,7 +74,7 @@ export class ProductsService {
 
   async create(caller: AuthUser, dto: CreateProductDto) {
     const { companyId: requested, ...data } = dto;
-    const companyId = this.ownership.resolveCompanyForCreate(caller, requested);
+    const companyId = this.ownership.resolveTargetCompany(caller, requested);
 
     const brand = await this.brands.findInCompany(data.brandId, companyId);
     if (!brand) throw new BadRequestException('Invalid brand');

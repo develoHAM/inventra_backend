@@ -45,7 +45,7 @@ export class CornersService {
 
   async create(caller: AuthUser, dto: CreateCornerDto) {
     const { companyId: requested, ...data } = dto;
-    const companyId = this.ownership.resolveCompanyForCreate(caller, requested);
+    const companyId = this.ownership.resolveTargetCompany(caller, requested);
 
     const store = await this.stores.findActive(data.storeId);
     if (!store) throw new BadRequestException('Invalid store');

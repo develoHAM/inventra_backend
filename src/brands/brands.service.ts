@@ -56,7 +56,7 @@ export class BrandsService {
 
   async create(caller: AuthUser, dto: CreateBrandDto) {
     const { companyId: requested, ...data } = dto;
-    const createdByCompanyId = this.ownership.resolveCompanyForCreate(
+    const createdByCompanyId = this.ownership.resolveTargetCompany(
       caller,
       requested,
     );

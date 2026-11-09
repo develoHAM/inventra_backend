@@ -69,19 +69,19 @@ describe('OwnershipService', () => {
     });
   });
 
-  describe('resolveCompanyForCreate', () => {
+  describe('resolveTargetCompany', () => {
     it('uses the caller company for a company user', () => {
-      expect(service.resolveCompanyForCreate(member)).toBe('company-1');
+      expect(service.resolveTargetCompany(member)).toBe('company-1');
     });
 
     it('uses the requested company for ADMIN', () => {
-      expect(service.resolveCompanyForCreate(admin, 'company-9')).toBe(
+      expect(service.resolveTargetCompany(admin, 'company-9')).toBe(
         'company-9',
       );
     });
 
     it('throws 400 when ADMIN supplies no company', () => {
-      expect(() => service.resolveCompanyForCreate(admin)).toThrow(
+      expect(() => service.resolveTargetCompany(admin)).toThrow(
         BadRequestException,
       );
     });

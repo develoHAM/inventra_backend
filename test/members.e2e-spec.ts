@@ -729,4 +729,138 @@ describe('Members (e2e)', () => {
       ).toBe(2);
     });
   });
+
+  describe('the member list', () => {
+    const listAs = (access: string, query: Record<string, string> = {}) =>
+      request(http)
+        .get('/users')
+        .query(query)
+        .set('Authorization', `Bearer ${access}`);
+
+    it('staff list their company, with phone and contact email', async () => {
+      const list = await listAs(staffAccess).expect(200);
+
+      const manager = list.body.find(
+        (member: { id: string }) => member.id === managerUserId,
+      );
+      expect(manager).toMatchObject({
+        name: 'manager',
+        contactEmail: 'manager@mbr.test',
+        status: 'ACTIVE',
+        role: { code: 'MANAGER' },
+        branch: { id: branchAId, name: 'Branch A' },
+      });
+      expect(manager.phone).toEqual(expect.any(String));
+    });
+
+    it('the other company never appears, even when it is named', async () => {
+      const list = await listAs(ownerAccess, {
+        companyId: company2Id,
+      }).expect(200);
+
+      const ids = list.body.map((member: { id: string }) => member.id);
+      expect(ids).toContain(ownerUserId);
+      expect(ids).not.toContain(owner2UserId);
+    });
+
+    it('pending members are listed, with no role and no branch', async () => {
+      const pendingId = await userIdByEmail('newcomer2@mbr.test');
+
+      const pending = await listAs(ownerAccess, {
+        status: 'PENDING_APPROVAL',
+      }).expect(200);
+
+      expect(pending.body.map((member: { id: string }) => member.id)).toContain(
+        pendingId,
+      );
+      for (const member of pending.body) {
+        expect(member).toMatchObject({
+          status: 'PENDING_APPROVAL',
+          role: null,
+          branch: null,
+        });
+      }
+    });
+
+    it('managers, who can approve, see people waiting for approval', async () => {
+      const pendingId = await userIdByEmail('newcomer2@mbr.test');
+
+      const list = await listAs(managerAccess).expect(200);
+
+      expect(list.body.map((member: { id: string }) => member.id)).toContain(
+        pendingId,
+      );
+    });
+
+    it('staff, who cannot approve, never see people waiting for approval', async () => {
+      const pendingId = await userIdByEmail('newcomer2@mbr.test');
+
+      const list = await listAs(staffAccess).expect(200);
+      expect(
+        list.body.map((member: { id: string }) => member.id),
+      ).not.toContain(pendingId);
+
+      const askedDirectly = await listAs(staffAccess, {
+        status: 'PENDING_APPROVAL',
+      }).expect(200);
+      expect(askedDirectly.body).toEqual([]);
+    });
+
+    it('filters by branch', async () => {
+      const inBranchA = await listAs(ownerAccess, {
+        cornerId: branchAId,
+      }).expect(200);
+
+      expect(
+        inBranchA.body.map((member: { id: string }) => member.id),
+      ).toContain(managerUserId);
+      for (const member of inBranchA.body) {
+        expect(member.branch.id).toBe(branchAId);
+      }
+    });
+
+    it('cornerId=none lists the people with no branch', async () => {
+      const noBranch = await listAs(ownerAccess, { cornerId: 'none' }).expect(
+        200,
+      );
+
+      const ids = noBranch.body.map((member: { id: string }) => member.id);
+      expect(ids).toContain(staffUserId); // released with Branch C
+      expect(ids).not.toContain(managerUserId); // in Branch A
+      for (const member of noBranch.body) {
+        expect(member.branch).toBeNull();
+      }
+    });
+
+    it('filters by role', async () => {
+      const managers = await listAs(ownerAccess, { role: 'MANAGER' }).expect(
+        200,
+      );
+
+      expect(
+        managers.body.map((member: { id: string }) => member.id),
+      ).toContain(managerUserId);
+      for (const member of managers.body) {
+        expect(member.role.code).toBe('MANAGER');
+      }
+    });
+
+    it('the admin must say which company (400), then sees that one', async () => {
+      await listAs(adminAccess).expect(400);
+
+      const list = await listAs(adminAccess, {
+        companyId: company2Id,
+      }).expect(200);
+
+      const ids = list.body.map((member: { id: string }) => member.id);
+      expect(ids).toContain(owner2UserId);
+      expect(ids).not.toContain(ownerUserId);
+    });
+
+    it('bad filters are 400', async () => {
+      await listAs(ownerAccess, { role: 'BOSS' }).expect(400);
+      await listAs(ownerAccess, { cornerId: 'branch-a' }).expect(400);
+      await listAs(ownerAccess, { foo: '1' }).expect(400);
+    });
+  });
 });

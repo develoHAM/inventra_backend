@@ -9,6 +9,7 @@ import { OwnershipService } from '../authorization/ownership.service';
 import type { AuthUser } from '../auth/types/auth-user';
 import { MembershipChangeReason, UserStatus } from '../generated/prisma/enums';
 import { NotificationEvent } from '../notifications/notification-events';
+import { MEMBER_SELECT } from './member-view';
 
 describe('MembersService', () => {
   let service: MembersService;
@@ -17,10 +18,15 @@ describe('MembersService', () => {
     company: { updateMany: jest.Mock };
   };
   let prisma: {
-    user: { findFirst: jest.Mock; findUniqueOrThrow: jest.Mock };
+    user: {
+      findFirst: jest.Mock;
+      findMany: jest.Mock;
+      findUniqueOrThrow: jest.Mock;
+    };
     role: { findUnique: jest.Mock; findUniqueOrThrow: jest.Mock };
     $transaction: jest.Mock;
   };
+  let permissions: { getEffectivePermissions: jest.Mock };
   let corners: { lockLiveCorner: jest.Mock };
   let history: { record: jest.Mock };
   let storage: { presignGetUrl: jest.Mock };
@@ -101,6 +107,7 @@ describe('MembersService', () => {
     prisma = {
       user: {
         findFirst: jest.fn().mockResolvedValue(memberRow()),
+        findMany: jest.fn().mockResolvedValue([memberRow()]),
         findUniqueOrThrow: jest.fn().mockResolvedValue(
           memberRow({
             companyStoreId: 'corner-b',
@@ -115,6 +122,12 @@ describe('MembersService', () => {
         return result;
       }),
     };
+    // an approver by default; the list tests narrow this down
+    permissions = {
+      getEffectivePermissions: jest
+        .fn()
+        .mockResolvedValue(new Set(['users.read', 'users.approve'])),
+    };
     corners = { lockLiveCorner: jest.fn().mockResolvedValue(true) };
     history = { record: jest.fn().mockResolvedValue(undefined) };
     storage = { presignGetUrl: jest.fn() };
@@ -124,10 +137,11 @@ describe('MembersService', () => {
         return true;
       }),
     };
-    // constructor order: (prisma, ownership, corners, history, storage, eventEmitter)
+    // constructor order: (prisma, ownership, permissions, corners, history, storage, eventEmitter)
     service = new MembersService(
       prisma as any,
       new OwnershipService(),
+      permissions as any,
       corners as any,
       history,
       storage as any,
@@ -923,6 +937,219 @@ describe('MembersService', () => {
       );
       expect(history.record).not.toHaveBeenCalled();
       expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('list', () => {
+    /** The where the list query was sent with. */
+    const whereSent = () => prisma.user.findMany.mock.calls[0][0].where;
+
+    it("lists the caller's company, oldest first, as member views", async () => {
+      const members = await service.list(owner, {});
+
+      expect(prisma.user.findMany).toHaveBeenCalledWith({
+        where: { companyId: 'company-1', deletedAt: null },
+        select: MEMBER_SELECT,
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(members).toEqual([
+        {
+          id: 'staff-1',
+          name: 'Kim Staff',
+          profileImageUrl: null,
+          phone: '01012345678',
+          contactEmail: 'staff@example.com',
+          status: UserStatus.ACTIVE,
+          role: { code: 'STAFF', name: 'Staff' },
+          branch: { id: 'corner-a', name: 'Branch A' },
+          createdAt: new Date('2026-11-01T00:00:00.000Z'),
+        },
+      ]);
+    });
+
+    it.each([
+      ['an owner', () => owner],
+      ['a manager', () => manager],
+      ['staff', () => staffCaller],
+    ])(
+      '%s cannot list another company by naming it',
+      async (_label, caller) => {
+        await service.list(caller(), { companyId: 'company-9' });
+
+        expect(whereSent().companyId).toBe('company-1');
+      },
+    );
+
+    it('lets the admin list the company they name', async () => {
+      await service.list(admin, { companyId: 'company-9' });
+
+      expect(whereSent().companyId).toBe('company-9');
+    });
+
+    it('400 when the admin does not say which company', async () => {
+      await expect(service.list(admin, {})).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.user.findMany).not.toHaveBeenCalled();
+    });
+
+    it('filters by branch', async () => {
+      await service.list(owner, { cornerId: 'corner-a' });
+
+      expect(whereSent()).toEqual({
+        companyId: 'company-1',
+        deletedAt: null,
+        companyStoreId: 'corner-a',
+      });
+    });
+
+    it('turns cornerId "none" into people with no branch', async () => {
+      await service.list(owner, { cornerId: 'none' });
+
+      expect(whereSent()).toEqual({
+        companyId: 'company-1',
+        deletedAt: null,
+        companyStoreId: null,
+      });
+    });
+
+    it('filters by role, through the role relation', async () => {
+      await service.list(owner, { role: 'MANAGER' });
+
+      expect(whereSent()).toEqual({
+        companyId: 'company-1',
+        deletedAt: null,
+        role: { code: 'MANAGER' },
+      });
+    });
+
+    it('filters by status', async () => {
+      await service.list(owner, { status: UserStatus.PENDING_APPROVAL });
+
+      expect(whereSent()).toEqual({
+        companyId: 'company-1',
+        deletedAt: null,
+        status: UserStatus.PENDING_APPROVAL,
+      });
+    });
+
+    it('combines filters, and none of them can replace the company', async () => {
+      await service.list(owner, {
+        companyId: 'company-9',
+        cornerId: 'corner-a',
+        role: 'STAFF',
+        status: UserStatus.ACTIVE,
+      });
+
+      expect(whereSent()).toEqual({
+        companyId: 'company-1',
+        deletedAt: null,
+        companyStoreId: 'corner-a',
+        role: { code: 'STAFF' },
+        status: UserStatus.ACTIVE,
+      });
+    });
+
+    it('shows a pending member, who has no role and no branch yet', async () => {
+      prisma.user.findMany.mockResolvedValue([
+        memberRow({
+          status: UserStatus.PENDING_APPROVAL,
+          roleId: null,
+          role: null,
+          companyStoreId: null,
+          companyStore: null,
+        }),
+      ]);
+
+      const [pending] = await service.list(owner, {});
+
+      expect(pending).toMatchObject({
+        status: UserStatus.PENDING_APPROVAL,
+        role: null,
+        branch: null,
+      });
+    });
+
+    it("turns each member's stored avatar key into a presigned link", async () => {
+      prisma.user.findMany.mockResolvedValue([
+        memberRow({ id: 'a', profileImageUrl: 'users/a/1.png' }),
+        memberRow({ id: 'b', profileImageUrl: null }),
+      ]);
+      storage.presignGetUrl.mockResolvedValue('https://signed/1.png');
+
+      const members = await service.list(owner, {});
+
+      expect(storage.presignGetUrl).toHaveBeenCalledTimes(1);
+      expect(storage.presignGetUrl).toHaveBeenCalledWith('users/a/1.png');
+      expect(members.map((member) => member.profileImageUrl)).toEqual([
+        'https://signed/1.png',
+        null,
+      ]);
+    });
+
+    describe('people waiting for approval', () => {
+      const cannotApprove = () =>
+        permissions.getEffectivePermissions.mockResolvedValue(
+          new Set(['users.read']),
+        );
+
+      it("are decided by the caller's real permission", async () => {
+        await service.list(staffCaller, {});
+
+        expect(permissions.getEffectivePermissions).toHaveBeenCalledWith(
+          staffCaller,
+        );
+      });
+
+      it('are hidden from someone who cannot approve', async () => {
+        cannotApprove();
+
+        await service.list(staffCaller, {});
+
+        expect(whereSent()).toEqual({
+          companyId: 'company-1',
+          deletedAt: null,
+          NOT: { status: UserStatus.PENDING_APPROVAL },
+        });
+      });
+
+      it('stay hidden when someone who cannot approve asks for them by status', async () => {
+        cannotApprove();
+
+        await service.list(staffCaller, {
+          status: UserStatus.PENDING_APPROVAL,
+        });
+
+        // both conditions apply, so nothing can match
+        expect(whereSent()).toEqual({
+          companyId: 'company-1',
+          deletedAt: null,
+          NOT: { status: UserStatus.PENDING_APPROVAL },
+          status: UserStatus.PENDING_APPROVAL,
+        });
+      });
+
+      it('are shown to staff who were granted users.approve', async () => {
+        await service.list(staffCaller, {});
+
+        expect(whereSent()).not.toHaveProperty('NOT');
+      });
+
+      it('are hidden from a manager denied users.approve', async () => {
+        cannotApprove();
+
+        await service.list(manager, {});
+
+        expect(whereSent()).toHaveProperty('NOT', {
+          status: UserStatus.PENDING_APPROVAL,
+        });
+      });
+    });
+
+    it('returns an empty list when nobody matches', async () => {
+      prisma.user.findMany.mockResolvedValue([]);
+
+      await expect(service.list(owner, {})).resolves.toEqual([]);
     });
   });
 });

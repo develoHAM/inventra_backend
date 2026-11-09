@@ -32,10 +32,7 @@ export class OwnershipService {
     if (resourceCompanyId !== user.companyId) throw new NotFoundException();
   }
 
-  resolveCompanyForCreate(
-    caller: AuthUser,
-    requestedCompanyId?: string,
-  ): string {
+  resolveTargetCompany(caller: AuthUser, requestedCompanyId?: string): string {
     const companyId =
       caller.roleCode === 'ADMIN' ? requestedCompanyId : caller.companyId;
     if (!companyId) throw new BadRequestException('companyId is required');

@@ -8,6 +8,7 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { OwnershipService } from '../authorization/ownership.service';
+import { PermissionsService } from '../authorization/permissions.service';
 import { CornersService } from '../corners/corners.service';
 import { MembershipHistoryService } from '../membership-history/membership-history.service';
 import { StorageService } from '../storage/storage.service';
@@ -25,17 +26,55 @@ import type { MemberRow, MemberView } from './member-view';
 import { ChangeBranchDto } from './dto/change-branch.dto';
 import { ApproveMemberDto } from './dto/approve-member.dto';
 import { ChangeRoleDto } from './dto/change-role.dto';
+import { ListMembersQueryDto } from './dto/list-members-query.dto';
 
 @Injectable()
 export class MembersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ownership: OwnershipService,
+    private readonly permissions: PermissionsService,
     private readonly corners: CornersService,
     private readonly history: MembershipHistoryService,
     private readonly storage: StorageService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  /**
+   * The members of one company, oldest first: the caller's own, or the one
+   * the admin names. People still waiting for approval aren't colleagues yet,
+   * so only those who can approve them see them.
+   */
+  async list(
+    caller: AuthUser,
+    query: ListMembersQueryDto,
+  ): Promise<MemberView[]> {
+    const companyId = this.ownership.resolveTargetCompany(
+      caller,
+      query.companyId,
+    );
+    const callerPermissions =
+      await this.permissions.getEffectivePermissions(caller);
+    const canApprove = callerPermissions.has('users.approve');
+
+    const rows = await this.prisma.user.findMany({
+      where: {
+        companyId: companyId,
+        deletedAt: null,
+        ...(canApprove ? {} : { NOT: { status: UserStatus.PENDING_APPROVAL } }),
+        ...(query.cornerId
+          ? {
+              companyStoreId: query.cornerId === 'none' ? null : query.cornerId,
+            }
+          : {}),
+        ...(query.role ? { role: { code: query.role } } : {}),
+        ...(query.status ? { status: query.status } : {}),
+      },
+      select: MEMBER_SELECT,
+      orderBy: { createdAt: 'asc' },
+    });
+    return Promise.all(rows.map((row) => this.toView(row)));
+  }
 
   /**
    * Approve someone who joined with the company code, choosing their role
