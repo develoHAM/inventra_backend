@@ -18,6 +18,7 @@ describe('CompaniesService', () => {
     };
     user: { findFirst: jest.Mock; update: jest.Mock };
   };
+  let history: { page: jest.Mock };
   let eventEmitter: { emit: jest.Mock };
 
   const owner: AuthUser = {
@@ -46,8 +47,16 @@ describe('CompaniesService', () => {
       },
       user: { findFirst: jest.fn(), update: jest.fn().mockResolvedValue({}) },
     };
+    history = {
+      page: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    };
     eventEmitter = { emit: jest.fn().mockReturnValue(true) };
-    service = new CompaniesService(prisma as any, eventEmitter as any);
+    // constructor order: (prisma, history, eventEmitter)
+    service = new CompaniesService(
+      prisma as any,
+      history as any,
+      eventEmitter as any,
+    );
   });
 
   describe('getJoinCode', () => {
@@ -192,6 +201,97 @@ describe('CompaniesService', () => {
         BadRequestException,
       );
       expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listHistory', () => {
+    const QUERY = { limit: 20 };
+    const PAGE = { items: [], nextCursor: null };
+    const manager: AuthUser = {
+      id: 'manager-1',
+      companyId: 'company-1',
+      companyStoreId: 'corner-a',
+      roleId: 3,
+      roleCode: 'MANAGER',
+      status: UserStatus.ACTIVE,
+    };
+    const staff: AuthUser = {
+      id: 'staff-1',
+      companyId: 'company-1',
+      companyStoreId: 'corner-a',
+      roleId: 4,
+      roleCode: 'STAFF',
+      status: UserStatus.ACTIVE,
+    };
+
+    beforeEach(() => {
+      prisma.company.findFirst.mockResolvedValue({ id: 'company-1' });
+      history.page.mockResolvedValue(PAGE);
+    });
+
+    it("an owner reads their own company's feed", async () => {
+      await expect(
+        service.listHistory(owner, 'company-1', QUERY),
+      ).resolves.toBe(PAGE);
+
+      expect(prisma.company.findFirst).toHaveBeenCalledWith({
+        where: { id: 'company-1', deletedAt: null },
+        select: { id: true },
+      });
+      expect(history.page).toHaveBeenCalledWith(
+        { companyId: 'company-1' },
+        QUERY,
+      );
+    });
+
+    it("another company is 404 for an owner, not 403: we don't confirm it exists", async () => {
+      await expect(
+        service.listHistory(owner, 'company-2', QUERY),
+      ).rejects.toThrow(NotFoundException);
+      expect(history.page).not.toHaveBeenCalled();
+    });
+
+    it('the admin reads any company that exists', async () => {
+      prisma.company.findFirst.mockResolvedValue({ id: 'company-2' });
+
+      await service.listHistory(admin, 'company-2', QUERY);
+
+      expect(prisma.company.findFirst).toHaveBeenCalledWith({
+        where: { id: 'company-2', deletedAt: null },
+        select: { id: true },
+      });
+      expect(history.page).toHaveBeenCalledWith(
+        { companyId: 'company-2' },
+        QUERY,
+      );
+    });
+
+    it('a company that does not exist, or was closed, is 404 even for the admin', async () => {
+      prisma.company.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.listHistory(admin, 'company-9', QUERY),
+      ).rejects.toThrow(NotFoundException);
+      await expect(
+        service.listHistory(owner, 'company-1', QUERY),
+      ).rejects.toThrow(NotFoundException);
+      expect(history.page).not.toHaveBeenCalled();
+    });
+
+    it("managers and staff cannot read their own company's feed (403)", async () => {
+      await expect(
+        service.listHistory(manager, 'company-1', QUERY),
+      ).rejects.toThrow(ForbiddenException);
+      await expect(
+        service.listHistory(staff, 'company-1', QUERY),
+      ).rejects.toThrow(ForbiddenException);
+      expect(history.page).not.toHaveBeenCalled();
+    });
+
+    it('a manager asking about another company gets 404: the 404 comes before the 403', async () => {
+      await expect(
+        service.listHistory(manager, 'company-2', QUERY),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

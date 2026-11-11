@@ -28,7 +28,7 @@ describe('MembersService', () => {
   };
   let permissions: { getEffectivePermissions: jest.Mock };
   let corners: { lockLiveCorner: jest.Mock };
-  let history: { record: jest.Mock };
+  let history: { record: jest.Mock; page: jest.Mock };
   let storage: { presignGetUrl: jest.Mock };
   let eventEmitter: { emit: jest.Mock };
   /** The order things happened in, to prove events fire after commit. */
@@ -129,7 +129,10 @@ describe('MembersService', () => {
         .mockResolvedValue(new Set(['users.read', 'users.approve'])),
     };
     corners = { lockLiveCorner: jest.fn().mockResolvedValue(true) };
-    history = { record: jest.fn().mockResolvedValue(undefined) };
+    history = {
+      record: jest.fn().mockResolvedValue(undefined),
+      page: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    };
     storage = { presignGetUrl: jest.fn() };
     eventEmitter = {
       emit: jest.fn(() => {
@@ -143,7 +146,7 @@ describe('MembersService', () => {
       new OwnershipService(),
       permissions as any,
       corners as any,
-      history,
+      history as any,
       storage as any,
       eventEmitter as any,
     );
@@ -1150,6 +1153,131 @@ describe('MembersService', () => {
       prisma.user.findMany.mockResolvedValue([]);
 
       await expect(service.list(owner, {})).resolves.toEqual([]);
+    });
+  });
+
+  describe('listHistory', () => {
+    const QUERY = { limit: 20 };
+    const PAGE = { items: [], nextCursor: null };
+
+    /** The person whose history is asked for: staff-1, in Branch A by default. */
+    const personFound = (overrides: Record<string, unknown> = {}) =>
+      prisma.user.findFirst.mockResolvedValue({
+        id: 'staff-1',
+        companyStoreId: 'corner-a',
+        ...overrides,
+      });
+
+    beforeEach(() => {
+      history.page.mockResolvedValue(PAGE);
+    });
+
+    it("looks the person up inside the caller's company", async () => {
+      personFound();
+
+      await service.listHistory(owner, 'staff-1', QUERY);
+
+      expect(prisma.user.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'staff-1', companyId: 'company-1', deletedAt: null },
+        }),
+      );
+    });
+
+    it('404s someone outside the company, and reads no history', async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.listHistory(owner, 'staff-1', QUERY),
+      ).rejects.toThrow(NotFoundException);
+      expect(history.page).not.toHaveBeenCalled();
+    });
+
+    it("an owner reads anyone's history in their company: that person's rows, paged", async () => {
+      personFound();
+
+      await expect(service.listHistory(owner, 'staff-1', QUERY)).resolves.toBe(
+        PAGE,
+      );
+      expect(history.page).toHaveBeenCalledWith({ userId: 'staff-1' }, QUERY);
+    });
+
+    it('the admin reads anyone, in any company', async () => {
+      personFound();
+
+      await service.listHistory(admin, 'staff-1', QUERY);
+
+      expect(prisma.user.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'staff-1', deletedAt: null },
+        }),
+      );
+      expect(history.page).toHaveBeenCalledWith({ userId: 'staff-1' }, QUERY);
+    });
+
+    it('anyone reads their own history', async () => {
+      personFound({ id: 'staff-9' });
+
+      await service.listHistory(staffCaller, 'staff-9', QUERY);
+
+      expect(history.page).toHaveBeenCalledWith({ userId: 'staff-9' }, QUERY);
+    });
+
+    it('a manager reads the history of someone in their branch', async () => {
+      personFound(); // Branch A, the manager's branch
+
+      await service.listHistory(manager, 'staff-1', QUERY);
+
+      expect(history.page).toHaveBeenCalledWith({ userId: 'staff-1' }, QUERY);
+    });
+
+    it('a manager cannot read someone in another branch, or with no branch (403)', async () => {
+      personFound({ companyStoreId: 'corner-b' });
+      await expect(
+        service.listHistory(manager, 'staff-1', QUERY),
+      ).rejects.toThrow(ForbiddenException);
+
+      personFound({ companyStoreId: null });
+      await expect(
+        service.listHistory(manager, 'staff-1', QUERY),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(history.page).not.toHaveBeenCalled();
+    });
+
+    it('a manager with no branch manages nobody, not everyone else with no branch (403)', async () => {
+      personFound({ companyStoreId: null });
+      const managerWithoutBranch: AuthUser = {
+        ...manager,
+        companyStoreId: null,
+      };
+
+      await expect(
+        service.listHistory(managerWithoutBranch, 'staff-1', QUERY),
+      ).rejects.toThrow(ForbiddenException);
+      expect(history.page).not.toHaveBeenCalled();
+    });
+
+    it("staff cannot read a colleague's history, even in their own branch (403)", async () => {
+      personFound(); // Branch A, the staff caller's branch too
+
+      await expect(
+        service.listHistory(staffCaller, 'staff-1', QUERY),
+      ).rejects.toThrow(ForbiddenException);
+      expect(history.page).not.toHaveBeenCalled();
+    });
+
+    it('someone waiting for approval, with no role yet, is still found', async () => {
+      // no role, no branch: a lookup that required a member role would 404
+      personFound({
+        id: 'pending-1',
+        companyStoreId: null,
+        status: UserStatus.PENDING_APPROVAL,
+      });
+
+      await service.listHistory(owner, 'pending-1', QUERY);
+
+      expect(history.page).toHaveBeenCalledWith({ userId: 'pending-1' }, QUERY);
     });
   });
 });

@@ -1,7 +1,7 @@
 # Roles & Branches — Design
 
 **Date:** 2026-11-06
-**Status:** drafted from the brainstorm and checked by a builder review; awaiting the user's approval.
+**Status:** built (Tasks 1–8, finished 2026-11-11). Where the build differs from this design, see **As built** at the end.
 **Piece 1 of 3** of the membership track:
 1. **Roles & branches** (this doc): promote/demote, move between branches, one branch per manager, change history, notifications.
 2. **Sign-in / company-profile split**: one sign-in, a separate profile per company, switching between companies like Slack workspaces; joining or creating a company from an existing sign-in.
@@ -207,3 +207,18 @@ After commit, each released person is notified ("Branch A was closed; you're not
 - Korean template wording.
 - Whether the `corners.assign` permission row is deleted by a migration or left unused.
 - Task order.
+
+## As built (2026-11-11)
+
+Built in 8 tasks from `docs/superpowers/plans/2026-11-06-roles-and-branches.md`. Where the build differs from the design above, or settles what was left to the builder:
+
+- **Existing data.** The design's migration copied each corner's `manager_user_id` into that manager's `users.company_store_id`. `20261107182006_branch_managers` was applied as generated, before its data step was added, and isn't edited (its applied checksum must match). The data-only follow-up `20261107182640_branch_cleanup_drop_corners_assign` clears stale branch pointers, gives owners and the admin no branch, and deletes `corners.assign`. The manager copy was dropped: no database had manager links (dev checked: 0; the e2e database is rebuilt empty) and there's no production.
+- **Member list visibility** (the user's decision): people waiting for approval are listed only for callers holding `users.approve`, by effective permissions, so per-user GRANT/DENY count. For anyone else they're filtered out, and `?status=PENDING_APPROVAL` returns `[]` rather than 403. There's no default role filter, so pending people, who have no role, stay visible to approvers.
+- **No-op before authority.** `decideRoleChange` checks the `cornerId` rule, then the no-op, then authority, so a manager "changing" anyone to the role they already have gets 200 unchanged rather than 403 (no write, no event).
+- **Branch deletion** releases people with `updateManyAndReturn`, which returns exactly the rows it changed, so someone moved out between a read and the update can't get a false `BRANCH_DELETED` row or notice. `DELETE /corners/:id` returns the deleted corner. The closed-branch notice names the company and the branch (`memberBranchClosed(companyName, cornerName)`).
+- **History pagination** (left to the builder): `?limit=` 1–100 (default 50) and `?cursor=` the id of the last item received → `{ items, nextCursor }`, newest first, ties broken by `id` (Prisma's cursor is inclusive, hence `skip: 1`). Items: `{ id, reason, createdAt, member, changedBy | null, fromRole, toRole, fromBranch, toBranch }`, with only ids and names. A deleted branch's own history is 404 (it's looked up as a live branch); its rows stay in the company feed and in each person's history, names intact. The member list isn't paginated.
+- **A person's history** uses a plain company-scoped lookup, so someone waiting for approval (no role yet) has a readable, empty history rather than a 404.
+- **Module layout** (left to the builder): `src/members/` (service + controller on the `/users` prefix) and `src/membership-history/` (writer and reader, the history DTO and view; imports nothing). `CornersService.assertManages` was deleted with its only callers.
+- **`OwnershipService.resolveCompanyForCreate`** was renamed `resolveTargetCompany`, since the member list uses it for reads.
+- **Korean wording** (left to the builder): member notices say **지점** (the user's rewording); roles read 대표 / 매니저 / 직원.
+- **`corners.assign`** was deleted by the data-only migration, not left unused.

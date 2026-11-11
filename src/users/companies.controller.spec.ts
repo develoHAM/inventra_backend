@@ -11,6 +11,7 @@ describe('CompaniesController', () => {
     approveCompany: jest.Mock;
     getJoinCode: jest.Mock;
     rotateJoinCode: jest.Mock;
+    listHistory: jest.Mock;
   };
 
   const manager: AuthUser = {
@@ -34,6 +35,7 @@ describe('CompaniesController', () => {
       approveCompany: jest.fn().mockResolvedValue({ id: 'owner-1' }),
       getJoinCode: jest.fn().mockResolvedValue({ joinCode: '48291307' }),
       rotateJoinCode: jest.fn().mockResolvedValue({ joinCode: '73014289' }),
+      listHistory: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
     };
     controller = new CompaniesController(companiesService as any);
   });
@@ -76,5 +78,19 @@ describe('CompaniesController', () => {
       id: 'owner-1',
     });
     expect(companiesService.approveCompany).toHaveBeenCalledWith('company-1');
+  });
+
+  it('the company history requires companies.read and passes caller, id and query through', async () => {
+    expect(permissionsOf('history')).toEqual(['companies.read']);
+    const query = { limit: 20 };
+
+    await expect(
+      controller.history(manager, 'company-1', query),
+    ).resolves.toEqual({ items: [], nextCursor: null });
+    expect(companiesService.listHistory).toHaveBeenCalledWith(
+      manager,
+      'company-1',
+      query,
+    );
   });
 });

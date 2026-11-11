@@ -16,6 +16,8 @@ import type { MemberMovedEvent } from '../notifications/notification-events';
 import type { AuthUser } from '../auth/types/auth-user';
 import { CreateCornerDto } from './dto/create-corner.dto';
 import { UpdateCornerDto } from './dto/update-corner.dto';
+import { HistoryQueryDto } from '../membership-history/dto/history-query.dto';
+import type { MembershipHistoryPage } from '../membership-history/membership-change-view';
 
 @Injectable()
 export class CornersService {
@@ -89,6 +91,38 @@ export class CornersService {
     });
     if (!corner) throw new NotFoundException('Corner not found');
     return corner;
+  }
+
+  /**
+   * A branch's history, newest first: everyone who arrived, left, or changed
+   * role while in it. For the admin, owners, and the branch's own managers.
+   */
+  async listHistory(
+    caller: AuthUser,
+    cornerId: string,
+    query: HistoryQueryDto,
+  ): Promise<MembershipHistoryPage> {
+    const corner = await this.findOne(caller, cornerId); // company-scoped → 404
+    const isAdminOrOwner =
+      caller.roleCode === 'ADMIN' || caller.roleCode === 'OWNER';
+    const managesThisBranch =
+      caller.roleCode === 'MANAGER' && caller.companyStoreId === corner.id;
+    if (!isAdminOrOwner && !managesThisBranch)
+      throw new ForbiddenException(
+        "Only the owners and this branch's managers can read its history",
+      );
+
+    // Departures and arrivals: a move from A to B shows in both branches,
+    // and a promotion inside A (stored "from A to A") shows in A.
+    return this.history.page(
+      {
+        OR: [
+          { fromCompanyStoreId: corner.id },
+          { toCompanyStoreId: corner.id },
+        ],
+      },
+      query,
+    );
   }
 
   async update(caller: AuthUser, id: string, dto: UpdateCornerDto) {

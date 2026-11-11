@@ -11,11 +11,15 @@ import { UserStatus } from '../generated/prisma/enums';
 import { NotificationEvent } from '../notifications/notification-events';
 import type { CompanyApprovedEvent } from '../notifications/notification-events';
 import { generateUniqueJoinCode } from './join-code';
+import { MembershipHistoryService } from '../membership-history/membership-history.service';
+import { HistoryQueryDto } from '../membership-history/dto/history-query.dto';
+import type { MembershipHistoryPage } from '../membership-history/membership-change-view';
 
 @Injectable()
 export class CompaniesService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly history: MembershipHistoryService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -68,6 +72,30 @@ export class CompaniesService {
     });
     if (result.count === 0) throw new NotFoundException('Company not found');
     return { joinCode: joinCode };
+  }
+
+  /**
+   * The whole company's history, newest first. The admin reads any company;
+   * an owner reads their own. Another company is 404 whoever asks (we don't
+   * confirm it exists); this company's managers and staff get 403.
+   */
+  async listHistory(
+    caller: AuthUser,
+    companyId: string,
+    query: HistoryQueryDto,
+  ): Promise<MembershipHistoryPage> {
+    const isAdmin = caller.roleCode === 'ADMIN';
+    if (!isAdmin && caller.companyId !== companyId)
+      throw new NotFoundException('Company not found');
+    const company = await this.prisma.company.findFirst({
+      where: { id: companyId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+    if (!isAdmin && caller.roleCode !== 'OWNER')
+      throw new ForbiddenException('Only owners can read the company history');
+
+    return this.history.page({ companyId: company.id }, query);
   }
 
   /** The caller's own company id; the platform admin has none. */

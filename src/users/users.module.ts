@@ -4,9 +4,10 @@ import { CompaniesController } from './companies.controller';
 import { UsersService } from './users.service';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { CompaniesService } from './companies.service';
+import { MembershipHistoryModule } from '../membership-history/membership-history.module';
 
 @Module({
-  imports: [AuthorizationModule],
+  imports: [AuthorizationModule, MembershipHistoryModule],
   controllers: [UsersController, CompaniesController],
   providers: [UsersService, CompaniesService],
   exports: [UsersService],

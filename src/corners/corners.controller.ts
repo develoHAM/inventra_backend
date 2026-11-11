@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { CornersService } from './corners.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
@@ -14,6 +15,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth-user';
 import { CreateCornerDto } from './dto/create-corner.dto';
 import { UpdateCornerDto } from './dto/update-corner.dto';
+import { HistoryQueryDto } from '../membership-history/dto/history-query.dto';
 
 @Controller('corners')
 export class CornersController {
@@ -32,6 +34,16 @@ export class CornersController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.corners.findOne(caller, id);
+  }
+
+  @RequirePermissions('corners.read')
+  @Get(':id/history')
+  history(
+    @CurrentUser() caller: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: HistoryQueryDto,
+  ) {
+    return this.corners.listHistory(caller, id, query);
   }
 
   @RequirePermissions('corners.create')

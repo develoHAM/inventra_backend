@@ -27,6 +27,8 @@ import { ChangeBranchDto } from './dto/change-branch.dto';
 import { ApproveMemberDto } from './dto/approve-member.dto';
 import { ChangeRoleDto } from './dto/change-role.dto';
 import { ListMembersQueryDto } from './dto/list-members-query.dto';
+import { HistoryQueryDto } from '../membership-history/dto/history-query.dto';
+import type { MembershipHistoryPage } from '../membership-history/membership-change-view';
 
 @Injectable()
 export class MembersService {
@@ -348,6 +350,43 @@ export class MembersService {
     this.eventEmitter.emit(NotificationEvent.MEMBER_ROLE_CHANGED, event);
 
     return this.toView(await this.findRow(target.id));
+  }
+
+  /**
+   * One person's history, newest first. Readable by the person themselves,
+   * the admin, an owner, or a manager whose branch the person is in now.
+   */
+  async listHistory(
+    caller: AuthUser,
+    userId: string,
+    query: HistoryQueryDto,
+  ): Promise<MembershipHistoryPage> {
+    // A plain scoped lookup, not findTarget: someone still waiting for
+    // approval has no role yet, but their (empty) history is theirs to read.
+    const person = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        ...this.ownership.scopeToCompany(caller),
+        deletedAt: null,
+      },
+      select: { id: true, companyStoreId: true },
+    });
+    if (!person) throw new NotFoundException('Member not found');
+
+    const isSelf = person.id === caller.id;
+    const isAdminOrOwner =
+      caller.roleCode === 'ADMIN' || caller.roleCode === 'OWNER';
+    // The manager's branch must be set: a manager with no branch manages
+    // nobody, not everyone else with no branch (null === null is true).
+    const callerBranchId = caller.companyStoreId ?? null;
+    const managesPersonsBranch =
+      caller.roleCode === 'MANAGER' &&
+      callerBranchId !== null &&
+      callerBranchId === person.companyStoreId;
+    if (!isSelf && !isAdminOrOwner && !managesPersonsBranch)
+      throw new ForbiddenException("You cannot read this member's history");
+
+    return this.history.page({ userId: person.id }, query);
   }
 
   /**

@@ -863,4 +863,217 @@ describe('Members (e2e)', () => {
       await listAs(ownerAccess, { foo: '1' }).expect(400);
     });
   });
+
+  describe('reading the history', () => {
+    let company1Id: string;
+    let promotedId: string; // newcomer1: STAFF in Branch A until this block promotes them
+    let pendingId: string; // newcomer2: still waiting for approval
+
+    const readAs = (
+      access: string,
+      path: string,
+      query: Record<string, string> = {},
+    ) =>
+      request(http)
+        .get(path)
+        .query(query)
+        .set('Authorization', `Bearer ${access}`);
+
+    /** One history entry as the API sends it: dates arrive as text. */
+    type HistoryEntryBody = {
+      id: string;
+      reason: string;
+      createdAt: string;
+      member: { id: string; name: string };
+      changedBy: { id: string; name: string } | null;
+      fromRole: { code: string; name: string } | null;
+      toRole: { code: string; name: string } | null;
+      fromBranch: { id: string; name: string } | null;
+      toBranch: { id: string; name: string } | null;
+    };
+    type HistoryPageBody = {
+      items: HistoryEntryBody[];
+      nextCursor: string | null;
+    };
+
+    /** A page the caller may read (200). */
+    const pageAs = async (
+      access: string,
+      path: string,
+      query: Record<string, string> = {},
+    ) =>
+      (await readAs(access, path, query).expect(200)).body as HistoryPageBody;
+
+    beforeAll(async () => {
+      const owner = await prisma.user.findUniqueOrThrow({
+        where: { id: ownerUserId },
+      });
+      company1Id = owner.companyId!;
+      promotedId = await userIdByEmail('newcomer1@mbr.test');
+      pendingId = await userIdByEmail('newcomer2@mbr.test');
+    });
+
+    it("a manager's promotion in Branch A shows in Branch A's history, from A to A", async () => {
+      await setRole(managerAccess, promotedId, 'MANAGER').expect(200);
+
+      const branchHistory = await pageAs(
+        managerAccess,
+        `/corners/${branchAId}/history`,
+      );
+
+      const [promotion] = branchHistory.items;
+      expect(promotion).toMatchObject({
+        reason: 'ROLE_CHANGED',
+        fromRole: { code: 'STAFF' },
+        toRole: { code: 'MANAGER' },
+        fromBranch: { id: branchAId, name: 'Branch A' },
+        toBranch: { id: branchAId, name: 'Branch A' }, // a snapshot: same branch
+      });
+      // Exactly an id and a name: no phone or email travels with history.
+      expect(promotion.member).toEqual({ id: promotedId, name: 'newcomer1' });
+      expect(promotion.changedBy).toEqual({
+        id: managerUserId,
+        name: 'manager',
+      });
+    });
+
+    it('the owner reads the whole company feed, newest first; the manager cannot (403)', async () => {
+      const feed = await pageAs(
+        ownerAccess,
+        `/companies/${company1Id}/history`,
+      );
+
+      expect(feed.items[0]).toMatchObject({
+        reason: 'ROLE_CHANGED',
+        member: { id: promotedId },
+      });
+      const times = feed.items.map((item) => Date.parse(item.createdAt));
+      expect(times).toEqual(
+        [...times].sort((later, earlier) => earlier - later),
+      );
+
+      await readAs(managerAccess, `/companies/${company1Id}/history`).expect(
+        403,
+      );
+    });
+
+    it('the admin reads any company feed', async () => {
+      const feed = await pageAs(
+        adminAccess,
+        `/companies/${company1Id}/history`,
+      );
+
+      expect(feed.items[0]).toMatchObject({ member: { id: promotedId } });
+    });
+
+    it("another company's owner gets 404 for this company's feed, branch and people", async () => {
+      await readAs(owner2Access, `/companies/${company1Id}/history`).expect(
+        404,
+      );
+      await readAs(owner2Access, `/corners/${branchAId}/history`).expect(404);
+      await readAs(owner2Access, `/users/${staffUserId}/history`).expect(404);
+    });
+
+    it('branch history: staff get 403, and so does a manager asking about another branch', async () => {
+      await readAs(staffAccess, `/corners/${branchAId}/history`).expect(403);
+      await readAs(managerAccess, `/corners/${branchBId}/history`).expect(403);
+    });
+
+    it('a closed branch keeps its name in the feed, though its own history is gone (404)', async () => {
+      const branchC = await prisma.companyStore.findFirstOrThrow({
+        where: { companyId: company1Id, name: 'Branch C' },
+      });
+
+      await readAs(ownerAccess, `/corners/${branchC.id}/history`).expect(404);
+
+      const feed = await pageAs(
+        ownerAccess,
+        `/companies/${company1Id}/history`,
+        { limit: '100' },
+      );
+      expect(feed.items).toContainEqual(
+        expect.objectContaining({
+          reason: 'BRANCH_DELETED',
+          member: { id: staffUserId, name: 'staff' },
+          fromBranch: { id: branchC.id, name: 'Branch C' },
+          toBranch: null,
+        }),
+      );
+    });
+
+    it("staff read their own history, newest first, but not a colleague's (403)", async () => {
+      const own = await pageAs(staffAccess, `/users/${staffUserId}/history`);
+
+      expect(own.items.length).toBeGreaterThan(0);
+      for (const item of own.items) {
+        expect(item.member.id).toBe(staffUserId);
+      }
+      expect(own.items[0].reason).toBe('BRANCH_DELETED'); // their latest change
+
+      await readAs(staffAccess, `/users/${managerUserId}/history`).expect(403);
+    });
+
+    it('a manager reads the people in their branch, but not someone outside it (403)', async () => {
+      await readAs(managerAccess, `/users/${promotedId}/history`).expect(200); // in Branch A
+      await readAs(managerAccess, `/users/${staffUserId}/history`).expect(403); // no branch
+    });
+
+    it('someone waiting for approval has a history too: empty so far', async () => {
+      const pending = await pageAs(ownerAccess, `/users/${pendingId}/history`);
+
+      expect(pending).toEqual({ items: [], nextCursor: null });
+    });
+
+    it('limit=1: the bookmark is the one entry shown, and the next page starts after it', async () => {
+      const path = `/companies/${company1Id}/history`;
+
+      const firstPage = await pageAs(ownerAccess, path, { limit: '1' });
+      expect(firstPage.items).toHaveLength(1);
+      expect(firstPage.nextCursor).toBe(firstPage.items[0].id);
+
+      const secondPage = await pageAs(ownerAccess, path, {
+        limit: '1',
+        cursor: firstPage.nextCursor!,
+      });
+      expect(secondPage.items).toHaveLength(1);
+      expect(secondPage.items[0].id).not.toBe(firstPage.items[0].id);
+    });
+
+    it('paging through the whole feed one entry at a time repeats nothing and loses nothing, ties included', async () => {
+      const everyId = (
+        await prisma.membershipChange.findMany({
+          where: { companyId: company1Id },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          select: { id: true },
+        })
+      ).map((row) => row.id);
+
+      const seenIds: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const query: Record<string, string> = cursor
+          ? { limit: '1', cursor: cursor }
+          : { limit: '1' };
+        const page = await pageAs(
+          ownerAccess,
+          `/companies/${company1Id}/history`,
+          query,
+        );
+        seenIds.push(...page.items.map((item) => item.id));
+        cursor = page.nextCursor;
+      } while (cursor !== null && seenIds.length <= everyId.length);
+
+      expect(seenIds).toEqual(everyId);
+    });
+
+    it('bad paging parameters are 400', async () => {
+      const path = `/companies/${company1Id}/history`;
+
+      await readAs(ownerAccess, path, { limit: '0' }).expect(400);
+      await readAs(ownerAccess, path, { limit: '101' }).expect(400);
+      await readAs(ownerAccess, path, { limit: 'ten' }).expect(400);
+      await readAs(ownerAccess, path, { cursor: 'page-2' }).expect(400);
+      await readAs(ownerAccess, '/companies/not-a-uuid/history').expect(400);
+    });
+  });
 });

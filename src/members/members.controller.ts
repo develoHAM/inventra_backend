@@ -16,6 +16,7 @@ import { ChangeBranchDto } from './dto/change-branch.dto';
 import { ApproveMemberDto } from './dto/approve-member.dto';
 import { ChangeRoleDto } from './dto/change-role.dto';
 import { ListMembersQueryDto } from './dto/list-members-query.dto';
+import { HistoryQueryDto } from '../membership-history/dto/history-query.dto';
 
 /** Company members: who is where, in which role. Shares the /users prefix. */
 @Controller('users')
@@ -26,6 +27,16 @@ export class MembersController {
   @Get()
   list(@CurrentUser() caller: AuthUser, @Query() query: ListMembersQueryDto) {
     return this.members.list(caller, query);
+  }
+
+  @RequirePermissions('users.read')
+  @Get(':id/history')
+  history(
+    @CurrentUser() caller: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: HistoryQueryDto,
+  ) {
+    return this.members.listHistory(caller, id, query);
   }
 
   @RequirePermissions('users.approve')

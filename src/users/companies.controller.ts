@@ -4,13 +4,16 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { CompaniesService } from './companies.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth-user';
+import { HistoryQueryDto } from '../membership-history/dto/history-query.dto';
 
 @Controller('companies')
 export class CompaniesController {
@@ -34,5 +37,15 @@ export class CompaniesController {
   @HttpCode(HttpStatus.OK)
   rotateJoinCode(@CurrentUser() caller: AuthUser) {
     return this.companiesService.rotateJoinCode(caller);
+  }
+
+  @RequirePermissions('companies.read')
+  @Get(':id/history')
+  history(
+    @CurrentUser() caller: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: HistoryQueryDto,
+  ) {
+    return this.companiesService.listHistory(caller, id, query);
   }
 }

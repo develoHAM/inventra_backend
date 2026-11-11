@@ -26,7 +26,7 @@ describe('CornersService', () => {
     user: { updateManyAndReturn: jest.Mock };
   };
   let stores: { findActive: jest.Mock };
-  let history: { record: jest.Mock };
+  let history: { record: jest.Mock; page: jest.Mock };
   let eventEmitter: { emit: jest.Mock };
   /** The order things happened in, to prove events fire after commit. */
   let timeline: string[];
@@ -83,7 +83,10 @@ describe('CornersService', () => {
       user: { updateManyAndReturn: jest.fn().mockResolvedValue([]) },
     };
     stores = { findActive: jest.fn().mockResolvedValue({ id: 'store-1' }) };
-    history = { record: jest.fn().mockResolvedValue(undefined) };
+    history = {
+      record: jest.fn().mockResolvedValue(undefined),
+      page: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    };
     eventEmitter = {
       emit: jest.fn(() => {
         timeline.push('emit');
@@ -374,6 +377,86 @@ describe('CornersService', () => {
       await expect(
         service.lockLiveCorner(transaction as any, 'corner-x', 'company-1'),
       ).resolves.toBe(false);
+    });
+  });
+
+  describe('listHistory', () => {
+    const QUERY = { limit: 20 };
+    const PAGE = { items: [], nextCursor: null };
+    // Departures and arrivals: the branch is the "from" or the "to".
+    const BRANCH_ROWS = {
+      OR: [{ fromCompanyStoreId: 'c1' }, { toCompanyStoreId: 'c1' }],
+    };
+
+    beforeEach(() => {
+      prisma.companyStore.findFirst.mockResolvedValue({
+        id: 'c1',
+        companyId: 'company-1',
+        name: 'Branch A',
+      });
+      history.page.mockResolvedValue(PAGE);
+    });
+
+    it('an owner reads every row the branch is in, as the "from" or the "to"', async () => {
+      await expect(service.listHistory(owner, 'c1', QUERY)).resolves.toBe(PAGE);
+
+      expect(history.page).toHaveBeenCalledWith(BRANCH_ROWS, QUERY);
+    });
+
+    it('the admin reads a branch of any company', async () => {
+      await service.listHistory(admin, 'c1', QUERY);
+
+      expect(prisma.companyStore.findFirst).toHaveBeenCalledWith({
+        where: { id: 'c1', deletedAt: null },
+      });
+      expect(history.page).toHaveBeenCalledWith(BRANCH_ROWS, QUERY);
+    });
+
+    it("a manager reads their own branch's history", async () => {
+      await service.listHistory(manager, 'c1', QUERY);
+
+      expect(history.page).toHaveBeenCalledWith(BRANCH_ROWS, QUERY);
+    });
+
+    it("a manager cannot read another branch's history (403)", async () => {
+      const managerOfOtherBranch: AuthUser = {
+        ...manager,
+        companyStoreId: 'c2',
+      };
+
+      await expect(
+        service.listHistory(managerOfOtherBranch, 'c1', QUERY),
+      ).rejects.toThrow(ForbiddenException);
+      expect(history.page).not.toHaveBeenCalled();
+    });
+
+    it('a manager with no branch reads no branch (403)', async () => {
+      const managerWithoutBranch: AuthUser = {
+        ...manager,
+        companyStoreId: null,
+      };
+
+      await expect(
+        service.listHistory(managerWithoutBranch, 'c1', QUERY),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it("staff cannot read branch history, even their own branch's (403)", async () => {
+      await expect(service.listHistory(staff, 'c1', QUERY)).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(history.page).not.toHaveBeenCalled();
+    });
+
+    it('a branch outside the company, or deleted, is 404 before any role check', async () => {
+      prisma.companyStore.findFirst.mockResolvedValue(null);
+
+      await expect(service.listHistory(staff, 'c1', QUERY)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.companyStore.findFirst).toHaveBeenCalledWith({
+        where: { id: 'c1', companyId: 'company-1', deletedAt: null },
+      });
     });
   });
 });
