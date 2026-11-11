@@ -102,6 +102,13 @@ export class MembersService {
       throw new NotFoundException('Member not found');
     if (target.status !== UserStatus.PENDING_APPROVAL)
       throw new BadRequestException('Member is not pending approval');
+    // Pending with a role already = a company owner waiting for their company
+    // to be approved (PATCH /companies/:id/approve). Approving them here as a
+    // manager or staff would leave the company with no owner.
+    if (target.roleId !== null)
+      throw new BadRequestException(
+        'This is a company owner awaiting company approval; approve the company instead',
+      );
 
     const role = await this.prisma.role.findUnique({
       where: {
@@ -136,12 +143,13 @@ export class MembersService {
         if (!isLive) throw new NotFoundException('Branch not found');
       }
 
-      // Still pending? If someone approved them a moment ago, nothing
-      // matches and count is 0.
+      // Still a pending newcomer? If someone approved them a moment ago,
+      // nothing matches and count is 0.
       const approved = await transaction.user.updateMany({
         where: {
           id: target.id,
           status: UserStatus.PENDING_APPROVAL,
+          roleId: null,
           deletedAt: null,
         },
         data: {

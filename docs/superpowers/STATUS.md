@@ -44,7 +44,7 @@ Spec `docs/superpowers/specs/2026-11-06-roles-and-branches-design.md` (status: b
 - **Races:** guarded `updateMany` + count → 409; lock by writing (`CornersService.lockLiveCorner`; the company row before counting owners); locks always company → branch → member; events emitted after commit.
 - `OwnershipService.resolveCompanyForCreate` is now `resolveTargetCompany` (it serves reads too).
 - Migrations `20261106132705_membership_changes`, `20261107182006_branch_managers` (applied without its planned data step; not edited), `20261107182640_branch_cleanup_drop_corners_assign` (the data-only follow-up). Seed: `users.move`, `users.changeRole`; `corners.assign` removed.
-- **1061 unit tests green (75 suites)** — measured 2026-11-11. **e2e: 16 suites, all green** (2026-11-11) incl. `test/members.e2e-spec.ts` (phone suite 16) — the run was reported as "all green"; the measured total goes here once a `Tests:` line is recorded (never a predicted one).
+- **1062 unit tests green (75 suites) + 221 e2e green (16 suites)** — both **measured** 2026-11-11 (`Tests: 221 passed`), incl. `test/members.e2e-spec.ts` (phone suite 16). A final whole-branch review found one Important issue, fixed: member approval refuses a company's pending owner (pending **with** a role), so the admin can't leave a company ownerless.
 - ⚠️ **Gotchas:** (1) Prisma's `cursor` is **inclusive** — `cursor: { id }` starts **at** that row, so "after it" needs `skip: 1`; and the sort needs a unique tie-breaker (`id`), because rows written in one statement share a `created_at`. (2) A spec that validates a DTO using class-transformer's `@Type` must `import 'reflect-metadata'` (Nest loads it in the app, a bare spec doesn't). (3) Don't run `prisma format`: it re-aligns the whole schema and touches the dead `prisma/models/*.prisma`. (4) A `--create-only` migration must get its hand-written data step **before** anything applies it; once applied, add a follow-up migration instead of editing. (5) Prisma has no `SELECT … FOR UPDATE`: take a row lock by writing the row (an `updateMany` that bumps `updatedAt`).
 
 **Next:** membership piece 2 (one sign-in, a profile per company, Slack-style switching), then piece 3 (leaving) — each starts with brainstorm → spec → plan. Also open: the React Native client, Phase 10b+.
@@ -194,7 +194,7 @@ The DB, secrets, and generated client are **not** in the repo. After `git pull`:
 3. `docker compose up -d` (postgres + redis + **minio** + **mailpit** — MinIO console at `localhost:${MINIO_CONSOLE_PORT}`, Mailpit inbox at `localhost:${MAILPIT_UI_PORT}`). The app and **every** e2e suite need Redis up (BullMQ connects at boot).
 4. `npx prisma generate` (client generates into `src/generated/prisma`, which is gitignored)
 5. `npx prisma migrate deploy` then `npm run seed` (or `npx prisma migrate reset --force` which also seeds via `prisma/seed.ts`)
-6. `npm test` (unit — 1061 green across 75 suites) and `npm run test:e2e` (16 suites, incl. uploads, CSV·xlsx import/export, notifications via Mailpit, phone verification, account recovery, push, social login and members)
+6. `npm test` (unit — 1062 green across 75 suites) and `npm run test:e2e` (16 suites, incl. uploads, CSV·xlsx import/export, notifications via Mailpit, phone verification, account recovery, push, social login and members)
 
 Latest migration: `prisma/migrations/20261107182640_branch_cleanup_drop_corners_assign`. **Keep the `prisma` CLI + `@prisma/client` + `@prisma/adapter-pg` all on the same major (v7); don't bump to the v8 RC.**
 

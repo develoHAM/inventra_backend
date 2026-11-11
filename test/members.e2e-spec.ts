@@ -515,6 +515,42 @@ describe('Members (e2e)', () => {
         .send({ roleId: await roleIdOf('STAFF') })
         .expect(400);
     });
+
+    it("the admin cannot approve a company's pending owner as a member (400); they stay its owner", async () => {
+      // Company 3 registers; the admin has not approved the company yet.
+      const { phone, token } = await verifiedPhone(app, nextPhone);
+      await request(http)
+        .post('/auth/register')
+        .send({
+          companyName: 'Members Co 3',
+          taxId: '736-00-00003',
+          ownerName: 'Owner 3',
+          credentials: {
+            type: 'password',
+            email: 'owner3@mbr.test',
+            password: 'password123',
+          },
+          ownerPhone: phone,
+          ownerPhoneVerificationToken: token,
+        })
+        .expect(201);
+      const pendingOwnerId = await userIdByEmail('owner3@mbr.test');
+
+      await approve(
+        adminAccess,
+        pendingOwnerId,
+        await roleIdOf('STAFF'),
+        null,
+      ).expect(400);
+
+      const pendingOwner = await prisma.user.findUniqueOrThrow({
+        where: { id: pendingOwnerId },
+        include: { role: true },
+      });
+      expect(pendingOwner.status).toBe('PENDING_APPROVAL');
+      expect(pendingOwner.role?.code).toBe('OWNER');
+      expect(await historyOf(pendingOwnerId)).toEqual([]);
+    });
   });
 
   describe('changing roles', () => {

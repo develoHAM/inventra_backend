@@ -438,6 +438,7 @@ describe('MembersService', () => {
         where: {
           id: 'member-1',
           status: UserStatus.PENDING_APPROVAL,
+          roleId: null, // still a newcomer, never a company owner
           deletedAt: null,
         },
         data: {
@@ -452,6 +453,27 @@ describe('MembersService', () => {
         role: { code: 'STAFF', name: 'Staff' },
         branch: { id: 'corner-a', name: 'Branch A' },
       });
+    });
+
+    it("refuses a company's pending owner (400): approving them as a member would leave the company with no owner", async () => {
+      // Company signup stores the owner as pending WITH the OWNER role; they
+      // become active through company approval, not member approval.
+      prisma.user.findFirst.mockResolvedValue(
+        memberRow({
+          id: 'owner-9',
+          status: UserStatus.PENDING_APPROVAL,
+          roleId: 2,
+          role: { code: 'OWNER', name: 'Owner' },
+          companyStoreId: null,
+          companyStore: null,
+        }),
+      );
+
+      await expect(
+        service.approve(admin, 'owner-9', { roleId: 4, cornerId: null }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
     it('writes the first history row: no role, no branch → the chosen ones', async () => {
