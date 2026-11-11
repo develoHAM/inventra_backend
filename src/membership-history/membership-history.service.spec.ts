@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { MembershipHistoryService } from './membership-history.service';
 import type { MembershipChangeInput } from './membership-change';
 import { MEMBERSHIP_CHANGE_SELECT } from './membership-change-view';
@@ -5,7 +6,9 @@ import { MembershipChangeReason } from '../generated/prisma/enums';
 
 describe('MembershipHistoryService', () => {
   let service: MembershipHistoryService;
-  let prisma: { membershipChange: { findMany: jest.Mock } };
+  let prisma: {
+    membershipChange: { findMany: jest.Mock; findFirst: jest.Mock };
+  };
   let transaction: { membershipChange: { createMany: jest.Mock } };
 
   const staffMovedFromAToB: MembershipChangeInput = {
@@ -31,7 +34,11 @@ describe('MembershipHistoryService', () => {
 
   beforeEach(() => {
     prisma = {
-      membershipChange: { findMany: jest.fn().mockResolvedValue([]) },
+      membershipChange: {
+        findMany: jest.fn().mockResolvedValue([]),
+        // the bookmark lookup: found in this feed by default
+        findFirst: jest.fn().mockResolvedValue({ id: 'change-3' }),
+      },
     };
     transaction = {
       membershipChange: {
@@ -130,6 +137,31 @@ describe('MembershipHistoryService', () => {
         skip: 1,
         select: MEMBERSHIP_CHANGE_SELECT,
       });
+    });
+
+    it('first checks the bookmark is in this feed, keeping both conditions with AND', async () => {
+      await service.page(WHERE, { limit: 3, cursor: 'change-3' });
+
+      expect(prisma.membershipChange.findFirst).toHaveBeenCalledWith({
+        where: { AND: [WHERE, { id: 'change-3' }] },
+        select: { id: true },
+      });
+    });
+
+    it('a bookmark that is not in this feed is 400, and nothing is listed', async () => {
+      // an unknown id, or one taken from another feed
+      prisma.membershipChange.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.page(WHERE, { limit: 3, cursor: 'change-from-elsewhere' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.membershipChange.findMany).not.toHaveBeenCalled();
+    });
+
+    it('the first page has no bookmark to check', async () => {
+      await service.page(WHERE, {});
+
+      expect(prisma.membershipChange.findFirst).not.toHaveBeenCalled();
     });
 
     it('one row more than the limit: shows the limit, and the bookmark is the last one shown', async () => {

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '../generated/prisma/client';
 import type { MembershipChangeInput } from './membership-change';
@@ -46,6 +46,20 @@ export class MembershipHistoryService {
     query: HistoryQueryDto,
   ): Promise<MembershipHistoryPage> {
     const limit = query.limit ?? DEFAULT_HISTORY_LIMIT;
+
+    if (query.cursor) {
+      // The bookmark must be an entry of this feed: an unknown id would read
+      // as "the end", and one from another feed would start at the wrong
+      // place. AND keeps both conditions (a spread could overwrite an `id`
+      // in `where`). Checking first is safe: history rows never change.
+      const bookmark = await this.prisma.membershipChange.findFirst({
+        where: { AND: [where, { id: query.cursor }] },
+        select: { id: true },
+      });
+      if (!bookmark)
+        throw new BadRequestException('This cursor is not from this history');
+    }
+
     const rows = await this.prisma.membershipChange.findMany({
       where: where,
       // Rows written together share a timestamp: the id settles the tie, so

@@ -57,7 +57,16 @@ export class MembersService {
     );
     const callerPermissions =
       await this.permissions.getEffectivePermissions(caller);
-    const canApprove = callerPermissions.has('users.approve');
+    // Who can really approve: holds users.approve (role + personal overrides)
+    // AND passes approve()'s role rules. A personal GRANT gets staff past the
+    // guard but not past approve(), and a manager with no branch can approve
+    // no one, so neither is shown who is waiting.
+    const canApprove =
+      callerPermissions.has('users.approve') &&
+      (caller.roleCode === 'ADMIN' ||
+        caller.roleCode === 'OWNER' ||
+        (caller.roleCode === 'MANAGER' &&
+          (caller.companyStoreId ?? null) !== null));
 
     const rows = await this.prisma.user.findMany({
       where: {
@@ -118,7 +127,16 @@ export class MembersService {
     if (!role || (role.code !== 'MANAGER' && role.code !== 'STAFF'))
       throw new BadRequestException('Invalid role for a member');
 
-    if (caller.roleCode === 'MANAGER') {
+    // A guest list, not a blacklist: the admin and owners approve freely,
+    // managers within their limits, and every other role is refused, even
+    // one given users.approve personally.
+    const isAdminOrOwner =
+      caller.roleCode === 'ADMIN' || caller.roleCode === 'OWNER';
+    if (!isAdminOrOwner) {
+      if (caller.roleCode !== 'MANAGER')
+        throw new ForbiddenException(
+          'Only owners and managers can approve members',
+        );
       if (role.code !== 'STAFF')
         throw new ForbiddenException('Managers can approve only as staff');
       // A manager with no branch has null, and so does cornerId: null.

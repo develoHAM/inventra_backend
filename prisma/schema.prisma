@@ -349,13 +349,16 @@ model MembershipChange {
   changedByUserId    String?                @map("changed_by_user_id") @db.Uuid // null = made by the system
   createdAt          DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  company          Company       @relation(fields: [companyId], references: [id])
-  user             User          @relation("MembershipChangeMember", fields: [userId], references: [id])
-  changedByUser    User?         @relation("MembershipChangeActor", fields: [changedByUserId], references: [id])
-  fromRole         Role?         @relation("MembershipChangeFromRole", fields: [fromRoleId], references: [id])
-  toRole           Role?         @relation("MembershipChangeToRole", fields: [toRoleId], references: [id])
-  fromCompanyStore CompanyStore? @relation("MembershipChangeFromBranch", fields: [fromCompanyStoreId], references: [id])
-  toCompanyStore   CompanyStore? @relation("MembershipChangeToBranch", fields: [toCompanyStoreId], references: [id])
+  // History is permanent: a referenced row can't be hard-deleted (soft delete
+  // keeps names on records), never blanked to NULL, which would read as
+  // "made by the system".
+  company          Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  user             User          @relation("MembershipChangeMember", fields: [userId], references: [id], onDelete: Restrict)
+  changedByUser    User?         @relation("MembershipChangeActor", fields: [changedByUserId], references: [id], onDelete: Restrict)
+  fromRole         Role?         @relation("MembershipChangeFromRole", fields: [fromRoleId], references: [id], onDelete: Restrict)
+  toRole           Role?         @relation("MembershipChangeToRole", fields: [toRoleId], references: [id], onDelete: Restrict)
+  fromCompanyStore CompanyStore? @relation("MembershipChangeFromBranch", fields: [fromCompanyStoreId], references: [id], onDelete: Restrict)
+  toCompanyStore   CompanyStore? @relation("MembershipChangeToBranch", fields: [toCompanyStoreId], references: [id], onDelete: Restrict)
 
   @@index([userId, createdAt], map: "IDX_membership_changes_user_created")
   @@index([companyId, createdAt], map: "IDX_membership_changes_company_created")

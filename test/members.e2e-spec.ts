@@ -24,6 +24,7 @@ describe('Members (e2e)', () => {
   let managerUserId: string;
   let staffUserId: string;
   let staff2UserId: string;
+  let staff2Access: string; // signed in as staff; kept through promotion and demotion
 
   let branchAId: string;
   let branchBId: string;
@@ -258,6 +259,7 @@ describe('Members (e2e)', () => {
     staffUserId = staff.userId;
     const staff2 = await registerMember(company1.joinCode, 'STAFF', 'staff2');
     staff2UserId = staff2.userId;
+    staff2Access = staff2.access;
   });
 
   afterAll(async () => {
@@ -551,6 +553,54 @@ describe('Members (e2e)', () => {
       expect(pendingOwner.role?.code).toBe('OWNER');
       expect(await historyOf(pendingOwnerId)).toEqual([]);
     });
+
+    it('staff given a personal users.approve grant still cannot approve (403), nor see who is waiting: the role decides', async () => {
+      const newcomerId = await registerPending('newcomer7');
+      const approvePermission = await prisma.permission.findUniqueOrThrow({
+        where: { code: 'users.approve' },
+      });
+      // The grant lets staff past the permission guard; the service's rule
+      // for their role must still refuse.
+      await prisma.userPermission.create({
+        data: {
+          userId: staffUserId,
+          permissionId: approvePermission.id,
+          effect: 'GRANT',
+        },
+      });
+      try {
+        await approve(
+          staffAccess,
+          newcomerId,
+          await roleIdOf('MANAGER'),
+          branchAId,
+        ).expect(403);
+
+        // Pending people are listed only for those who can really approve.
+        const list = await request(http)
+          .get('/users')
+          .set('Authorization', `Bearer ${staffAccess}`)
+          .expect(200);
+        const listedIds = (list.body as Array<{ id: string }>).map(
+          (member) => member.id,
+        );
+        expect(listedIds).not.toContain(newcomerId);
+      } finally {
+        await prisma.userPermission.delete({
+          where: {
+            userId_permissionId: {
+              userId: staffUserId,
+              permissionId: approvePermission.id,
+            },
+          },
+        });
+      }
+
+      const newcomer = await prisma.user.findUniqueOrThrow({
+        where: { id: newcomerId },
+      });
+      expect(newcomer.status).toBe('PENDING_APPROVAL');
+    });
   });
 
   describe('changing roles', () => {
@@ -628,6 +678,9 @@ describe('Members (e2e)', () => {
         role: { code: 'OWNER' },
         branch: null,
       });
+      // The token staff2 signed in with as staff now opens owner-only routes:
+      // a move (owners only) of the manager into the branch they're already in.
+      await moveTo(staff2Access, managerUserId, branchAId).expect(200);
     });
 
     it('owners cannot demote another owner, or themselves (403)', async () => {
@@ -657,6 +710,12 @@ describe('Members (e2e)', () => {
       expect(owner.role!.code).toBe('OWNER');
     });
 
+    it("the demoted owner's existing token loses owner-only routes (403)", async () => {
+      // Same token as before the demotion: the guard reads the role from the
+      // database on every request.
+      await moveTo(staff2Access, managerUserId, branchAId).expect(403);
+    });
+
     it('two admin demotions of the last two owners at once leave exactly one owner', async () => {
       // company 2: its owner + one promoted member = two owners
       const secondOwnerId = await registerPending('c2owner', joinCode2);
@@ -668,6 +727,9 @@ describe('Members (e2e)', () => {
       ).expect(200);
       await setRole(owner2Access, secondOwnerId, 'OWNER').expect(200);
 
+      // A smoke test only: if the two requests happen not to overlap,
+      // [200, 409] comes out with or without the lock. The next test proves
+      // the lock itself.
       const results = await Promise.all([
         setRole(adminAccess, owner2UserId, 'STAFF', null),
         setRole(adminAccess, secondOwnerId, 'STAFF', null),
@@ -688,6 +750,51 @@ describe('Members (e2e)', () => {
       if (owners[0].id !== owner2UserId) {
         await setRole(adminAccess, owner2UserId, 'OWNER').expect(200);
       }
+    });
+
+    it('an owner demotion waits for the company row lock before counting owners', async () => {
+      const owner = await prisma.user.findUniqueOrThrow({
+        where: { id: ownerUserId },
+      });
+      const company1Id = owner.companyId!;
+
+      // The test takes company 1's row lock itself, as a concurrent demotion
+      // would, and keeps its transaction open until told to finish.
+      let signalLockTaken!: () => void;
+      const lockTaken = new Promise<void>((resolve) => {
+        signalLockTaken = resolve;
+      });
+      let releaseLock!: () => void;
+      const lockReleased = new Promise<void>((resolve) => {
+        releaseLock = resolve;
+      });
+      const lockHolder = prisma.$transaction(async (transaction) => {
+        await transaction.company.updateMany({
+          where: { id: company1Id },
+          data: { updatedAt: new Date() },
+        });
+        signalLockTaken();
+        await lockReleased;
+      });
+      await lockTaken;
+
+      // Company 1's only owner: once it gets in, the count says 1 → 409.
+      let answered = false;
+      const demotion = setRole(adminAccess, ownerUserId, 'STAFF', null).then(
+        (response) => {
+          answered = true;
+          return response;
+        },
+      );
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        expect(answered).toBe(false); // still waiting at the locked door
+      } finally {
+        releaseLock();
+        await lockHolder;
+      }
+
+      expect((await demotion).status).toBe(409);
     });
   });
 
@@ -1110,6 +1217,58 @@ describe('Members (e2e)', () => {
       await readAs(ownerAccess, path, { limit: 'ten' }).expect(400);
       await readAs(ownerAccess, path, { cursor: 'page-2' }).expect(400);
       await readAs(ownerAccess, '/companies/not-a-uuid/history').expect(400);
+      // well-formed, but no entry has this id
+      await readAs(ownerAccess, path, {
+        cursor: '00000000-0000-4000-8000-000000000000',
+      }).expect(400);
+    });
+
+    it('a bookmark from another feed is 400, not a silently wrong page', async () => {
+      const feed = await pageAs(
+        ownerAccess,
+        `/companies/${company1Id}/history`,
+        { limit: '1' },
+      );
+      const companyEntry = feed.items[0]; // newcomer1's promotion
+      expect(companyEntry.member.id).not.toBe(staffUserId);
+
+      await readAs(ownerAccess, `/users/${staffUserId}/history`, {
+        cursor: companyEntry.id,
+      }).expect(400);
+    });
+  });
+
+  describe('history is permanent', () => {
+    it('every foreign key on the history refuses a delete instead of blanking the row', async () => {
+      const rules = await prisma.$queryRaw<
+        Array<{ name: string; onDelete: string }>
+      >`
+        SELECT conname::text AS name, confdeltype::text AS "onDelete"
+        FROM pg_constraint
+        WHERE conrelid = 'membership_changes'::regclass AND contype = 'f'
+        ORDER BY conname`;
+
+      expect(rules).toHaveLength(7);
+      // In Postgres's catalog 'r' = RESTRICT ('n' would be SET NULL).
+      expect(rules.filter((rule) => rule.onDelete !== 'r')).toEqual([]);
+    });
+
+    it('so a closed branch can never be erased from under its history', async () => {
+      const owner = await prisma.user.findUniqueOrThrow({
+        where: { id: ownerUserId },
+      });
+      const branchC = await prisma.companyStore.findFirstOrThrow({
+        where: { companyId: owner.companyId!, name: 'Branch C' },
+      });
+
+      // Rolled back either way: refused by the database, or undone by the
+      // throw below if the delete went through.
+      await expect(
+        prisma.$transaction(async (transaction) => {
+          await transaction.companyStore.delete({ where: { id: branchC.id } });
+          throw new Error('the delete went through');
+        }),
+      ).rejects.toThrow(/foreign key constraint/i);
     });
   });
 });

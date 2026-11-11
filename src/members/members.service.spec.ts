@@ -476,6 +476,20 @@ describe('MembersService', () => {
       expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
+    it('refuses anyone who is not an owner or a manager, even holding users.approve (403)', async () => {
+      // e.g. staff given a personal GRANT of users.approve: the caller's role
+      // decides the rules, not only the permission
+      prisma.role.findUnique.mockResolvedValue(MANAGER_ROLE);
+
+      await expect(
+        service.approve(staffCaller, 'member-1', {
+          roleId: 3,
+          cornerId: 'corner-b',
+        }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
     it('writes the first history row: no role, no branch → the chosen ones', async () => {
       await service.approve(owner, 'member-1', {
         roleId: 4,
@@ -1154,10 +1168,35 @@ describe('MembersService', () => {
         });
       });
 
-      it('are shown to staff who were granted users.approve', async () => {
-        await service.list(staffCaller, {});
+      it.each([
+        ['an owner', owner],
+        ['a manager', manager],
+      ])('are shown to %s holding users.approve', async (_label, caller) => {
+        await service.list(caller, {});
 
         expect(whereSent()).not.toHaveProperty('NOT');
+      });
+
+      it('stay hidden from a manager with no branch: they can approve no one', async () => {
+        const managerWithoutBranch: AuthUser = {
+          ...manager,
+          companyStoreId: null,
+        };
+
+        await service.list(managerWithoutBranch, {});
+
+        expect(whereSent()).toHaveProperty('NOT', {
+          status: UserStatus.PENDING_APPROVAL,
+        });
+      });
+
+      it('stay hidden from staff granted users.approve: their role still cannot approve', async () => {
+        // the default mock holds users.approve, as a personal GRANT would
+        await service.list(staffCaller, {});
+
+        expect(whereSent()).toHaveProperty('NOT', {
+          status: UserStatus.PENDING_APPROVAL,
+        });
       });
 
       it('are hidden from a manager denied users.approve', async () => {
