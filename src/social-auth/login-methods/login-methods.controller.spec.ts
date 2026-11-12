@@ -22,7 +22,7 @@ describe('LoginMethodsController', () => {
     unlink: jest.Mock;
   };
 
-  const caller = { id: 'user-1' } as AuthUser;
+  const caller = { id: 'user-1', accountId: 'account-1' } as AuthUser;
   const metadata = (key: string, method: keyof LoginMethodsController) =>
     Reflect.getMetadata(key, LoginMethodsController.prototype[method]);
 
@@ -64,7 +64,7 @@ describe('LoginMethodsController', () => {
     expect(metadata(HTTP_CODE_METADATA, 'unlink')).toBe(HttpStatus.NO_CONTENT);
   });
 
-  it('every route acts on the caller from the JWT, never an id from the body', async () => {
+  it("every route acts on the caller's account from the JWT, never an id from the body", async () => {
     const linkBody = {
       provider: 'apple' as const,
       credential: { identityToken: 't' },
@@ -80,13 +80,16 @@ describe('LoginMethodsController', () => {
     await controller.linkPassword(caller, passwordDto);
     await controller.unlink(caller, 'lm-1');
 
-    expect(loginMethods.list).toHaveBeenCalledWith('user-1');
-    expect(loginMethods.linkProvider).toHaveBeenCalledWith('user-1', linkBody);
+    expect(loginMethods.list).toHaveBeenCalledWith('account-1');
+    expect(loginMethods.linkProvider).toHaveBeenCalledWith(
+      'account-1',
+      linkBody,
+    );
     expect(loginMethods.linkPassword).toHaveBeenCalledWith(
-      'user-1',
+      'account-1',
       passwordDto,
     );
-    expect(loginMethods.unlink).toHaveBeenCalledWith('user-1', 'lm-1');
+    expect(loginMethods.unlink).toHaveBeenCalledWith('account-1', 'lm-1');
   });
 });
 

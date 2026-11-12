@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AccountsModule } from '../accounts/accounts.module';
 import { ConfigService } from '@nestjs/config';
 import { readFileSync } from 'node:fs';
 import { Env } from '../config/env.schema';
@@ -68,7 +69,12 @@ export function buildSocialVerifiers(
 }
 
 @Module({
-  imports: [AuthModule, SignupTicketsModule, EmailVerificationModule],
+  imports: [
+    AuthModule,
+    AccountsModule,
+    SignupTicketsModule,
+    EmailVerificationModule,
+  ],
   controllers: [SocialAuthController, LoginMethodsController],
   providers: [
     SocialAuthService,

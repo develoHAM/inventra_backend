@@ -15,25 +15,25 @@ import { SocialSignInDto } from '../dto/social-sign-in.dto';
 import { LinkPasswordDto } from './dto/link-password.dto';
 import { LoginMethodsService } from './login-methods.service';
 
-/** The signed-in user's own login methods (no permission: it's their account). */
+/** The signed-in person's own login methods, on their account (no permission needed). */
 @Controller('users/me/login-methods')
 export class LoginMethodsController {
   constructor(private readonly loginMethods: LoginMethodsService) {}
 
   @Get()
   list(@CurrentUser() user: AuthUser) {
-    return this.loginMethods.list(user.id);
+    return this.loginMethods.list(user.accountId);
   }
 
   // Same body as social sign-in: { provider, credential, nonce? }
   @Post()
   linkProvider(@CurrentUser() user: AuthUser, @Body() body: SocialSignInDto) {
-    return this.loginMethods.linkProvider(user.id, body);
+    return this.loginMethods.linkProvider(user.accountId, body);
   }
 
   @Post('local')
   linkPassword(@CurrentUser() user: AuthUser, @Body() dto: LinkPasswordDto) {
-    return this.loginMethods.linkPassword(user.id, dto);
+    return this.loginMethods.linkPassword(user.accountId, dto);
   }
 
   @Delete(':id')
@@ -42,6 +42,6 @@ export class LoginMethodsController {
     @CurrentUser() user: AuthUser,
     @Param('id', ParseUUIDPipe) loginMethodId: string,
   ) {
-    return this.loginMethods.unlink(user.id, loginMethodId);
+    return this.loginMethods.unlink(user.accountId, loginMethodId);
   }
 }

@@ -46,8 +46,9 @@ export interface MemberRoleChangedEvent {
   toRoleCode: MemberRoleCode;
 }
 
+/** About the sign-in itself, not a company: notified to the account. */
 export interface AccountPasswordResetEvent {
-  userId: string;
+  accountId: string;
 }
 
 export interface OrderCreatedEvent {

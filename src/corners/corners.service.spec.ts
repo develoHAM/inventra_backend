@@ -33,6 +33,7 @@ describe('CornersService', () => {
 
   const owner: AuthUser = {
     id: 'owner-1',
+    accountId: 'account-of-owner-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
@@ -40,6 +41,7 @@ describe('CornersService', () => {
   };
   const admin: AuthUser = {
     id: 'admin-1',
+    accountId: 'account-of-admin-1',
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',
@@ -47,6 +49,7 @@ describe('CornersService', () => {
   };
   const manager: AuthUser = {
     id: 'mgr-1',
+    accountId: 'account-of-mgr-1',
     companyId: 'company-1',
     companyStoreId: 'c1', // the manager's branch
     roleId: 3,
@@ -55,6 +58,7 @@ describe('CornersService', () => {
   };
   const staff: AuthUser = {
     id: 'staff-1',
+    accountId: 'account-of-staff-1',
     companyId: 'company-1',
     companyStoreId: 'c1',
     roleId: 4,

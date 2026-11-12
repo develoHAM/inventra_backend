@@ -130,9 +130,13 @@ describe('Phone verification (e2e)', () => {
       .expect(201);
 
     const owner = await prisma.user.findFirst({
-      where: { loginMethods: { some: { email: 'owner@pv.test' } } },
+      where: {
+        account: { loginMethods: { some: { email: 'owner@pv.test' } } },
+      },
+      include: { account: true },
     });
-    expect(owner!.phone).toBe(ownerPhoneDigits);
+    // the phone belongs to the sign-in (the account), not the company profile
+    expect(owner!.account.phone).toBe(ownerPhoneDigits);
     const spent = await prisma.phoneVerification.findFirst({
       where: { phone: ownerPhoneDigits, consumedAt: { not: null } },
     });

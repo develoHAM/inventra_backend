@@ -41,7 +41,7 @@ const toSummary = (row: {
   email: row.method === 'local' && row.email ? maskEmail(row.email) : null,
 });
 
-/** The ways the signed-in user can sign in: list, link, add a password, unlink. */
+/** The ways a person's account can sign in: list, link, add a password, unlink. */
 @Injectable()
 export class LoginMethodsService {
   private readonly logger = new Logger(LoginMethodsService.name);
@@ -61,9 +61,9 @@ export class LoginMethodsService {
     });
   }
 
-  async list(userId: string): Promise<LoginMethodSummary[]> {
+  async list(accountId: string): Promise<LoginMethodSummary[]> {
     const rows = await this.prisma.userLoginMethod.findMany({
-      where: { userId: userId },
+      where: { accountId: accountId },
       select: { id: true, method: true, email: true },
       orderBy: { createdAt: 'asc' },
     });
@@ -73,11 +73,11 @@ export class LoginMethodsService {
   /**
    * Link a provider, proven the same way as social sign-in. A conditional
    * insert (ON CONFLICT DO NOTHING) covers both rules at once: the identity
-   * is linked to nobody else, and this user has no other login for that
+   * is linked to nobody else, and this account has no other login for that
    * provider. Nothing inserted → 409, with the reason read afterwards.
    */
   async linkProvider(
-    userId: string,
+    accountId: string,
     body: SocialSignInDto,
   ): Promise<LoginMethodSummary> {
     const identity = await this.socialAuth.identify(body);
@@ -85,7 +85,7 @@ export class LoginMethodsService {
     const [linked] = await this.prisma.userLoginMethod.createManyAndReturn({
       data: [
         {
-          userId: userId,
+          accountId: accountId,
           method: identity.provider,
           providerUserId: identity.providerUserId,
           email: identity.email,
@@ -100,14 +100,14 @@ export class LoginMethodsService {
       select: { id: true, method: true, email: true },
     });
     if (!linked) {
-      throw new ConflictException(await this.whyNotLinked(userId, identity));
+      throw new ConflictException(await this.whyNotLinked(accountId, identity));
     }
     return toSummary(linked);
   }
 
   /** Which unique rule stopped the link (read only after the insert said no). */
   private async whyNotLinked(
-    userId: string,
+    accountId: string,
     identity: SocialIdentity,
   ): Promise<string> {
     const holder = await this.prisma.userLoginMethod.findUnique({
@@ -117,9 +117,9 @@ export class LoginMethodsService {
           providerUserId: identity.providerUserId,
         },
       },
-      select: { userId: true },
+      select: { accountId: true },
     });
-    if (holder?.userId === userId) {
+    if (holder?.accountId === accountId) {
       return 'This account is already linked to you';
     }
     if (holder) return 'This account is linked to another user';
@@ -131,12 +131,12 @@ export class LoginMethodsService {
    * be proven by an emailed code and must not be any other password login's.
    */
   async linkPassword(
-    userId: string,
+    accountId: string,
     dto: LinkPasswordDto,
   ): Promise<LoginMethodSummary> {
     const [ownPasswordLogin, emailInUse] = await Promise.all([
       this.prisma.userLoginMethod.findUnique({
-        where: { userId_method: { userId: userId, method: 'local' } },
+        where: { accountId_method: { accountId: accountId, method: 'local' } },
         select: { id: true },
       }),
       this.prisma.userLoginMethod.findFirst({
@@ -160,7 +160,7 @@ export class LoginMethodsService {
       const [linked] = await transaction.userLoginMethod.createManyAndReturn({
         data: [
           {
-            userId: userId,
+            accountId: accountId,
             method: 'local',
             email: dto.email,
             emailVerified: true,
@@ -168,14 +168,14 @@ export class LoginMethodsService {
           },
         ],
         // both rules, enforced by the database even for requests at the same instant:
-        // one password login per account (userId, method), one account per
+        // one password login per account (accountId, method), one account per
         // password-login email (UQ_login_methods_local_email)
         skipDuplicates: true,
         select: { id: true, method: true, email: true },
       });
       if (!linked) {
         throw new ConflictException(
-          await this.whyPasswordNotLinked(transaction, userId),
+          await this.whyPasswordNotLinked(transaction, accountId),
         );
       }
       return toSummary(linked);
@@ -185,10 +185,10 @@ export class LoginMethodsService {
   /** Which rule stopped it (read only after the insert said no, before the rollback). */
   private async whyPasswordNotLinked(
     transaction: Prisma.TransactionClient,
-    userId: string,
+    accountId: string,
   ): Promise<string> {
     const ownPasswordLogin = await transaction.userLoginMethod.findUnique({
-      where: { userId_method: { userId: userId, method: 'local' } },
+      where: { accountId_method: { accountId: accountId, method: 'local' } },
       select: { id: true },
     });
     return ownPasswordLogin
@@ -197,27 +197,27 @@ export class LoginMethodsService {
   }
 
   /**
-   * Remove one of the user's login methods, never the last one. Then ask the
+   * Remove one of the account's login methods, never the last one. Then ask the
    * provider to forget us too, best-effort: a provider outage must not keep
    * the login linked here.
    */
-  async unlink(userId: string, loginMethodId: string): Promise<void> {
+  async unlink(accountId: string, loginMethodId: string): Promise<void> {
     const removed = await this.prisma.$transaction(async (transaction) => {
-      // A write to the user's row takes its lock: two unlinks for the same
-      // user now run one after the other, so both can't see "one other login
-      // left" and remove the last two together.
-      await transaction.user.updateMany({
-        where: { id: userId },
+      // A write to the account's row takes its lock: two unlinks for the same
+      // account now run one after the other, so both can't see "one other
+      // login left" and remove the last two together.
+      await transaction.account.updateMany({
+        where: { id: accountId },
         data: { updatedAt: new Date() },
       });
 
       const target = await transaction.userLoginMethod.findFirst({
-        where: { id: loginMethodId, userId: userId },
+        where: { id: loginMethodId, accountId: accountId },
       });
       if (!target) return null;
 
       const count = await transaction.userLoginMethod.count({
-        where: { userId: userId },
+        where: { accountId: accountId },
       });
       if (count <= 1) {
         throw new ConflictException(

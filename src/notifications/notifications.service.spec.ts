@@ -1,4 +1,5 @@
 import { NotificationsService } from './notifications.service';
+import { NotificationEvent } from './notification-events';
 import { NotificationChannel, UserStatus } from '../generated/prisma/enums';
 import {
   REDACTED_SEND_JOB_OPTIONS,
@@ -295,6 +296,14 @@ describe('NotificationsService', () => {
           userId === 'no-email' ? null : `${userId}@example.com`,
         );
       jest.spyOn(service, 'dispatch').mockResolvedValue(undefined);
+      // Each profile belongs to the account "account-of-<profile id>".
+      prisma.user.findMany.mockImplementation(
+        async (args: { where: { id: { in: string[] } } }) =>
+          args.where.id.in.map((id) => ({
+            id: id,
+            accountId: `account-of-${id}`,
+          })),
+      );
     });
 
     it('dispatches one EMAIL per user with the rendered message', async () => {
@@ -320,10 +329,10 @@ describe('NotificationsService', () => {
       );
     });
 
-    it('dispatches one PUSH per registered device (title = subject, address = token)', async () => {
+    it("dispatches one PUSH per device of the profile's ACCOUNT, recording the profile (title = subject, address = token)", async () => {
       devices.findTokens.mockResolvedValue([
-        { userId: 'owner-1', token: 'owner-phone' },
-        { userId: 'owner-1', token: 'owner-laptop' },
+        { accountId: 'account-of-owner-1', token: 'owner-phone' },
+        { accountId: 'account-of-owner-1', token: 'owner-laptop' },
       ]);
 
       await service.notifyUsers({
@@ -332,7 +341,11 @@ describe('NotificationsService', () => {
         message: message,
       });
 
-      expect(devices.findTokens).toHaveBeenCalledWith(['owner-1']);
+      expect(prisma.user.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ['owner-1'] } },
+        select: { id: true, accountId: true },
+      });
+      expect(devices.findTokens).toHaveBeenCalledWith(['account-of-owner-1']);
       for (const token of ['owner-phone', 'owner-laptop']) {
         expect(service.dispatch).toHaveBeenCalledWith({
           eventType: 'order.created',
@@ -349,7 +362,7 @@ describe('NotificationsService', () => {
 
     it('passes deep-link data to PUSH rows only, never to EMAIL rows', async () => {
       devices.findTokens.mockResolvedValue([
-        { userId: 'owner-1', token: 'owner-phone' },
+        { accountId: 'account-of-owner-1', token: 'owner-phone' },
       ]);
 
       await service.notifyUsers({
@@ -392,7 +405,7 @@ describe('NotificationsService', () => {
 
     it('a user with no email still gets the push', async () => {
       devices.findTokens.mockResolvedValue([
-        { userId: 'no-email', token: 'their-phone' },
+        { accountId: 'account-of-no-email', token: 'their-phone' },
       ]);
 
       await service.notifyUsers({
@@ -418,7 +431,7 @@ describe('NotificationsService', () => {
       });
 
       expect(service.dispatch).toHaveBeenCalledTimes(1); // one email
-      expect(devices.findTokens).toHaveBeenCalledWith(['owner-1']);
+      expect(devices.findTokens).toHaveBeenCalledWith(['account-of-owner-1']);
     });
 
     it('never notifies the actor, on any channel', async () => {
@@ -433,7 +446,7 @@ describe('NotificationsService', () => {
       expect(service.dispatch).toHaveBeenCalledWith(
         expect.objectContaining({ recipientUserId: 'owner-1' }),
       );
-      expect(devices.findTokens).toHaveBeenCalledWith(['owner-1']);
+      expect(devices.findTokens).toHaveBeenCalledWith(['account-of-owner-1']);
     });
 
     it('does nothing — not even a device lookup — for an empty recipient list', async () => {
@@ -445,7 +458,103 @@ describe('NotificationsService', () => {
       });
 
       expect(service.dispatch).not.toHaveBeenCalled();
+      expect(prisma.user.findMany).not.toHaveBeenCalled();
       expect(devices.findTokens).not.toHaveBeenCalled();
+    });
+
+    it("a device only gets its own account's profiles' pushes", async () => {
+      devices.findTokens.mockResolvedValue([
+        { accountId: 'account-of-owner-1', token: 'owner-phone' },
+        { accountId: 'account-of-manager-1', token: 'manager-phone' },
+      ]);
+
+      await service.notifyUsers({
+        userIds: ['owner-1', 'manager-1'],
+        eventType: 'order.created',
+        message: message,
+      });
+
+      const pushes = (service.dispatch as jest.Mock).mock.calls
+        .map((call) => call[0])
+        .filter((call) => call.channel === NotificationChannel.PUSH)
+        .map((call) => [call.recipientUserId, call.recipientAddress]);
+      expect(pushes).toEqual([
+        ['owner-1', 'owner-phone'],
+        ['manager-1', 'manager-phone'],
+      ]);
+    });
+  });
+
+  describe('notifyAccount (account-wide notices, e.g. the password reset)', () => {
+    const message = { subject: 'Password changed', body: 'Body' };
+
+    beforeEach(() => {
+      jest.spyOn(service, 'dispatch').mockResolvedValue(undefined);
+      prisma.userLoginMethod.findFirst.mockResolvedValue({
+        email: 'owner@example.com',
+      });
+      devices.findTokens.mockResolvedValue([
+        { accountId: 'account-1', token: 'phone' },
+        { accountId: 'account-1', token: 'tablet' },
+      ]);
+    });
+
+    it("emails the account's password-login address once, recording no profile", async () => {
+      await service.notifyAccount({
+        accountId: 'account-1',
+        eventType: NotificationEvent.ACCOUNT_PASSWORD_RESET,
+        message: message,
+      });
+
+      expect(prisma.userLoginMethod.findFirst).toHaveBeenCalledWith({
+        where: { accountId: 'account-1', method: 'local' },
+        select: { email: true },
+      });
+      expect(service.dispatch).toHaveBeenCalledWith({
+        eventType: NotificationEvent.ACCOUNT_PASSWORD_RESET,
+        channel: NotificationChannel.EMAIL,
+        recipientAddress: 'owner@example.com',
+        subject: 'Password changed',
+        body: 'Body',
+      });
+    });
+
+    it('pushes every device of the account once (not once per company profile)', async () => {
+      await service.notifyAccount({
+        accountId: 'account-1',
+        eventType: NotificationEvent.ACCOUNT_PASSWORD_RESET,
+        message: message,
+      });
+
+      expect(devices.findTokens).toHaveBeenCalledWith(['account-1']);
+      for (const token of ['phone', 'tablet']) {
+        expect(service.dispatch).toHaveBeenCalledWith({
+          eventType: NotificationEvent.ACCOUNT_PASSWORD_RESET,
+          channel: NotificationChannel.PUSH,
+          recipientAddress: token,
+          subject: 'Password changed',
+          body: 'Body',
+        });
+      }
+      expect(service.dispatch).toHaveBeenCalledTimes(3); // 1 email + 2 devices
+    });
+
+    it('an account with no password login gets the push only', async () => {
+      prisma.userLoginMethod.findFirst.mockResolvedValue(null);
+
+      await service.notifyAccount({
+        accountId: 'account-1',
+        eventType: NotificationEvent.ACCOUNT_PASSWORD_RESET,
+        message: message,
+      });
+
+      const channels = (service.dispatch as jest.Mock).mock.calls.map(
+        (call) => call[0].channel,
+      );
+      expect(channels).toEqual([
+        NotificationChannel.PUSH,
+        NotificationChannel.PUSH,
+      ]);
     });
   });
 });

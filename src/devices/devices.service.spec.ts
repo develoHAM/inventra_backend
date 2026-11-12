@@ -36,8 +36,8 @@ describe('DevicesService', () => {
   });
 
   describe('register', () => {
-    it('upserts by token: creates it for the caller, or moves an existing one to them', async () => {
-      await service.register('user-1', {
+    it("upserts by token: creates it for the caller's account, or moves an existing one to it", async () => {
+      await service.register('account-1', {
         token: 'fcm-token-abc',
         platform: DevicePlatform.ANDROID,
       });
@@ -45,14 +45,14 @@ describe('DevicesService', () => {
       expect(prisma.deviceToken.upsert).toHaveBeenCalledWith({
         where: { token: 'fcm-token-abc' },
         create: {
-          userId: 'user-1',
+          accountId: 'account-1',
           token: 'fcm-token-abc',
           platform: DevicePlatform.ANDROID,
           lastSeenAt: now,
         },
-        // a token re-registered by another user now belongs to them
+        // a token re-registered by another account now belongs to it
         update: {
-          userId: 'user-1',
+          accountId: 'account-1',
           platform: DevicePlatform.ANDROID,
           lastSeenAt: now,
         },
@@ -60,7 +60,7 @@ describe('DevicesService', () => {
     });
 
     it('validates the token with the push sender before storing it', async () => {
-      await service.register('user-1', {
+      await service.register('account-1', {
         token: 'fcm-token-abc',
         platform: DevicePlatform.ANDROID,
       });
@@ -75,7 +75,7 @@ describe('DevicesService', () => {
       push.isValidToken.mockResolvedValue(false);
 
       await expect(
-        service.register('user-1', {
+        service.register('account-1', {
           token: 'garbage',
           platform: DevicePlatform.WEB,
         }),
@@ -87,7 +87,7 @@ describe('DevicesService', () => {
       push.isValidToken.mockRejectedValue(new Error('server-unavailable'));
 
       await expect(
-        service.register('user-1', {
+        service.register('account-1', {
           token: 'fcm-token-abc',
           platform: DevicePlatform.IOS,
         }),
@@ -98,7 +98,7 @@ describe('DevicesService', () => {
 
     it('resolves with nothing (the route answers 204)', async () => {
       await expect(
-        service.register('user-1', {
+        service.register('account-1', {
           token: 'fcm-token-abc',
           platform: DevicePlatform.WEB,
         }),
@@ -107,11 +107,11 @@ describe('DevicesService', () => {
   });
 
   describe('unregister', () => {
-    it("deletes the token only if it is the caller's own", async () => {
-      await service.unregister('user-1', 'fcm-token-abc');
+    it("deletes the token only if it is the caller's account's own", async () => {
+      await service.unregister('account-1', 'fcm-token-abc');
 
       expect(prisma.deviceToken.deleteMany).toHaveBeenCalledWith({
-        where: { token: 'fcm-token-abc', userId: 'user-1' },
+        where: { token: 'fcm-token-abc', accountId: 'account-1' },
       });
     });
 
@@ -119,25 +119,25 @@ describe('DevicesService', () => {
       prisma.deviceToken.deleteMany.mockResolvedValue({ count: 0 });
 
       await expect(
-        service.unregister('user-1', 'not-mine'),
+        service.unregister('account-1', 'not-mine'),
       ).resolves.toBeUndefined();
     });
   });
 
   describe('findTokens', () => {
-    it('returns every device of the given users', async () => {
+    it('returns every device of the given accounts', async () => {
       prisma.deviceToken.findMany.mockResolvedValue([
-        { userId: 'user-1', token: 'phone' },
-        { userId: 'user-1', token: 'laptop' },
-        { userId: 'user-2', token: 'tablet' },
+        { accountId: 'account-1', token: 'phone' },
+        { accountId: 'account-1', token: 'laptop' },
+        { accountId: 'account-2', token: 'tablet' },
       ]);
 
-      const tokens = await service.findTokens(['user-1', 'user-2']);
+      const tokens = await service.findTokens(['account-1', 'account-2']);
 
       expect(tokens).toHaveLength(3);
       expect(prisma.deviceToken.findMany).toHaveBeenCalledWith({
-        where: { userId: { in: ['user-1', 'user-2'] } },
-        select: { userId: true, token: true },
+        where: { accountId: { in: ['account-1', 'account-2'] } },
+        select: { accountId: true, token: true },
       });
     });
 

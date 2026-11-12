@@ -252,10 +252,11 @@ export class NotificationsListener {
   async handleAccountPasswordReset(
     event: AccountPasswordResetEvent,
   ): Promise<void> {
-    // The actor IS the recipient — no exclusion. No lookup needed: the
-    // template has no variables and notifyUsers resolves the address.
-    await this.notifications.notifyUsers({
-      userIds: [event.userId],
+    // About the sign-in itself, not a company: the account is notified once
+    // (its password-login email, each device), not each company profile.
+    // The actor IS the recipient, so nobody is excluded.
+    await this.notifications.notifyAccount({
+      accountId: event.accountId,
       eventType: NotificationEvent.ACCOUNT_PASSWORD_RESET,
       message: notificationTemplates.passwordReset(),
     });

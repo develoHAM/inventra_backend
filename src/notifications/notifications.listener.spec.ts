@@ -17,6 +17,7 @@ describe('NotificationsListener', () => {
     findUserEmail: jest.Mock;
     dispatch: jest.Mock;
     notifyUsers: jest.Mock;
+    notifyAccount: jest.Mock;
     findPlatformAdminIds: jest.Mock;
     findCompanyOwnerIds: jest.Mock;
     findCornerRecipientIds: jest.Mock;
@@ -35,6 +36,7 @@ describe('NotificationsListener', () => {
       findUserEmail: jest.fn().mockResolvedValue('owner@example.com'),
       dispatch: jest.fn().mockResolvedValue(undefined),
       notifyUsers: jest.fn().mockResolvedValue(undefined),
+      notifyAccount: jest.fn().mockResolvedValue(undefined),
       findPlatformAdminIds: jest.fn().mockResolvedValue(['admin-1']),
       findCompanyOwnerIds: jest.fn().mockResolvedValue(['owner-1']),
       findCornerRecipientIds: jest
@@ -293,23 +295,19 @@ describe('NotificationsListener', () => {
   });
 
   describe('account.passwordReset', () => {
-    it('emails the account owner a "password changed" notice (nobody excluded)', async () => {
-      await listener.handleAccountPasswordReset({ userId: 'user-1' });
+    it('notifies the ACCOUNT (its sign-in), not each company profile: a "password changed" notice', async () => {
+      await listener.handleAccountPasswordReset({ accountId: 'account-1' });
 
-      const call = notifications.notifyUsers.mock.calls[0][0];
-      expect(call).toEqual({
-        userIds: ['user-1'],
+      expect(notifications.notifyAccount).toHaveBeenCalledWith({
+        accountId: 'account-1',
         eventType: NotificationEvent.ACCOUNT_PASSWORD_RESET,
         message: notificationTemplates.passwordReset(),
       });
-      // no ids to deep-link to: the worker still adds eventType for the app
-      expect(call).not.toHaveProperty('data');
-      // the owner IS the actor here — excluding them would send nothing
-      expect(call).not.toHaveProperty('excludeUserId');
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
     });
 
     it('needs no database lookup (the template has no variables)', async () => {
-      await listener.handleAccountPasswordReset({ userId: 'user-1' });
+      await listener.handleAccountPasswordReset({ accountId: 'account-1' });
 
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
       expect(prisma.company.findUnique).not.toHaveBeenCalled();

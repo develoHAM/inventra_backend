@@ -31,6 +31,16 @@ describe('AuthService', () => {
   let devices: { unregister: jest.Mock };
   let signupTickets: { consume: jest.Mock };
   let emailVerification: { consume: jest.Mock };
+  let accounts: { createAccount: jest.Mock; findProfileToOpen: jest.Mock };
+
+  /** The profile AccountsService opens at login. */
+  const openProfile = (changes: Record<string, unknown> = {}) => ({
+    id: 'user-1',
+    status: UserStatus.ACTIVE,
+    companyId: 'company-1',
+    roleId: 2,
+    ...changes,
+  });
 
   /** A spent Kakao ticket whose provider email is verified. */
   const kakaoTicket = {
@@ -102,8 +112,8 @@ describe('AuthService', () => {
           .fn()
           .mockResolvedValue({ id: 2, code: 'OWNER' }),
       },
-      // null default = "phone not taken"
-      user: { findFirst: jest.fn().mockResolvedValue(null) },
+      // null default = "phone not taken" (the phone lives on the account)
+      account: { findFirst: jest.fn().mockResolvedValue(null) },
       refreshToken: {
         create: jest.fn().mockResolvedValue({}),
         findUnique: jest.fn(),
@@ -135,6 +145,12 @@ describe('AuthService', () => {
     devices = { unregister: jest.fn().mockResolvedValue(undefined) };
     signupTickets = { consume: jest.fn().mockResolvedValue(kakaoTicket) };
     emailVerification = { consume: jest.fn().mockResolvedValue(undefined) };
+    accounts = {
+      createAccount: jest.fn().mockResolvedValue('account-1'),
+      findProfileToOpen: jest.fn().mockResolvedValue(openProfile()),
+    };
+    // constructor order: (prisma, passwordService, tokenService, eventEmitter,
+    // phoneVerification, devices, signupTickets, emailVerification, accounts)
     service = new AuthService(
       prisma,
       passwordService as any,
@@ -144,6 +160,7 @@ describe('AuthService', () => {
       devices as any,
       signupTickets as any,
       emailVerification as any,
+      accounts as any,
     );
   });
 
@@ -164,10 +181,11 @@ describe('AuthService', () => {
         where: { id: 'user-1' },
         data: { companyId: 'company-1' },
       });
-      // refresh token stored HASHED
+      // refresh token stored HASHED, on the account's session, with the new profile open
       expect(prisma.refreshToken.create).toHaveBeenCalledWith({
         data: {
-          userId: 'user-1',
+          accountId: 'account-1',
+          profileId: 'user-1',
           tokenHash: 'hashed-refresh',
           expiresAt: expect.any(Date),
         },
@@ -224,13 +242,13 @@ describe('AuthService', () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it('rejects a phone another user already has with 409 before any writes', async () => {
-      prisma.user.findFirst.mockResolvedValue({ id: 'someone-else' });
+    it('rejects a phone a live account already has with 409 before any writes', async () => {
+      prisma.account.findFirst.mockResolvedValue({ id: 'someone-else' });
 
       await expect(service.register(registerDto as any)).rejects.toThrow(
         new ConflictException('Phone already registered'),
       );
-      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+      expect(prisma.account.findFirst).toHaveBeenCalledWith({
         where: { phone: '01012345678', deletedAt: null },
         select: { id: true },
       });
@@ -259,12 +277,31 @@ describe('AuthService', () => {
       });
     });
 
-    it('stores the verified phone on the owner', async () => {
+    it('creates the account (the sign-in) with the verified phone, inside the transaction, before the owner profile', async () => {
       await service.register(registerDto as any);
 
-      expect(tx.user.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ phone: '01012345678' }),
-      });
+      expect(accounts.createAccount).toHaveBeenCalledWith(tx, '01012345678');
+      expect(accounts.createAccount.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.user.create.mock.invocationCallOrder[0],
+      );
+      // the profile belongs to the account; the phone is the account's, not the profile's
+      const ownerData = tx.user.create.mock.calls[0][0].data;
+      expect(ownerData.accountId).toBe('account-1');
+      expect(ownerData).not.toHaveProperty('phone');
+    });
+
+    it('the phone got taken meanwhile (createAccount → null) → 409 thrown inside the transaction: rolled back, nothing emitted', async () => {
+      accounts.createAccount.mockResolvedValue(null);
+
+      await expect(service.register(registerDto as any)).rejects.toThrow(
+        new ConflictException('Phone already registered'),
+      );
+      await expect(prisma.$transaction.mock.results[0].value).rejects.toThrow(
+        ConflictException,
+      );
+      expect(tx.user.create).not.toHaveBeenCalled();
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
     });
 
     it('creates nothing and emits nothing when the phone token is invalid', async () => {
@@ -302,7 +339,7 @@ describe('AuthService', () => {
             email: 'owner@kakao.com',
             emailVerified: true,
             refreshToken: null,
-            userId: 'user-1',
+            accountId: 'account-1', // logins belong to the account
           },
         ],
         skipDuplicates: true, // INSERT … ON CONFLICT DO NOTHING
@@ -546,7 +583,7 @@ describe('AuthService', () => {
         expect(insertedLogin()).toMatchObject({
           method: 'kakao',
           providerUserId: '4012345678',
-          userId: 'member-1',
+          accountId: 'account-1',
         });
       });
 
@@ -565,6 +602,7 @@ describe('AuthService', () => {
           new NotFoundException('Invalid join code'),
         );
         expect(signupTickets.consume).not.toHaveBeenCalled();
+        expect(accounts.createAccount).not.toHaveBeenCalled();
         expect(phoneVerification.consume).toHaveBeenCalledTimes(1);
       });
     });
@@ -601,12 +639,17 @@ describe('AuthService', () => {
             method: 'local',
             email: 'sam@acme.com',
             passwordHash: 'hashed-pw',
-            userId: 'member-1',
+            accountId: 'account-1',
           }),
         ],
         skipDuplicates: true,
       });
-      expect(prisma.refreshToken.create).toHaveBeenCalled();
+      expect(prisma.refreshToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          accountId: 'account-1',
+          profileId: 'member-1',
+        }),
+      });
       expect(result).toEqual({
         accessToken: 'access-token',
         refreshToken: 'refresh-token',
@@ -627,12 +670,29 @@ describe('AuthService', () => {
       });
     });
 
-    it('stores the verified phone on the member', async () => {
+    it('creates the account with the verified phone, after the join code is found, before the member profile', async () => {
       await service.registerMember(memberDto as any);
 
-      expect(tx.user.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ phone: '01099998888' }),
-      });
+      expect(accounts.createAccount).toHaveBeenCalledWith(tx, '01099998888');
+      expect(tx.company.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
+        accounts.createAccount.mock.invocationCallOrder[0],
+      );
+      const memberData = tx.user.create.mock.calls[0][0].data;
+      expect(memberData.accountId).toBe('account-1');
+      expect(memberData).not.toHaveProperty('phone');
+    });
+
+    it('the phone got taken meanwhile (createAccount → null) → 409, rolled back, nothing emitted', async () => {
+      accounts.createAccount.mockResolvedValue(null);
+
+      await expect(service.registerMember(memberDto as any)).rejects.toThrow(
+        new ConflictException('Phone already registered'),
+      );
+      await expect(prisma.$transaction.mock.results[0].value).rejects.toThrow(
+        ConflictException,
+      );
+      expect(tx.user.create).not.toHaveBeenCalled();
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
     it('emits member.joinRequested after the member row is created', async () => {
@@ -714,13 +774,13 @@ describe('AuthService', () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it('rejects a phone another user already has with 409 before any transaction', async () => {
-      prisma.user.findFirst.mockResolvedValue({ id: 'someone-else' });
+    it('rejects a phone a live account already has with 409 before any transaction', async () => {
+      prisma.account.findFirst.mockResolvedValue({ id: 'someone-else' });
 
       await expect(service.registerMember(memberDto as any)).rejects.toThrow(
         new ConflictException('Phone already registered'),
       );
-      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+      expect(prisma.account.findFirst).toHaveBeenCalledWith({
         where: { phone: '01099998888', deletedAt: null },
         select: { id: true },
       });
@@ -731,19 +791,34 @@ describe('AuthService', () => {
   describe('login', () => {
     const loginDto = { email: 'jane@acme.com', password: 'password123' };
 
-    const activeLoginMethod = {
+    /** The password login, with the account it belongs to. */
+    const passwordLogin = (accountChanges: Record<string, unknown> = {}) => ({
       passwordHash: 'stored-hash',
-      user: {
-        id: 'user-1',
-        status: UserStatus.ACTIVE,
-        companyId: 'company-1',
-        roleId: 2,
+      account: {
+        id: 'account-1',
         deletedAt: null,
+        lastProfileId: 'user-1',
+        ...accountChanges,
       },
-    };
+    });
 
-    it('issues a session for valid credentials on an ACTIVE user', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue(activeLoginMethod);
+    it('finds the password login by email, with its account', async () => {
+      prisma.userLoginMethod.findFirst.mockResolvedValue(passwordLogin());
+
+      await service.login(loginDto as any);
+
+      expect(prisma.userLoginMethod.findFirst).toHaveBeenCalledWith({
+        where: { email: 'jane@acme.com', method: 'local' },
+        include: {
+          account: {
+            select: { id: true, deletedAt: true, lastProfileId: true },
+          },
+        },
+      });
+    });
+
+    it("opens the profile AccountsService picks (the account's last-used one) and returns it", async () => {
+      prisma.userLoginMethod.findFirst.mockResolvedValue(passwordLogin());
 
       const result = await service.login(loginDto as any);
 
@@ -752,7 +827,18 @@ describe('AuthService', () => {
         'stored-hash',
         'password123',
       );
-      expect(prisma.refreshToken.create).toHaveBeenCalled();
+      expect(accounts.findProfileToOpen).toHaveBeenCalledWith(
+        'account-1',
+        'user-1',
+      );
+      expect(prisma.refreshToken.create).toHaveBeenCalledWith({
+        data: {
+          accountId: 'account-1',
+          profileId: 'user-1',
+          tokenHash: 'hashed-refresh',
+          expiresAt: expect.any(Date),
+        },
+      });
       expect(result).toEqual({
         accessToken: 'access-token',
         refreshToken: 'refresh-token',
@@ -765,14 +851,11 @@ describe('AuthService', () => {
       });
     });
 
-    it('allows a PENDING user to log in (lands on the pending screen)', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue({
-        ...activeLoginMethod,
-        user: {
-          ...activeLoginMethod.user,
-          status: UserStatus.PENDING_APPROVAL,
-        },
-      });
+    it('a PENDING profile may be opened (lands on the pending screen)', async () => {
+      prisma.userLoginMethod.findFirst.mockResolvedValue(passwordLogin());
+      accounts.findProfileToOpen.mockResolvedValue(
+        openProfile({ status: UserStatus.PENDING_APPROVAL }),
+      );
 
       const result = await service.login(loginDto as any);
 
@@ -789,7 +872,7 @@ describe('AuthService', () => {
     });
 
     it('rejects a wrong password with a generic 401', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue(activeLoginMethod);
+      prisma.userLoginMethod.findFirst.mockResolvedValue(passwordLogin());
       passwordService.verify.mockResolvedValue(false);
 
       await expect(service.login(loginDto as any)).rejects.toThrow(
@@ -798,15 +881,25 @@ describe('AuthService', () => {
       expect(prisma.refreshToken.create).not.toHaveBeenCalled();
     });
 
-    it('rejects a suspended (terminal-status) user even with valid credentials', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue({
-        ...activeLoginMethod,
-        user: { ...activeLoginMethod.user, status: UserStatus.SUSPENDED },
-      });
+    it('no profile can be opened (suspended, rejected, left…) → 401, no session', async () => {
+      prisma.userLoginMethod.findFirst.mockResolvedValue(passwordLogin());
+      accounts.findProfileToOpen.mockResolvedValue(null);
 
       await expect(service.login(loginDto as any)).rejects.toThrow(
-        UnauthorizedException,
+        new UnauthorizedException('Account cannot sign in'),
       );
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+
+    it('a soft-deleted account → 401, no profile looked up, no session', async () => {
+      prisma.userLoginMethod.findFirst.mockResolvedValue(
+        passwordLogin({ deletedAt: new Date('2026-12-01') }),
+      );
+
+      await expect(service.login(loginDto as any)).rejects.toThrow(
+        new UnauthorizedException('Account cannot sign in'),
+      );
+      expect(accounts.findProfileToOpen).not.toHaveBeenCalled();
       expect(prisma.refreshToken.create).not.toHaveBeenCalled();
     });
   });
@@ -814,14 +907,16 @@ describe('AuthService', () => {
   describe('refresh (rotation + reuse detection)', () => {
     const refreshDto = { refreshToken: 'refresh-token-string' };
 
+    /** A live session of account-1, with the profile user-1 open. */
     const validStored = {
       tokenHash: 'hashed-refresh',
-      userId: 'user-1',
+      accountId: 'account-1',
+      profileId: 'user-1',
       revokedAt: null,
       expiresAt: new Date('2030-01-01T00:00:00Z'),
     };
 
-    it('rotates: revokes the old token and issues a new pair', async () => {
+    it('rotates: revokes the old token and issues a new pair for the same account and profile', async () => {
       prisma.refreshToken.findUnique.mockResolvedValue(validStored);
 
       const result = await service.refresh(refreshDto as any);
@@ -831,8 +926,15 @@ describe('AuthService', () => {
         where: { tokenHash: 'hashed-refresh' },
         data: { revokedAt: expect.any(Date) },
       });
-      // new pair issued + stored
-      expect(prisma.refreshToken.create).toHaveBeenCalled();
+      // new pair issued + stored, the session keeps its open profile
+      expect(prisma.refreshToken.create).toHaveBeenCalledWith({
+        data: {
+          accountId: 'account-1',
+          profileId: 'user-1',
+          tokenHash: 'hashed-refresh',
+          expiresAt: expect.any(Date),
+        },
+      });
       expect(result).toEqual({
         accessToken: 'access-token',
         refreshToken: 'refresh-token',
@@ -857,7 +959,7 @@ describe('AuthService', () => {
       expect(prisma.refreshToken.update).not.toHaveBeenCalled();
     });
 
-    it("detects reuse: a revoked token revokes ALL the user's tokens and 401s", async () => {
+    it("detects reuse: a revoked token revokes ALL the account's sessions and 401s", async () => {
       prisma.refreshToken.findUnique.mockResolvedValue({
         ...validStored,
         revokedAt: new Date('2027-01-01T00:00:00Z'), // already revoked
@@ -866,9 +968,9 @@ describe('AuthService', () => {
       await expect(service.refresh(refreshDto as any)).rejects.toThrow(
         UnauthorizedException,
       );
-      // whole family revoked
+      // every session of the person, whichever company each had open
       expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
-        where: { userId: 'user-1', revokedAt: null },
+        where: { accountId: 'account-1', revokedAt: null },
         data: { revokedAt: expect.any(Date) },
       });
       // and NO new session issued
@@ -877,31 +979,38 @@ describe('AuthService', () => {
   });
 
   describe('logout', () => {
-    it('revokes the presented refresh token, scoped to the user', async () => {
-      await service.logout('user-1', { refreshToken: 'refresh-token-string' });
+    it("revokes the presented refresh token, scoped to the caller's account", async () => {
+      await service.logout('account-1', {
+        refreshToken: 'refresh-token-string',
+      });
 
       expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
         where: {
           tokenHash: 'hashed-refresh',
-          userId: 'user-1',
+          accountId: 'account-1',
           revokedAt: null,
         },
         data: { revokedAt: expect.any(Date) },
       });
     });
 
-    it('also removes the device token, so the phone stops showing this user’s pushes', async () => {
-      await service.logout('user-1', {
+    it('also removes the device token, so the phone stops showing pushes from every company', async () => {
+      await service.logout('account-1', {
         refreshToken: 'refresh-token-string',
         deviceToken: 'phone-token',
       });
 
-      // scoped to the caller: someone else's device is never touched
-      expect(devices.unregister).toHaveBeenCalledWith('user-1', 'phone-token');
+      // scoped to the caller's account: someone else's device is never touched
+      expect(devices.unregister).toHaveBeenCalledWith(
+        'account-1',
+        'phone-token',
+      );
     });
 
     it('leaves devices alone when no deviceToken is sent (e.g. the web console)', async () => {
-      await service.logout('user-1', { refreshToken: 'refresh-token-string' });
+      await service.logout('account-1', {
+        refreshToken: 'refresh-token-string',
+      });
 
       expect(devices.unregister).not.toHaveBeenCalled();
     });

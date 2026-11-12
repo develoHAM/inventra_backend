@@ -259,7 +259,7 @@ describe('Notifications (e2e)', () => {
       expect(requested[0].body).toContain('Manager 1b');
 
       const member = await prisma.user.findFirst({
-        where: { loginMethods: { some: { email: managerEmail } } },
+        where: { account: { loginMethods: { some: { email: managerEmail } } } },
       });
       managerUserId = member!.id;
       const managerRole = await prisma.role.findUnique({

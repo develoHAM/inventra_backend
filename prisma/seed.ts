@@ -256,15 +256,27 @@ async function main() {
     console.log(`Platform admin already exists (${email}) — skipping.`);
   } else {
     const passwordHash = await argon2.hash(password);
-    await prisma.user.create({
+    // The sign-in (no phone: the admin is not a phone signup) with its
+    // password login, and its company-less ADMIN profile.
+    await prisma.account.create({
       data: {
-        roleId: adminRole.id,
-        name: 'Platform Admin',
-        status: 'ACTIVE',
-        // where notifications go (findUserEmail reads contactEmail, not the login)
-        contactEmail: email,
+        phone: null,
         loginMethods: {
-          create: { method: 'local', email, passwordHash, emailVerified: true },
+          create: {
+            method: 'local',
+            email: email,
+            passwordHash: passwordHash,
+            emailVerified: true,
+          },
+        },
+        profiles: {
+          create: {
+            roleId: adminRole.id,
+            name: 'Platform Admin',
+            status: 'ACTIVE',
+            // where notifications go (findUserEmail reads contactEmail, not the login)
+            contactEmail: email,
+          },
         },
       },
     });

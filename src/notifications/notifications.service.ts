@@ -62,7 +62,7 @@ export class NotificationsService {
     });
   }
 
-  /** Where this user's notifications go (set at signup; independent of how they sign in). */
+  /** Where this profile's notifications go: its company's contact email (independent of how the person signs in). */
   async findUserEmail(userId: string): Promise<string | null> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -151,17 +151,72 @@ export class NotificationsService {
     }
 
     if (channels.includes(NotificationChannel.PUSH)) {
-      // One row per device: each succeeds, retries or dies on its own.
-      const devices = await this.devices.findTokens(recipientIds);
+      // A device belongs to the person's account, so each recipient profile
+      // leads to its account's devices. One row per device (each succeeds,
+      // retries or dies on its own), recording the profile it is for.
+      const profiles = await this.prisma.user.findMany({
+        where: { id: { in: recipientIds } },
+        select: { id: true, accountId: true },
+      });
+      const devices = await this.devices.findTokens([
+        ...new Set(profiles.map((profile) => profile.accountId)),
+      ]);
+      for (const profile of profiles) {
+        const profileDevices = devices.filter(
+          (device) => device.accountId === profile.accountId,
+        );
+        for (const device of profileDevices) {
+          await this.dispatch({
+            eventType: input.eventType,
+            channel: NotificationChannel.PUSH,
+            recipientUserId: profile.id,
+            recipientAddress: device.token,
+            subject: input.message.subject,
+            body: input.message.body,
+            data: input.data,
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Notify a person about their sign-in itself, not about a company (today:
+   * the password reset): one email to the account's password-login address,
+   * one push per device. The rows record no profile.
+   */
+  async notifyAccount(input: {
+    accountId: string;
+    eventType: NotificationEventName;
+    message: RenderedMessage;
+  }): Promise<void> {
+    const channels = EVENT_CHANNELS[input.eventType];
+
+    if (channels.includes(NotificationChannel.EMAIL)) {
+      const passwordLogin = await this.prisma.userLoginMethod.findFirst({
+        where: { accountId: input.accountId, method: 'local' },
+        select: { email: true },
+      });
+      if (passwordLogin?.email) {
+        await this.dispatch({
+          eventType: input.eventType,
+          channel: NotificationChannel.EMAIL,
+          recipientAddress: passwordLogin.email,
+          subject: input.message.subject,
+          body: input.message.body,
+        });
+      }
+    }
+
+    if (channels.includes(NotificationChannel.PUSH)) {
+      const devices = await this.devices.findTokens([input.accountId]);
       for (const device of devices) {
         await this.dispatch({
           eventType: input.eventType,
           channel: NotificationChannel.PUSH,
-          recipientUserId: device.userId,
           recipientAddress: device.token,
           subject: input.message.subject,
           body: input.message.body,
-          data: input.data,
         });
       }
     }

@@ -454,7 +454,7 @@ export class MembersService {
       profileImageUrl: row.profileImageUrl
         ? await this.storage.presignGetUrl(row.profileImageUrl)
         : null,
-      phone: row.phone,
+      phone: row.account.phone,
       contactEmail: row.contactEmail,
       status: row.status,
       role: row.role,

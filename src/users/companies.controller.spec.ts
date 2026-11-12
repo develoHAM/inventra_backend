@@ -16,6 +16,7 @@ describe('CompaniesController', () => {
 
   const manager: AuthUser = {
     id: 'manager-1',
+    accountId: 'account-of-manager-1',
     companyId: 'company-1',
     roleId: 3,
     roleCode: 'MANAGER',

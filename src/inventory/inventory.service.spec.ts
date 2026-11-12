@@ -17,6 +17,7 @@ describe('InventoryService', () => {
 
   const owner: AuthUser = {
     id: 'owner-1',
+    accountId: 'account-of-owner-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',

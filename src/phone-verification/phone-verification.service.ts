@@ -57,9 +57,10 @@ export class PhoneVerificationService {
       );
     }
 
-    // ② Signup needs a phone nobody has: fail now, not after the user texted.
+    // ② Signup needs a phone no live account has: fail now, not after the
+    // user texted.
     if (purpose === PhoneVerificationPurpose.SIGNUP) {
-      const owner = await this.prisma.user.findFirst({
+      const owner = await this.prisma.account.findFirst({
         where: {
           phone: phone,
           deletedAt: null,

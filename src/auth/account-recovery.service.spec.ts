@@ -6,7 +6,7 @@ import { NotificationEvent } from '../notifications/notification-events';
 describe('AccountRecoveryService', () => {
   let service: AccountRecoveryService;
   let tx: {
-    user: { findFirst: jest.Mock };
+    account: { findFirst: jest.Mock };
     userLoginMethod: { findFirst: jest.Mock; update: jest.Mock };
     refreshToken: { updateMany: jest.Mock };
   };
@@ -19,8 +19,8 @@ describe('AccountRecoveryService', () => {
 
   beforeEach(() => {
     tx = {
-      // find-ID: the user on the phone, with each way they sign in (oldest first)
-      user: {
+      // find-ID: the account on the phone, with each way it signs in (oldest first)
+      account: {
         findFirst: jest.fn().mockResolvedValue({
           loginMethods: [{ method: 'local', email: 'owner@example.com' }],
         }),
@@ -52,7 +52,7 @@ describe('AccountRecoveryService', () => {
     });
 
     it('a social-only user: no email, but how they sign in (instead of a dead end)', async () => {
-      tx.user.findFirst.mockResolvedValue({
+      tx.account.findFirst.mockResolvedValue({
         loginMethods: [
           { method: 'kakao', email: 'owner@kakao.com' },
           { method: 'apple', email: null },
@@ -66,7 +66,7 @@ describe('AccountRecoveryService', () => {
     });
 
     it('both: the password email AND the providers (a provider email is never shown)', async () => {
-      tx.user.findFirst.mockResolvedValue({
+      tx.account.findFirst.mockResolvedValue({
         loginMethods: [
           { method: 'local', email: 'owner@example.com' },
           { method: 'google', email: 'owner@gmail.com' },
@@ -89,13 +89,13 @@ describe('AccountRecoveryService', () => {
       });
       expect(
         phoneVerification.consume.mock.invocationCallOrder[0],
-      ).toBeLessThan(tx.user.findFirst.mock.invocationCallOrder[0]);
+      ).toBeLessThan(tx.account.findFirst.mock.invocationCallOrder[0]);
     });
 
-    it('looks up the live user on that phone, with their logins oldest first', async () => {
+    it('looks up the live account on that phone, with its logins oldest first', async () => {
       await service.findId(phone, 'find-token');
 
-      expect(tx.user.findFirst).toHaveBeenCalledWith({
+      expect(tx.account.findFirst).toHaveBeenCalledWith({
         where: { phone: phone, deletedAt: null },
         select: {
           loginMethods: {
@@ -114,11 +114,11 @@ describe('AccountRecoveryService', () => {
       await expect(service.findId(phone, 'signup-token')).rejects.toThrow(
         BadRequestException,
       );
-      expect(tx.user.findFirst).not.toHaveBeenCalled();
+      expect(tx.account.findFirst).not.toHaveBeenCalled();
     });
 
     it('404s when no account uses the phone — and the token stays spent (committed)', async () => {
-      tx.user.findFirst.mockResolvedValue(null);
+      tx.account.findFirst.mockResolvedValue(null);
 
       await expect(service.findId(phone, 'find-token')).rejects.toThrow(
         new NotFoundException('No account uses this phone'),
@@ -141,7 +141,7 @@ describe('AccountRecoveryService', () => {
     beforeEach(() => {
       tx.userLoginMethod.findFirst.mockResolvedValue({
         id: 'login-1',
-        userId: 'user-1',
+        accountId: 'account-1',
       });
     });
 
@@ -167,16 +167,16 @@ describe('AccountRecoveryService', () => {
       ).toBeLessThan(tx.userLoginMethod.findFirst.mock.invocationCallOrder[0]);
     });
 
-    it('requires the EMAIL to belong to the user who owns the PHONE (both factors)', async () => {
+    it('requires the EMAIL to belong to the account that owns the PHONE (both factors)', async () => {
       await service.resetPassword(input);
 
       expect(tx.userLoginMethod.findFirst).toHaveBeenCalledWith({
         where: {
           method: 'local',
           email: 'owner@example.com',
-          user: { phone: phone, deletedAt: null },
+          account: { phone: phone, deletedAt: null },
         },
-        select: { id: true, userId: true },
+        select: { id: true, accountId: true },
       });
     });
 
@@ -189,21 +189,21 @@ describe('AccountRecoveryService', () => {
       });
     });
 
-    it('revokes every active refresh token of that user (all devices logged out)', async () => {
+    it('revokes every active refresh token of that account (all devices logged out)', async () => {
       await service.resetPassword(input);
 
       expect(tx.refreshToken.updateMany).toHaveBeenCalledWith({
-        where: { userId: 'user-1', revokedAt: null },
+        where: { accountId: 'account-1', revokedAt: null },
         data: { revokedAt: expect.any(Date) },
       });
     });
 
-    it('emits account.passwordReset with the user id, after the transaction commits', async () => {
+    it('emits account.passwordReset with the account id, after the transaction commits', async () => {
       await service.resetPassword(input);
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         NotificationEvent.ACCOUNT_PASSWORD_RESET,
-        { userId: 'user-1' },
+        { accountId: 'account-1' },
       );
       expect(prisma.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
         eventEmitter.emit.mock.invocationCallOrder[0],

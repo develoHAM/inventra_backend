@@ -16,6 +16,7 @@ describe('SocialAuthService', () => {
   let verifiers: Record<string, { verify: jest.Mock; disconnect: jest.Mock }>;
   let tickets: { create: jest.Mock };
   let auth: { issueSessionFor: jest.Mock };
+  let accounts: { findProfileToOpen: jest.Mock };
 
   const encryptionKey = Buffer.alloc(32, 7).toString('base64');
   const now = new Date('2026-10-22T10:00:00.000Z');
@@ -36,19 +37,25 @@ describe('SocialAuthService', () => {
     name: 'Kim Owner',
     refreshToken: '1//google-refresh',
   };
-  /** A login method row as findUnique returns it (with the user included). */
-  const knownLogin = (userChanges: Record<string, unknown> = {}) => ({
+  /** A login method row as findUnique returns it (with its account included). */
+  const knownLogin = (accountChanges: Record<string, unknown> = {}) => ({
     id: 'login-method-1',
     method: 'kakao',
     providerUserId: '4012345678',
-    user: {
-      id: 'user-1',
-      status: UserStatus.ACTIVE,
-      companyId: 'company-1',
-      roleId: 2,
+    account: {
+      id: 'account-1',
       deletedAt: null,
-      ...userChanges,
+      lastProfileId: 'user-1',
+      ...accountChanges,
     },
+  });
+  /** The profile AccountsService decides to open. */
+  const openProfile = (changes: Record<string, unknown> = {}) => ({
+    id: 'user-1',
+    status: UserStatus.ACTIVE,
+    companyId: 'company-1',
+    roleId: 2,
+    ...changes,
   });
   const kakaoBody = {
     provider: 'kakao' as const,
@@ -95,13 +102,18 @@ describe('SocialAuthService', () => {
         refreshToken: 'our-refresh',
       }),
     };
+    accounts = {
+      findProfileToOpen: jest.fn().mockResolvedValue(openProfile()),
+    };
     const config = { get: jest.fn().mockReturnValue(encryptionKey) };
+    // constructor order: (prisma, nonces, verifiers, tickets, auth, accounts, config)
     service = new SocialAuthService(
       prisma as any,
       nonces as any,
       verifiers as any,
       tickets as any,
       auth as any,
+      accounts as any,
       config as any,
     );
   });
@@ -259,8 +271,17 @@ describe('SocialAuthService', () => {
           roleId: 2,
         },
       });
-      expect(auth.issueSessionFor).toHaveBeenCalledWith('user-1');
+      expect(auth.issueSessionFor).toHaveBeenCalledWith('account-1', 'user-1');
       expect(tickets.create).not.toHaveBeenCalled();
+    });
+
+    it("opens the account's last-used profile, as AccountsService decides", async () => {
+      await service.signIn(kakaoBody);
+
+      expect(accounts.findProfileToOpen).toHaveBeenCalledWith(
+        'account-1',
+        'user-1',
+      );
     });
 
     it('records lastLoginAt; no new provider refresh token → the stored one is kept', async () => {
@@ -291,9 +312,9 @@ describe('SocialAuthService', () => {
       );
     });
 
-    it('a pending-approval user may sign in (same rule as password login)', async () => {
-      prisma.userLoginMethod.findUnique.mockResolvedValue(
-        knownLogin({ status: UserStatus.PENDING_APPROVAL }),
+    it('a pending-approval profile may be opened (same rule as password login)', async () => {
+      accounts.findProfileToOpen.mockResolvedValue(
+        openProfile({ status: UserStatus.PENDING_APPROVAL }),
       );
 
       await expect(service.signIn(kakaoBody)).resolves.toMatchObject({
@@ -301,24 +322,27 @@ describe('SocialAuthService', () => {
       });
     });
 
-    it.each([
-      ['soft-deleted', { deletedAt: new Date('2026-10-01') }],
-      ['suspended', { status: UserStatus.SUSPENDED }],
-      ['rejected', { status: UserStatus.REJECTED }],
-      ['deactivated', { status: UserStatus.DEACTIVATED }],
-    ])(
-      'a %s user → 401, no session, nothing updated',
-      async (_label, changes) => {
-        prisma.userLoginMethod.findUnique.mockResolvedValue(
-          knownLogin(changes),
-        );
+    it('a soft-deleted account → 401, no profile looked up, no session, nothing updated', async () => {
+      prisma.userLoginMethod.findUnique.mockResolvedValue(
+        knownLogin({ deletedAt: new Date('2026-10-01') }),
+      );
 
-        await expect(service.signIn(kakaoBody)).rejects.toThrow(
-          new UnauthorizedException('Account cannot sign in'),
-        );
-        expect(auth.issueSessionFor).not.toHaveBeenCalled();
-        expect(prisma.userLoginMethod.update).not.toHaveBeenCalled();
-      },
-    );
+      await expect(service.signIn(kakaoBody)).rejects.toThrow(
+        new UnauthorizedException('Account cannot sign in'),
+      );
+      expect(accounts.findProfileToOpen).not.toHaveBeenCalled();
+      expect(auth.issueSessionFor).not.toHaveBeenCalled();
+      expect(prisma.userLoginMethod.update).not.toHaveBeenCalled();
+    });
+
+    it('no profile can be opened (suspended, rejected, left…) → 401, no session, nothing updated', async () => {
+      accounts.findProfileToOpen.mockResolvedValue(null);
+
+      await expect(service.signIn(kakaoBody)).rejects.toThrow(
+        new UnauthorizedException('Account cannot sign in'),
+      );
+      expect(auth.issueSessionFor).not.toHaveBeenCalled();
+      expect(prisma.userLoginMethod.update).not.toHaveBeenCalled();
+    });
   });
 });

@@ -23,6 +23,7 @@ describe('CompaniesService', () => {
 
   const owner: AuthUser = {
     id: 'owner-1',
+    accountId: 'account-of-owner-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
@@ -31,6 +32,7 @@ describe('CompaniesService', () => {
   // the platform admin belongs to no company
   const admin: AuthUser = {
     id: 'admin-1',
+    accountId: 'account-of-admin-1',
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',
@@ -209,6 +211,7 @@ describe('CompaniesService', () => {
     const PAGE = { items: [], nextCursor: null };
     const manager: AuthUser = {
       id: 'manager-1',
+      accountId: 'account-of-manager-1',
       companyId: 'company-1',
       companyStoreId: 'corner-a',
       roleId: 3,
@@ -217,6 +220,7 @@ describe('CompaniesService', () => {
     };
     const staff: AuthUser = {
       id: 'staff-1',
+      accountId: 'account-of-staff-1',
       companyId: 'company-1',
       companyStoreId: 'corner-a',
       roleId: 4,

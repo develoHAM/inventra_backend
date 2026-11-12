@@ -63,27 +63,52 @@ enum DevicePlatform {
   @@map("device_platform")
 }
 
+/// The sign-in: one per person. Phone, login methods, sessions and devices
+/// belong here; each company the person works for has its own profile (User).
+model Account {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  phone         String?   @db.VarChar(20) // null only for the seeded platform admin
+  lastProfileId String?   @map("last_profile_id") @db.Uuid // the company opened at sign-in
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  lastProfile   User?             @relation("AccountLastProfile", fields: [lastProfileId], references: [id])
+  profiles      User[]            @relation("AccountProfiles")
+  loginMethods  UserLoginMethod[]
+  refreshTokens RefreshToken[]
+  deviceTokens  DeviceToken[]
+
+  // one live account per phone; a deleted account frees its number
+  @@unique([phone], map: "UQ_accounts_phone", where: raw("(deleted_at IS NULL)"))
+  @@map("accounts")
+}
+
+/// A company profile: a person's name, photo, contact email, role, branch and
+/// status in ONE company. Everything "recorded by" points here.
 model User {
   id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId       String     @map("account_id") @db.Uuid
   name            String     @db.VarChar(100)
   companyId       String?    @map("company_id") @db.Uuid
   roleId          Int?       @map("role_id")
   companyStoreId  String?    @map("company_store_id") @db.Uuid
-  phone           String?    @unique(map: "UQ_users_phone") @db.VarChar(20)
   profileImageUrl String?    @map("profile_image_url") @db.VarChar(2048)
-  contactEmail    String?    @map("contact_email") @db.VarChar(255) // where notifications go (set at signup)
+  contactEmail    String?    @map("contact_email") @db.VarChar(255) // where this company's notifications go
   biography       String?    @db.Text
   status          UserStatus @default(PENDING_APPROVAL)
   createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt       DateTime?  @map("deleted_at") @db.Timestamptz(6)
 
+  account      Account       @relation("AccountProfiles", fields: [accountId], references: [id])
   company      Company?      @relation("CompanyEmployees", fields: [companyId], references: [id])
   role         Role?         @relation(fields: [roleId], references: [id])
   companyStore CompanyStore? @relation("CompanyStoreMembers", fields: [companyStoreId], references: [id]) // a manager's or staff member's branch
 
+  lastProfileOf           Account[]             @relation("AccountLastProfile")
+  openSessions            RefreshToken[]        @relation("RefreshTokenProfile")
   createdCompanies        Company[]             @relation("CompanyCreator")
-  loginMethods            UserLoginMethod[]
   permissions             UserPermission[]
   createdProducts         Product[]             @relation("ProductCreatedBy")
   deletedProducts         Product[]             @relation("ProductDeletedBy")
@@ -98,20 +123,22 @@ model User {
   appliedAudits           InventoryAudit[]      @relation("AuditsAppliedBy")
   deletedAudits           InventoryAudit[]      @relation("AuditsDeletedBy")
   createdTransactions     InventoryTransaction[]
-  refreshTokens           RefreshToken[]
   createdReservations     PurchaseReservation[] @relation("ReservationsCreatedBy")
   receivedNotifications Notification[] @relation("NotificationRecipient")
-  deviceTokens            DeviceToken[]
   membershipChanges       MembershipChange[]    @relation("MembershipChangeMember")
   madeMembershipChanges   MembershipChange[]    @relation("MembershipChangeActor")
 
   @@index([companyId], map: "IDX_users_company")
+  // one current profile per person per company: a left (DEACTIVATED) or
+  // deleted profile frees the slot; suspended and rejected ones keep it.
+  // Written as Postgres stores the condition (see UQ_login_methods_local_email).
+  @@unique([accountId, companyId], map: "UQ_users_account_company", where: raw("((deleted_at IS NULL) AND (status <> 'DEACTIVATED'::user_status))"))
   @@map("users")
 }
 
 model UserLoginMethod {
   id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId           String    @map("user_id") @db.Uuid
+  accountId        String    @map("account_id") @db.Uuid
   method           String    @db.VarChar(20)
   passwordHash     String?   @map("password_hash") @db.Text
   provider         String?   @db.VarChar(30)
@@ -126,12 +153,12 @@ model UserLoginMethod {
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [id])
+  account Account @relation(fields: [accountId], references: [id])
 
   // one provider identity → one account (local rows have NULL providerUserId: never conflict)
   @@unique([method, providerUserId], map: "UQ_login_methods_identity")
   // one login per provider per account
-  @@unique([userId, method], map: "UQ_login_methods_user_method")
+  @@unique([accountId, method], map: "UQ_login_methods_account_method")
   // a password login's email is its login ID: one account per email. Only
   // local rows — provider rows' emails are information and may repeat.
   // Written exactly as Postgres stores the condition (method is varchar, so it
@@ -200,17 +227,20 @@ model UserPermission {
   @@map("user_permissions")
 }
 
+/// A session: belongs to the account, and remembers which profile it has open.
 model RefreshToken {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId    String    @map("user_id") @db.Uuid
+  accountId String    @map("account_id") @db.Uuid
+  profileId String?   @map("profile_id") @db.Uuid // the company this session has open
   tokenHash String    @unique(map: "UQ_refresh_tokens_token_hash") @map("token_hash") @db.Text
   expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
   revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [id])
+  account Account @relation(fields: [accountId], references: [id])
+  profile User?   @relation("RefreshTokenProfile", fields: [profileId], references: [id])
 
-  @@index([userId], map: "IDX_refresh_tokens_user_id")
+  @@index([accountId], map: "IDX_refresh_tokens_account_id")
   @@map("refresh_tokens")
 }
 
@@ -661,17 +691,19 @@ enum ReservationStatus {
   @@map("reservation_status")
 }
 
+/// A phone or browser that receives pushes: the account's, so every company's
+/// notifications reach it whichever company is open.
 model DeviceToken {
   id         String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId     String         @map("user_id") @db.Uuid
+  accountId  String         @map("account_id") @db.Uuid
   token      String         @unique(map: "UQ_device_tokens_token") @db.Text
   platform   DevicePlatform
   lastSeenAt DateTime       @default(now()) @map("last_seen_at") @db.Timestamptz(6)
   createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [id])
+  account Account @relation(fields: [accountId], references: [id])
 
-  @@index([userId], map: "IDX_device_tokens_user")
+  @@index([accountId], map: "IDX_device_tokens_account")
   @@map("device_tokens")
 }
 

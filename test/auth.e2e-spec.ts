@@ -172,7 +172,7 @@ describe('Auth & Authorization (e2e)', () => {
 
   it('8. the owner approves the member with the STAFF role', async () => {
     const memberUser = await prisma.user.findFirst({
-      where: { loginMethods: { some: { email: member.email } } },
+      where: { account: { loginMethods: { some: { email: member.email } } } },
     });
     memberId = memberUser!.id;
     const staff = await prisma.role.findUnique({ where: { code: 'STAFF' } });

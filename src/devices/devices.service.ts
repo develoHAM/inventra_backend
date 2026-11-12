@@ -19,13 +19,14 @@ export class DevicesService {
   ) {}
 
   /**
-   * Remember (or refresh) the caller's device. The token is checked with the
-   * push provider first, so garbage never enters the table. A token
-   * re-registered by another user — a shared or handed-over device — moves
-   * to them.
+   * Remember (or refresh) the caller's device, on their account: every
+   * company's notifications reach it, whichever company is open. The token is
+   * checked with the push provider first, so garbage never enters the table.
+   * A token re-registered by another account — a shared or handed-over
+   * device — moves to it.
    */
   async register(
-    userId: string,
+    accountId: string,
     input: { token: string; platform: DevicePlatform },
   ): Promise<void> {
     // Fail open: if the provider can't answer, store the token anyway —
@@ -43,34 +44,34 @@ export class DevicesService {
     await this.prisma.deviceToken.upsert({
       where: { token: input.token },
       create: {
-        userId: userId,
+        accountId: accountId,
         token: input.token,
         platform: input.platform,
         lastSeenAt: new Date(),
       },
       update: {
-        userId: userId,
+        accountId: accountId,
         platform: input.platform,
         lastSeenAt: new Date(),
       },
     });
   }
 
-  /** Forget the caller's device. Someone else's token is never touched. */
-  async unregister(userId: string, token: string): Promise<void> {
+  /** Forget the caller's device. Another account's token is never touched. */
+  async unregister(accountId: string, token: string): Promise<void> {
     await this.prisma.deviceToken.deleteMany({
-      where: { token: token, userId: userId },
+      where: { token: token, accountId: accountId },
     });
   }
 
-  /** Every registered device of these users (for push fan-out). */
+  /** Every registered device of these accounts (for push fan-out). */
   async findTokens(
-    userIds: string[],
-  ): Promise<{ userId: string; token: string }[]> {
-    if (userIds.length === 0) return [];
+    accountIds: string[],
+  ): Promise<{ accountId: string; token: string }[]> {
+    if (accountIds.length === 0) return [];
     return this.prisma.deviceToken.findMany({
-      where: { userId: { in: userIds } },
-      select: { userId: true, token: true },
+      where: { accountId: { in: accountIds } },
+      select: { accountId: true, token: true },
     });
   }
 }

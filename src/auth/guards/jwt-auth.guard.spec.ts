@@ -10,6 +10,7 @@ describe('JwtAuthGuard', () => {
 
   const activeUser = {
     id: 'user-1',
+    accountId: 'account-1',
     companyId: 'company-1',
     companyStoreId: 'store-1',
     roleId: 2,
@@ -129,6 +130,7 @@ describe('JwtAuthGuard', () => {
     // req.user carries exactly the AuthUser shape — no deletedAt leak
     expect(request.user).toEqual({
       id: 'user-1',
+      accountId: 'account-1', // the sign-in this profile belongs to
       companyId: 'company-1',
       companyStoreId: 'store-1',
       roleId: 2,
@@ -142,6 +144,7 @@ describe('JwtAuthGuard', () => {
       where: { id: 'user-1' },
       select: {
         id: true,
+        accountId: true,
         companyId: true,
         companyStoreId: true,
         roleId: true,

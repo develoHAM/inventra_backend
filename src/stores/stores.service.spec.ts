@@ -16,6 +16,7 @@ describe('StoresService', () => {
 
   const admin: AuthUser = {
     id: 'admin-1',
+    accountId: 'account-of-admin-1',
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',

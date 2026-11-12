@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Env } from '../config/env.schema';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
-import { CAN_AUTHENTICATE } from '../auth/auth.constants';
+import { AccountsService } from '../accounts/accounts.service';
 import { encryptToken } from '../common/token-cipher';
 import { normalizeEmail } from '../common/email';
 import { SOCIAL_VERIFIERS } from './social-auth.constants';
@@ -48,6 +48,7 @@ export class SocialAuthService {
     private readonly verifiers: Record<SocialProvider, SocialIdentityVerifier>,
     private readonly tickets: SignupTicketService,
     private readonly auth: AuthService,
+    private readonly accounts: AccountsService,
     config: ConfigService<Env, true>,
   ) {
     this.encryptionKey = config.get('LOGIN_TOKEN_ENCRYPTION_KEY', {
@@ -101,15 +102,7 @@ export class SocialAuthService {
         },
       },
       include: {
-        user: {
-          select: {
-            id: true,
-            status: true,
-            companyId: true,
-            roleId: true,
-            deletedAt: true,
-          },
-        },
+        account: { select: { id: true, deletedAt: true, lastProfileId: true } },
       },
     });
 
@@ -118,11 +111,17 @@ export class SocialAuthService {
       return { status: 'SIGNUP_REQUIRED', ...ticket };
     }
 
-    // Known: the same rules as password login
-    const user = login.user;
-    if (user.deletedAt || !CAN_AUTHENTICATE.includes(user.status)) {
+    // Known: the same rules as password login — open the last-used company,
+    // if it can still be opened.
+    const account = login.account;
+    if (account.deletedAt) {
       throw new UnauthorizedException('Account cannot sign in');
     }
+    const profile = await this.accounts.findProfileToOpen(
+      account.id,
+      account.lastProfileId,
+    );
+    if (!profile) throw new UnauthorizedException('Account cannot sign in');
 
     await this.prisma.userLoginMethod.update({
       where: { id: login.id },
@@ -140,17 +139,12 @@ export class SocialAuthService {
       },
     });
 
-    const tokens = await this.auth.issueSessionFor(user.id);
+    const tokens = await this.auth.issueSessionFor(account.id, profile.id);
     return {
       status: 'LOGGED_IN',
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
-      user: {
-        id: user.id,
-        status: user.status,
-        companyId: user.companyId,
-        roleId: user.roleId,
-      },
+      user: profile, // { id, status, companyId, roleId } of the open profile
     };
   }
 }

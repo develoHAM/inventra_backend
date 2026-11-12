@@ -52,9 +52,14 @@ describe('Push notifications (e2e)', () => {
       .post('/devices')
       .set(...auth(accessToken))
       .send({ token: token, platform: 'ANDROID' });
-  const deviceOwner = async (token: string) =>
-    (await prisma.deviceToken.findUnique({ where: { token: token } }))
-      ?.userId ?? null;
+  // Whose phone this is: the device's account, named by its (only) profile.
+  const deviceOwner = async (token: string) => {
+    const device = await prisma.deviceToken.findUnique({
+      where: { token: token },
+      select: { account: { select: { profiles: { select: { id: true } } } } },
+    });
+    return device?.account.profiles[0]?.id ?? null;
+  };
 
   const signUpMember = async (email: string) => {
     const { phone, token } = await verifiedPhone(app, nextPhone);

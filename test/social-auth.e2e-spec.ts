@@ -227,10 +227,11 @@ describe('Social login (e2e)', () => {
 
       const owner = await prisma.user.findUniqueOrThrow({
         where: { id: ownerUserId },
-        include: { loginMethods: true },
+        include: { account: { include: { loginMethods: true } } },
       });
       expect(owner.contactEmail).toBe('owner@social.test');
-      expect(owner.loginMethods).toEqual([
+      // the logins belong to the sign-in (the account)
+      expect(owner.account.loginMethods).toEqual([
         expect.objectContaining({
           method: 'kakao',
           providerUserId: 'e2e-kakao-owner',
@@ -366,10 +367,11 @@ describe('Social login (e2e)', () => {
 
       const member = await prisma.user.findUniqueOrThrow({
         where: { id: memberUserId },
-        include: { loginMethods: true },
+        include: { account: { include: { loginMethods: true } } },
       });
       expect(member.contactEmail).toBe('member@social.test');
-      expect(member.loginMethods).toEqual([
+      // the logins belong to the sign-in (the account)
+      expect(member.account.loginMethods).toEqual([
         expect.objectContaining({
           method: 'apple',
           providerUserId: 'e2e-apple-member',
@@ -470,7 +472,10 @@ describe('Social login (e2e)', () => {
       });
 
       const stored = await prisma.userLoginMethod.findFirstOrThrow({
-        where: { userId: ownerUserId, method: 'apple' },
+        where: {
+          account: { profiles: { some: { id: ownerUserId } } },
+          method: 'apple',
+        },
       });
       expect(stored.refreshToken).not.toBe('apple-refresh-for-revoke'); // encrypted
     });
@@ -510,7 +515,9 @@ describe('Social login (e2e)', () => {
         'This account is linked to another user',
       );
       expect(
-        await prisma.userLoginMethod.count({ where: { userId: memberUserId } }),
+        await prisma.userLoginMethod.count({
+          where: { account: { profiles: { some: { id: memberUserId } } } },
+        }),
       ).toBe(1);
     });
 
@@ -593,7 +600,10 @@ describe('Social login (e2e)', () => {
 
     it('unlinks Apple: gone from the list, and Apple is asked to forget us (with the decrypted token)', async () => {
       const apple = await prisma.userLoginMethod.findFirstOrThrow({
-        where: { userId: ownerUserId, method: 'apple' },
+        where: {
+          account: { profiles: { some: { id: ownerUserId } } },
+          method: 'apple',
+        },
       });
 
       await authed(ownerAccess)
@@ -615,7 +625,7 @@ describe('Social login (e2e)', () => {
 
     it("someone else's login id → 404; a malformed id → 400", async () => {
       const membersLogin = await prisma.userLoginMethod.findFirstOrThrow({
-        where: { userId: memberUserId },
+        where: { account: { profiles: { some: { id: memberUserId } } } },
       });
 
       await authed(ownerAccess)
@@ -628,14 +638,20 @@ describe('Social login (e2e)', () => {
 
     it('unlinks down to one login; the last one → 409', async () => {
       const local = await prisma.userLoginMethod.findFirstOrThrow({
-        where: { userId: ownerUserId, method: 'local' },
+        where: {
+          account: { profiles: { some: { id: ownerUserId } } },
+          method: 'local',
+        },
       });
       await authed(ownerAccess)
         .delete(`/users/me/login-methods/${local.id}`)
         .expect(204);
 
       const kakao = await prisma.userLoginMethod.findFirstOrThrow({
-        where: { userId: ownerUserId, method: 'kakao' },
+        where: {
+          account: { profiles: { some: { id: ownerUserId } } },
+          method: 'kakao',
+        },
       });
       const response = await authed(ownerAccess)
         .delete(`/users/me/login-methods/${kakao.id}`)

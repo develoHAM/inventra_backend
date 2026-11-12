@@ -26,7 +26,7 @@ describe('PhoneVerificationService', () => {
       findFirst: jest.Mock;
       updateMany: jest.Mock;
     };
-    user: { findFirst: jest.Mock };
+    account: { findFirst: jest.Mock };
   };
   let verifier: { messageExists: jest.Mock };
 
@@ -54,7 +54,7 @@ describe('PhoneVerificationService', () => {
         }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      user: { findFirst: jest.fn().mockResolvedValue(null) },
+      account: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     verifier = { messageExists: jest.fn() };
     service = new PhoneVerificationService(prisma as any, verifier as any);
@@ -135,13 +135,13 @@ describe('PhoneVerificationService', () => {
       expect(prisma.phoneVerification.create).not.toHaveBeenCalled();
     });
 
-    it('refuses SIGNUP for a phone that already belongs to a user (409)', async () => {
-      prisma.user.findFirst.mockResolvedValue({ id: 'user-1' });
+    it('refuses SIGNUP for a phone that already belongs to a live account (409)', async () => {
+      prisma.account.findFirst.mockResolvedValue({ id: 'account-1' });
 
       await expect(
         service.start(phone, PhoneVerificationPurpose.SIGNUP),
       ).rejects.toThrow(ConflictException);
-      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+      expect(prisma.account.findFirst).toHaveBeenCalledWith({
         where: { phone: phone, deletedAt: null },
         select: { id: true },
       });
@@ -154,10 +154,10 @@ describe('PhoneVerificationService', () => {
     ])(
       'does not check registration for %s (recovery needs a registered phone)',
       async (purpose) => {
-        prisma.user.findFirst.mockResolvedValue({ id: 'user-1' });
+        prisma.account.findFirst.mockResolvedValue({ id: 'account-1' });
 
         await expect(service.start(phone, purpose)).resolves.toBeDefined();
-        expect(prisma.user.findFirst).not.toHaveBeenCalled();
+        expect(prisma.account.findFirst).not.toHaveBeenCalled();
       },
     );
 

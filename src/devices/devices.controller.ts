@@ -21,7 +21,7 @@ export class DevicesController {
   @Post()
   @HttpCode(HttpStatus.NO_CONTENT)
   register(@CurrentUser() caller: AuthUser, @Body() dto: RegisterDeviceDto) {
-    return this.devices.register(caller.id, {
+    return this.devices.register(caller.accountId, {
       token: dto.token,
       platform: dto.platform,
     });
@@ -30,6 +30,6 @@ export class DevicesController {
   @Delete(':token')
   @HttpCode(HttpStatus.NO_CONTENT)
   unregister(@CurrentUser() caller: AuthUser, @Param('token') token: string) {
-    return this.devices.unregister(caller.id, token);
+    return this.devices.unregister(caller.accountId, token);
   }
 }

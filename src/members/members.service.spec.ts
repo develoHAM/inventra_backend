@@ -36,6 +36,7 @@ describe('MembersService', () => {
 
   const owner: AuthUser = {
     id: 'owner-1',
+    accountId: 'account-of-owner-1',
     companyId: 'company-1',
     companyStoreId: null,
     roleId: 2,
@@ -44,6 +45,7 @@ describe('MembersService', () => {
   };
   const admin: AuthUser = {
     id: 'admin-1',
+    accountId: 'account-of-admin-1',
     companyId: null,
     companyStoreId: null,
     roleId: 1,
@@ -52,6 +54,7 @@ describe('MembersService', () => {
   };
   const manager: AuthUser = {
     id: 'manager-1',
+    accountId: 'account-of-manager-1',
     companyId: 'company-1',
     companyStoreId: 'corner-a',
     roleId: 3,
@@ -60,6 +63,7 @@ describe('MembersService', () => {
   };
   const staffCaller: AuthUser = {
     id: 'staff-9',
+    accountId: 'account-of-staff-9',
     companyId: 'company-1',
     companyStoreId: 'corner-a',
     roleId: 4,
@@ -72,7 +76,8 @@ describe('MembersService', () => {
     id: 'staff-1',
     name: 'Kim Staff',
     profileImageUrl: null,
-    phone: '01012345678',
+    // the phone belongs to the person's sign-in, shared by all their companies
+    account: { phone: '01012345678' },
     contactEmail: 'staff@example.com',
     status: UserStatus.ACTIVE,
     createdAt: new Date('2026-11-01T00:00:00.000Z'),

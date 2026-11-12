@@ -13,6 +13,7 @@ describe('DevicesController', () => {
   // a PENDING user may register a device: they should get the approval push
   const caller: AuthUser = {
     id: 'user-1',
+    accountId: 'account-1',
     companyId: 'company-1',
     roleId: null,
     roleCode: null,
@@ -42,21 +43,24 @@ describe('DevicesController', () => {
     expect(metadata(HTTP_CODE_METADATA, method)).toBe(HttpStatus.NO_CONTENT);
   });
 
-  it('registers the token for the caller (from the JWT, never the body)', async () => {
+  it("registers the token for the caller's account (from the JWT, never the body)", async () => {
     await controller.register(caller, {
       token: 'fcm-token-abc',
       platform: DevicePlatform.IOS,
     });
 
-    expect(devices.register).toHaveBeenCalledWith('user-1', {
+    expect(devices.register).toHaveBeenCalledWith('account-1', {
       token: 'fcm-token-abc',
       platform: DevicePlatform.IOS,
     });
   });
 
-  it("unregisters the caller's token", async () => {
+  it("unregisters the token from the caller's account", async () => {
     await controller.unregister(caller, 'fcm-token-abc');
 
-    expect(devices.unregister).toHaveBeenCalledWith('user-1', 'fcm-token-abc');
+    expect(devices.unregister).toHaveBeenCalledWith(
+      'account-1',
+      'fcm-token-abc',
+    );
   });
 });

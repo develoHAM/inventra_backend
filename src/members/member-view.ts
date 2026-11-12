@@ -6,7 +6,7 @@ export const MEMBER_SELECT = {
   id: true,
   name: true,
   profileImageUrl: true,
-  phone: true,
+  account: { select: { phone: true } }, // the sign-in's phone, shared by all their companies
   contactEmail: true,
   status: true,
   createdAt: true,

@@ -67,7 +67,7 @@ describe('Members (e2e)', () => {
       .send({ email: email, password: password })
       .expect(201);
     const owner = await prisma.user.findFirst({
-      where: { loginMethods: { some: { email: email } } },
+      where: { account: { loginMethods: { some: { email: email } } } },
     });
     return {
       access: login.body.accessToken as string,
@@ -97,7 +97,7 @@ describe('Members (e2e)', () => {
       })
       .expect(201);
     const user = await prisma.user.findFirst({
-      where: { loginMethods: { some: { email: email } } },
+      where: { account: { loginMethods: { some: { email: email } } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
@@ -130,7 +130,9 @@ describe('Members (e2e)', () => {
       })
       .expect(201);
     const user = await prisma.user.findFirst({
-      where: { loginMethods: { some: { email: `${tag}@mbr.test` } } },
+      where: {
+        account: { loginMethods: { some: { email: `${tag}@mbr.test` } } },
+      },
     });
     return user!.id;
   };
@@ -164,7 +166,7 @@ describe('Members (e2e)', () => {
   const userIdByEmail = async (email: string) =>
     (
       await prisma.user.findFirstOrThrow({
-        where: { loginMethods: { some: { email: email } } },
+        where: { account: { loginMethods: { some: { email: email } } } },
       })
     ).id;
 

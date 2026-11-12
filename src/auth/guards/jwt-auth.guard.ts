@@ -52,6 +52,7 @@ export class JwtAuthGuard implements CanActivate {
       },
       select: {
         id: true,
+        accountId: true,
         companyId: true,
         companyStoreId: true,
         roleId: true,
@@ -70,6 +71,7 @@ export class JwtAuthGuard implements CanActivate {
 
     const authenticatedUser: AuthUser = {
       id: user.id,
+      accountId: user.accountId,
       companyId: user.companyId,
       companyStoreId: user.companyStoreId,
       roleId: user.roleId,

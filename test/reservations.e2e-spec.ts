@@ -83,7 +83,7 @@ describe('Purchase Reservations (e2e)', () => {
       })
       .expect(201);
     const user = await prisma.user.findFirst({
-      where: { loginMethods: { some: { email: email } } },
+      where: { account: { loginMethods: { some: { email: email } } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)

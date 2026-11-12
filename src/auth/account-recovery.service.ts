@@ -34,13 +34,14 @@ export class AccountRecoveryService {
   ): Promise<{ email: string | null; providers: string[] }> {
     // Spend the token first; "no account" still commits, so every lookup
     // costs a fresh phone verification.
-    const user = await this.prisma.$transaction(async (transaction) => {
+    const account = await this.prisma.$transaction(async (transaction) => {
       await this.phoneVerification.consume(transaction, {
         token: token,
         phone: phone,
         purpose: PhoneVerificationPurpose.FIND_ID,
       });
-      return transaction.user.findFirst({
+      // the phone and the login methods belong to the account (the sign-in)
+      return transaction.account.findFirst({
         where: { phone: phone, deletedAt: null },
         select: {
           loginMethods: {
@@ -51,13 +52,13 @@ export class AccountRecoveryService {
       });
     });
 
-    if (!user) throw new NotFoundException('No account uses this phone');
-    const passwordLogin = user.loginMethods.find(
+    if (!account) throw new NotFoundException('No account uses this phone');
+    const passwordLogin = account.loginMethods.find(
       (loginMethod) => loginMethod.method === 'local',
     );
     return {
       email: passwordLogin?.email ? maskEmail(passwordLogin.email) : null,
-      providers: user.loginMethods
+      providers: account.loginMethods
         .filter((loginMethod) => loginMethod.method !== 'local')
         .map((loginMethod) => loginMethod.method),
     };
@@ -76,7 +77,7 @@ export class AccountRecoveryService {
     // Slow by design — do it before the transaction holds a connection.
     const passwordHash = await this.passwordService.hash(input.newPassword);
 
-    const userId = await this.prisma.$transaction(async (transaction) => {
+    const accountId = await this.prisma.$transaction(async (transaction) => {
       await this.phoneVerification.consume(transaction, {
         token: input.token,
         phone: input.phone,
@@ -88,9 +89,9 @@ export class AccountRecoveryService {
         where: {
           method: 'local',
           email: input.email,
-          user: { phone: input.phone, deletedAt: null },
+          account: { phone: input.phone, deletedAt: null },
         },
-        select: { id: true, userId: true },
+        select: { id: true, accountId: true },
       });
       if (!loginMethod) return null; // commit: the token stays spent
 
@@ -98,20 +99,21 @@ export class AccountRecoveryService {
         where: { id: loginMethod.id },
         data: { passwordHash: passwordHash },
       });
-      // Log out every device: refresh tokens stop working now; issued access
-      // tokens expire on their own (15 min).
+      // Log out every device of the account, whichever company each had
+      // open: refresh tokens stop working now; issued access tokens expire on
+      // their own (15 min).
       await transaction.refreshToken.updateMany({
-        where: { userId: loginMethod.userId, revokedAt: null },
+        where: { accountId: loginMethod.accountId, revokedAt: null },
         data: { revokedAt: new Date() },
       });
-      return loginMethod.userId;
+      return loginMethod.accountId;
     });
 
-    if (!userId) {
+    if (!accountId) {
       throw new BadRequestException('Email and phone do not match an account');
     }
 
-    const event: AccountPasswordResetEvent = { userId: userId };
+    const event: AccountPasswordResetEvent = { accountId: accountId };
     this.eventEmitter.emit(NotificationEvent.ACCOUNT_PASSWORD_RESET, event);
   }
 }

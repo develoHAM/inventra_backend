@@ -24,6 +24,7 @@ describe('BrandsService', () => {
 
   const owner: AuthUser = {
     id: 'owner-1',
+    accountId: 'account-of-owner-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
@@ -31,6 +32,7 @@ describe('BrandsService', () => {
   };
   const admin: AuthUser = {
     id: 'admin-1',
+    accountId: 'account-of-admin-1',
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',

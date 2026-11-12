@@ -16,7 +16,6 @@ import {
   UserStatus,
 } from '../generated/prisma/enums';
 import { LoginDto } from './dto/login.dto';
-import { CAN_AUTHENTICATE } from './auth.constants';
 import { RefreshDto } from './dto/refresh.dto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { NotificationEvent } from '../notifications/notification-events';
@@ -37,11 +36,12 @@ import { SignupTicketService } from '../social-auth/signup-tickets/signup-ticket
 import type { SpentSignupTicket } from '../social-auth/signup-tickets/signup-ticket.service';
 import { EmailVerificationService } from '../email-verification/email-verification.service';
 import { normalizeEmail } from '../common/email';
+import { AccountsService } from '../accounts/accounts.service';
 
 /** What a signup creates for its credentials, decided inside the transaction. */
 interface SignupLogin {
   contactEmail: string; // where notifications go
-  loginMethod: Omit<Prisma.UserLoginMethodCreateManyInput, 'userId'>; // the user doesn't exist yet
+  loginMethod: Omit<Prisma.UserLoginMethodCreateManyInput, 'accountId'>; // the account doesn't exist yet
 }
 
 @Injectable()
@@ -55,17 +55,22 @@ export class AuthService {
     private readonly devices: DevicesService,
     private readonly signupTickets: SignupTicketService,
     private readonly emailVerification: EmailVerificationService,
+    private readonly accounts: AccountsService,
   ) {}
 
-  /** Our access + refresh tokens for a signed-in user: every way of signing in ends here. */
-  async issueSessionFor(userId: string) {
-    const accessToken = await this.tokenService.signAccess(userId);
+  /**
+   * Our access + refresh tokens: a session of the account, with this
+   * company profile open. Every way of signing in ends here.
+   */
+  async issueSessionFor(accountId: string, profileId: string) {
+    const accessToken = await this.tokenService.signAccess(profileId);
     const { token: refreshToken, expiresAt } =
-      await this.tokenService.signRefresh(userId);
+      await this.tokenService.signRefresh(profileId);
 
     await this.prisma.refreshToken.create({
       data: {
-        userId: userId,
+        accountId: accountId,
+        profileId: profileId,
         tokenHash: this.tokenService.hashToken(refreshToken),
         expiresAt: expiresAt,
       },
@@ -74,9 +79,9 @@ export class AuthService {
     return { accessToken: accessToken, refreshToken: refreshToken };
   }
 
-  /** null = nobody (non-deleted) has this phone yet. */
+  /** null = no live account has this phone yet (a fast pre-check; the insert decides). */
   private findPhoneOwner(phone: string) {
-    return this.prisma.user.findFirst({
+    return this.prisma.account.findFirst({
       where: { phone: phone, deletedAt: null },
       select: { id: true },
     });
@@ -169,24 +174,24 @@ export class AuthService {
   }
 
   /**
-   * The new user's first login method — unless the database already has it:
+   * The new account's first login method — unless the database already has it:
    * the same provider identity (UQ_login_methods_identity) or, for a password
    * login, the same email (UQ_login_methods_local_email), registered by a
    * signup that got there first. skipDuplicates makes it INSERT … ON CONFLICT
    * DO NOTHING: a duplicate comes back as count 0 instead of an error. The
-   * throw rolls the whole signup back, the new user row included.
+   * throw rolls the whole signup back, the new account and profile included.
    */
   private async addFirstLoginMethod(
     transaction: Prisma.TransactionClient,
-    userId: string,
+    accountId: string,
     loginMethod: SignupLogin['loginMethod'],
   ): Promise<void> {
     const inserted = await transaction.userLoginMethod.createMany({
-      data: [{ ...loginMethod, userId: userId }],
+      data: [{ ...loginMethod, accountId: accountId }],
       skipDuplicates: true,
     });
     if (inserted.count === 0) {
-      // a brand-new user can't collide on (userId, method): it's the other rule
+      // a brand-new account can't collide on (accountId, method): it's the other rule
       throw new ConflictException(
         loginMethod.method === 'local'
           ? 'Email already registered'
@@ -229,7 +234,7 @@ export class AuthService {
 
     const companyJoinCode = await generateUniqueJoinCode(this.prisma);
 
-    const { user, company } = await this.prisma.$transaction(
+    const { user, company, accountId } = await this.prisma.$transaction(
       async (transaction) => {
         // Spend the proofs first: if anything below fails, they roll back too.
         await this.phoneVerification.consume(transaction, {
@@ -243,10 +248,18 @@ export class AuthService {
           passwordHash,
         );
 
+        // The sign-in (phone + logins), then the owner's profile in the new company.
+        const newAccountId = await this.accounts.createAccount(
+          transaction,
+          ownerPhone,
+        );
+        if (newAccountId === null) {
+          throw new ConflictException('Phone already registered'); // taken meanwhile
+        }
         const newUser = await transaction.user.create({
           data: {
+            accountId: newAccountId,
             name: ownerName,
-            phone: ownerPhone,
             contactEmail: login.contactEmail,
             companyId: null,
             status: 'PENDING_APPROVAL',
@@ -255,7 +268,7 @@ export class AuthService {
         });
         await this.addFirstLoginMethod(
           transaction,
-          newUser.id,
+          newAccountId,
           login.loginMethod,
         );
 
@@ -275,7 +288,11 @@ export class AuthService {
           },
         });
 
-        return { user: updatedUser, company: newCompany };
+        return {
+          user: updatedUser,
+          company: newCompany,
+          accountId: newAccountId,
+        };
       },
     );
 
@@ -287,7 +304,7 @@ export class AuthService {
       registeredEvent,
     );
 
-    const tokens = await this.issueSessionFor(user.id);
+    const tokens = await this.issueSessionFor(accountId, user.id);
 
     return {
       accessToken: tokens.accessToken,
@@ -340,22 +357,27 @@ export class AuthService {
         passwordHash,
       );
 
+      // The sign-in (phone + logins), then the member's profile in that company.
+      const accountId = await this.accounts.createAccount(transaction, phone);
+      if (accountId === null) {
+        throw new ConflictException('Phone already registered'); // taken meanwhile
+      }
       const user = await transaction.user.create({
         data: {
+          accountId: accountId,
           name: name,
-          phone: phone,
           contactEmail: login.contactEmail,
           companyId: company.id,
           roleId: null, // role assigned by the owner at approval
           status: UserStatus.PENDING_APPROVAL,
         },
       });
-      await this.addFirstLoginMethod(transaction, user.id, login.loginMethod);
-      return { user: user, companyId: company.id };
+      await this.addFirstLoginMethod(transaction, accountId, login.loginMethod);
+      return { user: user, companyId: company.id, accountId: accountId };
     });
 
     if (!created) throw new NotFoundException('Invalid join code');
-    const { user, companyId } = created;
+    const { user, companyId, accountId } = created;
 
     const joinRequestedEvent: MemberJoinRequestedEvent = {
       companyId: companyId,
@@ -366,7 +388,7 @@ export class AuthService {
       joinRequestedEvent,
     );
 
-    const tokens = await this.issueSessionFor(user.id);
+    const tokens = await this.issueSessionFor(accountId, user.id);
 
     return {
       accessToken: tokens.accessToken,
@@ -386,15 +408,7 @@ export class AuthService {
     const loginMethod = await this.prisma.userLoginMethod.findFirst({
       where: { email: email, method: 'local' },
       include: {
-        user: {
-          select: {
-            id: true,
-            status: true,
-            companyId: true,
-            roleId: true,
-            deletedAt: true,
-          },
-        },
+        account: { select: { id: true, deletedAt: true, lastProfileId: true } },
       },
     });
 
@@ -407,22 +421,23 @@ export class AuthService {
     );
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
-    const user = loginMethod.user;
-
-    if (user.deletedAt || !CAN_AUTHENTICATE.includes(user.status))
+    const account = loginMethod.account;
+    if (account.deletedAt)
       throw new UnauthorizedException('Account cannot sign in');
 
-    const tokens = await this.issueSessionFor(user.id);
+    // Which company opens: the last one used, if it can still be opened.
+    const profile = await this.accounts.findProfileToOpen(
+      account.id,
+      account.lastProfileId,
+    );
+    if (!profile) throw new UnauthorizedException('Account cannot sign in');
+
+    const tokens = await this.issueSessionFor(account.id, profile.id);
 
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
-      user: {
-        id: user.id,
-        status: user.status,
-        companyId: user.companyId,
-        roleId: user.roleId,
-      },
+      user: profile, // { id, status, companyId, roleId } of the open profile
     };
   }
 
@@ -441,33 +456,42 @@ export class AuthService {
     if (!stored) throw new UnauthorizedException('Invalid refresh token');
 
     if (stored.revokedAt) {
+      // every session of the person, whichever company each had open
       await this.prisma.refreshToken.updateMany({
-        where: { userId: stored.userId, revokedAt: null },
+        where: { accountId: stored.accountId, revokedAt: null },
         data: { revokedAt: new Date() },
       });
       throw new UnauthorizedException('Refresh token reuse detected');
     }
+    // Until profile-less sessions exist (switching, signup), every session
+    // has a profile open.
+    if (stored.profileId === null)
+      throw new UnauthorizedException('Invalid refresh token');
 
     await this.prisma.refreshToken.update({
       where: { tokenHash: tokenHash },
       data: { revokedAt: new Date() },
     });
-    const tokens = await this.issueSessionFor(stored.userId);
+    const tokens = await this.issueSessionFor(
+      stored.accountId,
+      stored.profileId,
+    );
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
     };
   }
 
-  async logout(userId: string, dto: LogoutDto) {
+  async logout(accountId: string, dto: LogoutDto) {
     const tokenHash = this.tokenService.hashToken(dto.refreshToken);
     await this.prisma.refreshToken.updateMany({
-      where: { tokenHash: tokenHash, userId: userId, revokedAt: null },
+      where: { tokenHash: tokenHash, accountId: accountId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
-    // Stop this device showing the user's pushes (only the caller's own token).
+    // Stop this device showing pushes from every company (only the caller's
+    // own token).
     if (dto.deviceToken) {
-      await this.devices.unregister(userId, dto.deviceToken);
+      await this.devices.unregister(accountId, dto.deviceToken);
     }
   }
 }
