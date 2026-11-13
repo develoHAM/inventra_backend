@@ -13,7 +13,10 @@ import {
   normalizePhone,
   KOREAN_MOBILE_PATTERN,
 } from '../../phone-verification/phone';
-import { JOIN_CODE_PATTERN, normalizeJoinCode } from '../../users/join-code';
+import {
+  JOIN_CODE_PATTERN,
+  normalizeJoinCode,
+} from '../../companies/join-code';
 
 export class RegisterMemberDto {
   @Transform(({ value }) => normalizeJoinCode(value))

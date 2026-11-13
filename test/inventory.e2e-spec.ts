@@ -24,8 +24,8 @@ describe('Inventory Transactions (e2e)', () => {
   let cornerId: string;
   let placementId: number;
 
-  let managerUserId: string;
-  let staffUserId: string;
+  let managerProfileId: string;
+  let staffProfileId: string;
 
   const auth = (token: string): [string, string] => [
     'Authorization',
@@ -33,7 +33,7 @@ describe('Inventory Transactions (e2e)', () => {
   ];
 
   // register a company → ADMIN approves it → owner logs in
-  // users.phone is unique across the shared DB: suite 05's own block
+  // accounts.phone is unique across the shared DB: suite 05's own block
   const nextPhone = testPhones(5);
 
   const registerCompany = async (n: number) => {
@@ -89,12 +89,12 @@ describe('Inventory Transactions (e2e)', () => {
         phoneVerificationToken: token,
       })
       .expect(201);
-    const user = await prisma.user.findFirst({
+    const profile = await prisma.profile.findFirst({
       where: { account: { loginMethods: { some: { email: email } } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
-      .patch(`/users/${user!.id}/approve`)
+      .patch(`/profiles/${profile!.id}/approve`)
       .set(...auth(ownerToken))
       .send({ roleId: role!.id, cornerId: null })
       .expect(200);
@@ -104,7 +104,7 @@ describe('Inventory Transactions (e2e)', () => {
       .expect(201);
     return {
       access: login.body.accessToken as string,
-      userId: user!.id as string,
+      profileId: profile!.id as string,
     };
   };
 
@@ -143,7 +143,7 @@ describe('Inventory Transactions (e2e)', () => {
       'MANAGER',
       'manager',
     );
-    managerUserId = manager.userId;
+    managerProfileId = manager.profileId;
     const staff = await registerMember(
       company1.joinCode,
       ownerAccess,
@@ -151,7 +151,7 @@ describe('Inventory Transactions (e2e)', () => {
       'staff',
     );
     staffAccess = staff.access;
-    staffUserId = staff.userId;
+    staffProfileId = staff.profileId;
     const otherManager = await registerMember(
       company1.joinCode,
       ownerAccess,
@@ -205,12 +205,12 @@ describe('Inventory Transactions (e2e)', () => {
         .expect(201)
     ).body.id;
     await request(http)
-      .put(`/users/${managerUserId}/branch`)
+      .put(`/profiles/${managerProfileId}/branch`)
       .set(...auth(ownerAccess))
       .send({ cornerId: cornerId })
       .expect(200);
     await request(http)
-      .put(`/users/${staffUserId}/branch`)
+      .put(`/profiles/${staffProfileId}/branch`)
       .set(...auth(ownerAccess))
       .send({ cornerId: cornerId })
       .expect(200);

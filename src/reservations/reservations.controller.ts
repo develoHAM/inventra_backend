@@ -9,8 +9,8 @@ import {
 } from '@nestjs/common';
 import { ReservationsService } from './reservations.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { AuthUser } from '../auth/types/auth-user';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { AuthProfile } from '../auth/types/auth-profile';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { CancelReservationDto } from './dto/cancel-reservation.dto';
 import { ListReservationsQueryDto } from './dto/list-reservations.query.dto';
@@ -22,7 +22,7 @@ export class ReservationsController {
   @RequirePermissions('reservations.read')
   @Get()
   findAll(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Query() query: ListReservationsQueryDto,
   ) {
@@ -32,7 +32,7 @@ export class ReservationsController {
   @RequirePermissions('reservations.read')
   @Get(':reservationId')
   findOne(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('reservationId', ParseUUIDPipe) reservationId: string,
   ) {
@@ -42,7 +42,7 @@ export class ReservationsController {
   @RequirePermissions('reservations.create')
   @Post()
   create(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Body() dto: CreateReservationDto,
   ) {
@@ -52,7 +52,7 @@ export class ReservationsController {
   @RequirePermissions('reservations.fulfill')
   @Post(':reservationId/fulfill')
   fulfill(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('reservationId', ParseUUIDPipe) reservationId: string,
   ) {
@@ -62,7 +62,7 @@ export class ReservationsController {
   @RequirePermissions('reservations.cancel')
   @Post(':reservationId/cancel')
   cancel(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('reservationId', ParseUUIDPipe) reservationId: string,
     @Body() dto: CancelReservationDto,

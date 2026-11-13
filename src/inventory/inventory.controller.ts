@@ -9,8 +9,8 @@ import {
 } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { AuthUser } from '../auth/types/auth-user';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { AuthProfile } from '../auth/types/auth-profile';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 
 @Controller('corners/:cornerId/products/:placementId/transactions')
@@ -20,7 +20,7 @@ export class InventoryController {
   @RequirePermissions('transactions.read')
   @Get()
   findAll(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('placementId', ParseIntPipe) placementId: number,
   ) {
@@ -30,7 +30,7 @@ export class InventoryController {
   @RequirePermissions('transactions.create')
   @Post()
   create(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('placementId', ParseIntPipe) placementId: number,
     @Body() dto: CreateTransactionDto,

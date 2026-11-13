@@ -8,9 +8,9 @@ import { Reflector } from '@nestjs/core';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TokenService } from '../token.service';
-import { UserStatus } from '../../generated/prisma/enums';
+import { ProfileStatus } from '../../generated/prisma/enums';
 import { CAN_AUTHENTICATE } from '../auth.constants';
-import { AuthUser } from '../types/auth-user';
+import { AuthProfile } from '../types/auth-profile';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -46,7 +46,7 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException();
     }
 
-    const user = await this.prisma.user.findUnique({
+    const profile = await this.prisma.profile.findUnique({
       where: {
         id: tokenPayload.sub,
       },
@@ -66,20 +66,24 @@ export class JwtAuthGuard implements CanActivate {
       },
     });
 
-    if (!user || user.deletedAt || !CAN_AUTHENTICATE.includes(user.status))
+    if (
+      !profile ||
+      profile.deletedAt ||
+      !CAN_AUTHENTICATE.includes(profile.status)
+    )
       throw new UnauthorizedException();
 
-    const authenticatedUser: AuthUser = {
-      id: user.id,
-      accountId: user.accountId,
-      companyId: user.companyId,
-      companyStoreId: user.companyStoreId,
-      roleId: user.roleId,
-      roleCode: user.role?.code ?? null,
-      status: user.status,
+    const authenticatedProfile: AuthProfile = {
+      id: profile.id,
+      accountId: profile.accountId,
+      companyId: profile.companyId,
+      companyStoreId: profile.companyStoreId,
+      roleId: profile.roleId,
+      roleCode: profile.role?.code ?? null,
+      status: profile.status,
     };
 
-    request.user = authenticatedUser;
+    request.profile = authenticatedProfile;
 
     return true;
   }

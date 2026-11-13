@@ -3,21 +3,21 @@ import { HTTP_CODE_METADATA } from '@nestjs/common/constants';
 import { DevicesController } from './devices.controller';
 import { REQUIRE_PERMISSIONS_KEY } from '../authorization/decorators/require-permissions.decorator';
 import { IS_PUBLIC_KEY } from '../auth/decorators/public.decorator';
-import { AuthUser } from '../auth/types/auth-user';
-import { DevicePlatform, UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import { DevicePlatform, ProfileStatus } from '../generated/prisma/enums';
 
 describe('DevicesController', () => {
   let controller: DevicesController;
   let devices: { register: jest.Mock; unregister: jest.Mock };
 
   // a PENDING user may register a device: they should get the approval push
-  const caller: AuthUser = {
-    id: 'user-1',
+  const caller: AuthProfile = {
+    id: 'profile-1',
     accountId: 'account-1',
     companyId: 'company-1',
     roleId: null,
     roleCode: null,
-    status: UserStatus.PENDING_APPROVAL,
+    status: ProfileStatus.PENDING_APPROVAL,
   };
 
   const metadata = (key: string, method: keyof DevicesController) =>

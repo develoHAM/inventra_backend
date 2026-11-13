@@ -26,13 +26,13 @@ export class MembershipHistoryService {
     await transaction.membershipChange.createMany({
       data: changes.map((change) => ({
         companyId: change.companyId,
-        userId: change.userId,
+        profileId: change.profileId,
         reason: change.reason,
         fromRoleId: change.fromRoleId,
         toRoleId: change.toRoleId,
         fromCompanyStoreId: change.fromCornerId,
         toCompanyStoreId: change.toCornerId,
-        changedByUserId: change.changedByUserId,
+        changedByProfileId: change.changedByProfileId,
       })),
     });
   }

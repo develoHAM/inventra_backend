@@ -36,13 +36,13 @@ describe('RegisterDeviceDto', () => {
     ).resolves.toEqual(['token']);
   });
 
-  it('refuses a userId in the body (the owner comes from the JWT)', async () => {
+  it('refuses an accountId in the body (the owner comes from the JWT)', async () => {
     await expect(
       failedFields({
         token: 'fcm-token-abc',
         platform: 'ANDROID',
-        userId: 'someone-else',
+        accountId: 'someone-else',
       }),
-    ).resolves.toEqual(['userId']);
+    ).resolves.toEqual(['accountId']);
   });
 });

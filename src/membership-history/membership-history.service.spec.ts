@@ -13,23 +13,23 @@ describe('MembershipHistoryService', () => {
 
   const staffMovedFromAToB: MembershipChangeInput = {
     companyId: 'company-1',
-    userId: 'staff-1',
+    profileId: 'staff-1',
     reason: MembershipChangeReason.MOVED,
     fromRoleId: 4,
     toRoleId: 4,
     fromCornerId: 'corner-a',
     toCornerId: 'corner-b',
-    changedByUserId: 'owner-1',
+    changedByProfileId: 'owner-1',
   };
   const managerPromotedToOwner: MembershipChangeInput = {
     companyId: 'company-1',
-    userId: 'manager-1',
+    profileId: 'manager-1',
     reason: MembershipChangeReason.ROLE_CHANGED,
     fromRoleId: 3,
     toRoleId: 2,
     fromCornerId: 'corner-a',
     toCornerId: null,
-    changedByUserId: null,
+    changedByProfileId: null,
   };
 
   beforeEach(() => {
@@ -60,23 +60,23 @@ describe('MembershipHistoryService', () => {
         data: [
           {
             companyId: 'company-1',
-            userId: 'staff-1',
+            profileId: 'staff-1',
             reason: MembershipChangeReason.MOVED,
             fromRoleId: 4,
             toRoleId: 4,
             fromCompanyStoreId: 'corner-a',
             toCompanyStoreId: 'corner-b',
-            changedByUserId: 'owner-1',
+            changedByProfileId: 'owner-1',
           },
           {
             companyId: 'company-1',
-            userId: 'manager-1',
+            profileId: 'manager-1',
             reason: MembershipChangeReason.ROLE_CHANGED,
             fromRoleId: 3,
             toRoleId: 2,
             fromCompanyStoreId: 'corner-a',
             toCompanyStoreId: null,
-            changedByUserId: null,
+            changedByProfileId: null,
           },
         ],
       });
@@ -101,8 +101,8 @@ describe('MembershipHistoryService', () => {
       id: id,
       reason: MembershipChangeReason.ROLE_CHANGED,
       createdAt: new Date('2026-11-09T10:00:00.000Z'),
-      user: { id: 'staff-1', name: 'Kim' },
-      changedByUser: { id: 'manager-1', name: 'Lee' },
+      profile: { id: 'staff-1', name: 'Kim' },
+      changedByProfile: { id: 'manager-1', name: 'Lee' },
       fromRole: { code: 'STAFF', name: 'Staff' },
       toRole: { code: 'MANAGER', name: 'Manager' },
       fromCompanyStore: { id: 'corner-a', name: 'Branch A' },
@@ -229,7 +229,7 @@ describe('MembershipHistoryService', () => {
 
     it('a change the system made has no changedBy', async () => {
       prisma.membershipChange.findMany.mockResolvedValue([
-        changeRow('change-1', { changedByUser: null }),
+        changeRow('change-1', { changedByProfile: null }),
       ]);
 
       const [change] = (await service.page(WHERE, {})).items;
@@ -239,8 +239,8 @@ describe('MembershipHistoryService', () => {
 
     it('reads only the id and name of the people and branches involved, never phone or email', () => {
       for (const relation of [
-        MEMBERSHIP_CHANGE_SELECT.user,
-        MEMBERSHIP_CHANGE_SELECT.changedByUser,
+        MEMBERSHIP_CHANGE_SELECT.profile,
+        MEMBERSHIP_CHANGE_SELECT.changedByProfile,
         MEMBERSHIP_CHANGE_SELECT.fromCompanyStore,
         MEMBERSHIP_CHANGE_SELECT.toCompanyStore,
       ]) {

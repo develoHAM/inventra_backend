@@ -8,21 +8,21 @@ import {
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
-import { UsersService } from './users.service';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { AuthUser } from '../auth/types/auth-user';
+import { ProfilePhotosService } from './profile-photos.service';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { AuthProfile } from '../auth/types/auth-profile';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ConfirmUploadDto } from '../storage/dto/confirm-upload.dto';
 import { PresignUploadDto } from '../storage/dto/presign-upload.dto';
 
-@Controller('users')
-export class UsersController {
-  constructor(private usersService: UsersService) {}
+@Controller('profiles')
+export class ProfilePhotosController {
+  constructor(private profilePhotos: ProfilePhotosService) {}
 
   @Post('me/avatar')
   @UseInterceptors(FileInterceptor('file'))
   uploadAvatar(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @UploadedFile(
       new ParseFilePipe({
         validators: [
@@ -33,22 +33,22 @@ export class UsersController {
     )
     file: Express.Multer.File,
   ) {
-    return this.usersService.uploadAvatar(caller, file);
+    return this.profilePhotos.uploadAvatar(caller, file);
   }
 
   @Post('me/avatar/presign')
   presignAvatar(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Body() dto: PresignUploadDto,
   ) {
-    return this.usersService.presignAvatarUpload(caller, dto);
+    return this.profilePhotos.presignAvatarUpload(caller, dto);
   }
 
   @Post('me/avatar/confirm')
   confirmAvatar(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Body() dto: ConfirmUploadDto,
   ) {
-    return this.usersService.confirmAvatar(caller, dto);
+    return this.profilePhotos.confirmAvatar(caller, dto);
   }
 }

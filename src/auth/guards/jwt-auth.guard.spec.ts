@@ -1,20 +1,20 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { JwtAuthGuard } from './jwt-auth.guard';
-import { UserStatus } from '../../generated/prisma/enums';
+import { ProfileStatus } from '../../generated/prisma/enums';
 
 describe('JwtAuthGuard', () => {
   let guard: JwtAuthGuard;
   let reflector: { getAllAndOverride: jest.Mock };
   let tokenService: { verifyAccess: jest.Mock };
-  let prisma: { user: { findUnique: jest.Mock } };
+  let prisma: { profile: { findUnique: jest.Mock } };
 
-  const activeUser = {
-    id: 'user-1',
+  const activeProfile = {
+    id: 'profile-1',
     accountId: 'account-1',
     companyId: 'company-1',
     companyStoreId: 'store-1',
     roleId: 2,
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
     deletedAt: null,
     role: { code: 'OWNER' },
   };
@@ -32,7 +32,7 @@ describe('JwtAuthGuard', () => {
   beforeEach(() => {
     reflector = { getAllAndOverride: jest.fn() };
     tokenService = { verifyAccess: jest.fn() };
-    prisma = { user: { findUnique: jest.fn() } };
+    prisma = { profile: { findUnique: jest.fn() } };
     guard = new JwtAuthGuard(
       reflector as any,
       tokenService as any,
@@ -79,10 +79,10 @@ describe('JwtAuthGuard', () => {
 
   it('rejects a valid token for a terminal-status (suspended) user', async () => {
     reflector.getAllAndOverride.mockReturnValue(false);
-    tokenService.verifyAccess.mockResolvedValue({ sub: 'user-1' });
-    prisma.user.findUnique.mockResolvedValue({
-      ...activeUser,
-      status: UserStatus.SUSPENDED,
+    tokenService.verifyAccess.mockResolvedValue({ sub: 'profile-1' });
+    prisma.profile.findUnique.mockResolvedValue({
+      ...activeProfile,
+      status: ProfileStatus.SUSPENDED,
     });
     const request = { headers: { authorization: 'Bearer good-token' } };
 
@@ -93,23 +93,23 @@ describe('JwtAuthGuard', () => {
 
   it('allows a PENDING user to authenticate (activation is enforced downstream)', async () => {
     reflector.getAllAndOverride.mockReturnValue(false);
-    tokenService.verifyAccess.mockResolvedValue({ sub: 'user-1' });
-    prisma.user.findUnique.mockResolvedValue({
-      ...activeUser,
-      status: UserStatus.PENDING_APPROVAL,
+    tokenService.verifyAccess.mockResolvedValue({ sub: 'profile-1' });
+    prisma.profile.findUnique.mockResolvedValue({
+      ...activeProfile,
+      status: ProfileStatus.PENDING_APPROVAL,
     });
     const request: any = { headers: { authorization: 'Bearer good-token' } };
 
     await expect(guard.canActivate(contextWith(request))).resolves.toBe(true);
     // authenticated, and status carried through so downstream guards can gate on it
-    expect(request.user.status).toBe(UserStatus.PENDING_APPROVAL);
+    expect(request.profile.status).toBe(ProfileStatus.PENDING_APPROVAL);
   });
 
   it('rejects a soft-deleted user', async () => {
     reflector.getAllAndOverride.mockReturnValue(false);
-    tokenService.verifyAccess.mockResolvedValue({ sub: 'user-1' });
-    prisma.user.findUnique.mockResolvedValue({
-      ...activeUser,
+    tokenService.verifyAccess.mockResolvedValue({ sub: 'profile-1' });
+    prisma.profile.findUnique.mockResolvedValue({
+      ...activeProfile,
       deletedAt: new Date(),
     });
     const request = { headers: { authorization: 'Bearer good-token' } };
@@ -119,29 +119,29 @@ describe('JwtAuthGuard', () => {
     );
   });
 
-  it('allows an ACTIVE user and attaches the AuthUser to the request', async () => {
+  it('allows an ACTIVE user and attaches the AuthProfile to the request', async () => {
     reflector.getAllAndOverride.mockReturnValue(false);
-    tokenService.verifyAccess.mockResolvedValue({ sub: 'user-1' });
-    prisma.user.findUnique.mockResolvedValue(activeUser);
+    tokenService.verifyAccess.mockResolvedValue({ sub: 'profile-1' });
+    prisma.profile.findUnique.mockResolvedValue(activeProfile);
     const request: any = { headers: { authorization: 'Bearer good-token' } };
 
     await expect(guard.canActivate(contextWith(request))).resolves.toBe(true);
 
-    // req.user carries exactly the AuthUser shape — no deletedAt leak
-    expect(request.user).toEqual({
-      id: 'user-1',
+    // request.profile carries exactly the AuthProfile shape — no deletedAt leak
+    expect(request.profile).toEqual({
+      id: 'profile-1',
       accountId: 'account-1', // the sign-in this profile belongs to
       companyId: 'company-1',
       companyStoreId: 'store-1',
       roleId: 2,
       roleCode: 'OWNER',
-      status: UserStatus.ACTIVE,
+      status: ProfileStatus.ACTIVE,
     });
-    expect(request.user).not.toHaveProperty('deletedAt');
+    expect(request.profile).not.toHaveProperty('deletedAt');
 
-    // the fresh-load query selects only what AuthUser needs (+ deletedAt)
-    expect(prisma.user.findUnique).toHaveBeenCalledWith({
-      where: { id: 'user-1' },
+    // the fresh-load query selects only what AuthProfile needs (+ deletedAt)
+    expect(prisma.profile.findUnique).toHaveBeenCalledWith({
+      where: { id: 'profile-1' },
       select: {
         id: true,
         accountId: true,

@@ -1,28 +1,28 @@
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { PermissionsGuard } from './permissions.guard';
-import { AuthUser } from '../../auth/types/auth-user';
-import { UserStatus } from '../../generated/prisma/enums';
+import { AuthProfile } from '../../auth/types/auth-profile';
+import { ProfileStatus } from '../../generated/prisma/enums';
 
 describe('PermissionsGuard', () => {
   let guard: PermissionsGuard;
   let reflector: { getAllAndOverride: jest.Mock };
   let permissionsService: { getEffectivePermissions: jest.Mock };
 
-  const user: AuthUser = {
-    id: 'user-1',
-    accountId: 'account-of-user-1',
+  const profile: AuthProfile = {
+    id: 'profile-1',
+    accountId: 'account-of-profile-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
 
-  // The guard reads req.user, so the fake request carries whatever user we pass.
-  function contextWith(reqUser: unknown): ExecutionContext {
+  // The guard reads request.profile, so the fake request carries whatever profile we pass.
+  function contextWith(reqProfile: unknown): ExecutionContext {
     return {
       getHandler: () => null,
       getClass: () => null,
-      switchToHttp: () => ({ getRequest: () => ({ user: reqUser }) }),
+      switchToHttp: () => ({ getRequest: () => ({ profile: reqProfile }) }),
     } as unknown as ExecutionContext;
   }
 
@@ -35,54 +35,57 @@ describe('PermissionsGuard', () => {
   it('allows a route with no @RequirePermissions', async () => {
     reflector.getAllAndOverride.mockReturnValue(undefined);
 
-    await expect(guard.canActivate(contextWith(user))).resolves.toBe(true);
+    await expect(guard.canActivate(contextWith(profile))).resolves.toBe(true);
     expect(permissionsService.getEffectivePermissions).not.toHaveBeenCalled();
   });
 
   it('allows when the required list is empty', async () => {
     reflector.getAllAndOverride.mockReturnValue([]);
 
-    await expect(guard.canActivate(contextWith(user))).resolves.toBe(true);
+    await expect(guard.canActivate(contextWith(profile))).resolves.toBe(true);
     expect(permissionsService.getEffectivePermissions).not.toHaveBeenCalled();
   });
 
   it('allows when the user has all required permissions', async () => {
-    reflector.getAllAndOverride.mockReturnValue(['users.approve']);
+    reflector.getAllAndOverride.mockReturnValue(['profiles.approve']);
     permissionsService.getEffectivePermissions.mockResolvedValue(
-      new Set(['users.approve', 'products.read']),
+      new Set(['profiles.approve', 'products.read']),
     );
 
-    await expect(guard.canActivate(contextWith(user))).resolves.toBe(true);
+    await expect(guard.canActivate(contextWith(profile))).resolves.toBe(true);
   });
 
   it('denies (403) when the user is missing any required permission', async () => {
     // requires TWO permissions; the user has only one → must be rejected
     reflector.getAllAndOverride.mockReturnValue([
-      'users.approve',
+      'profiles.approve',
       'companies.update',
     ]);
     permissionsService.getEffectivePermissions.mockResolvedValue(
-      new Set(['users.approve']),
+      new Set(['profiles.approve']),
     );
 
-    await expect(guard.canActivate(contextWith(user))).rejects.toThrow(
+    await expect(guard.canActivate(contextWith(profile))).rejects.toThrow(
       ForbiddenException,
     );
   });
 
   it('denies (403) a PENDING (non-ACTIVE) user on a permissioned route', async () => {
-    reflector.getAllAndOverride.mockReturnValue(['users.approve']);
-    const pendingUser = { ...user, status: UserStatus.PENDING_APPROVAL };
+    reflector.getAllAndOverride.mockReturnValue(['profiles.approve']);
+    const pendingProfile = {
+      ...profile,
+      status: ProfileStatus.PENDING_APPROVAL,
+    };
 
-    await expect(guard.canActivate(contextWith(pendingUser))).rejects.toThrow(
-      ForbiddenException,
-    );
+    await expect(
+      guard.canActivate(contextWith(pendingProfile)),
+    ).rejects.toThrow(ForbiddenException);
     // status is rejected before any permission lookup happens
     expect(permissionsService.getEffectivePermissions).not.toHaveBeenCalled();
   });
 
   it('denies (403) when no authenticated user is present', async () => {
-    reflector.getAllAndOverride.mockReturnValue(['users.approve']);
+    reflector.getAllAndOverride.mockReturnValue(['profiles.approve']);
 
     await expect(guard.canActivate(contextWith(undefined))).rejects.toThrow(
       ForbiddenException,

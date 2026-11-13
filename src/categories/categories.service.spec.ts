@@ -1,7 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { CategoriesService } from './categories.service';
-import { AuthUser } from '../auth/types/auth-user';
-import { UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import { ProfileStatus } from '../generated/prisma/enums';
 
 describe('CategoriesService', () => {
   let service: CategoriesService;
@@ -14,13 +14,13 @@ describe('CategoriesService', () => {
     };
   };
 
-  const admin: AuthUser = {
+  const admin: AuthProfile = {
     id: 'admin-1',
     accountId: 'account-of-admin-1',
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
 
   beforeEach(() => {
@@ -66,7 +66,7 @@ describe('CategoriesService', () => {
 
     expect(prisma.category.update).toHaveBeenCalledWith({
       where: { id: 5 },
-      data: { deletedAt: expect.any(Date), deletedByUserId: 'admin-1' },
+      data: { deletedAt: expect.any(Date), deletedByProfileId: 'admin-1' },
     });
   });
 

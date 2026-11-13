@@ -11,8 +11,8 @@ import {
 } from '@nestjs/common';
 import { CornersService } from './corners.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { AuthUser } from '../auth/types/auth-user';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { AuthProfile } from '../auth/types/auth-profile';
 import { CreateCornerDto } from './dto/create-corner.dto';
 import { UpdateCornerDto } from './dto/update-corner.dto';
 import { HistoryQueryDto } from '../membership-history/dto/history-query.dto';
@@ -23,14 +23,14 @@ export class CornersController {
 
   @RequirePermissions('corners.read')
   @Get()
-  findAll(@CurrentUser() caller: AuthUser) {
+  findAll(@CurrentProfile() caller: AuthProfile) {
     return this.corners.findAll(caller);
   }
 
   @RequirePermissions('corners.read')
   @Get(':id')
   findOne(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.corners.findOne(caller, id);
@@ -39,7 +39,7 @@ export class CornersController {
   @RequirePermissions('corners.read')
   @Get(':id/history')
   history(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseUUIDPipe) id: string,
     @Query() query: HistoryQueryDto,
   ) {
@@ -48,14 +48,14 @@ export class CornersController {
 
   @RequirePermissions('corners.create')
   @Post()
-  create(@CurrentUser() caller: AuthUser, @Body() dto: CreateCornerDto) {
+  create(@CurrentProfile() caller: AuthProfile, @Body() dto: CreateCornerDto) {
     return this.corners.create(caller, dto);
   }
 
   @RequirePermissions('corners.update')
   @Patch(':id')
   update(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateCornerDto,
   ) {
@@ -65,7 +65,7 @@ export class CornersController {
   @RequirePermissions('corners.delete')
   @Delete(':id')
   remove(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.corners.remove(caller, id);

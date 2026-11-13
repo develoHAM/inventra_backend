@@ -6,8 +6,8 @@ import {
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuthUser } from '../auth/types/auth-user';
-import { UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import { ProfileStatus } from '../generated/prisma/enums';
 import { NotificationEvent } from '../notifications/notification-events';
 import type { CompanyApprovedEvent } from '../notifications/notification-events';
 import { generateUniqueJoinCode } from './join-code';
@@ -25,23 +25,23 @@ export class CompaniesService {
 
   /** Platform admin approves a registered company by activating its owner. */
   async approveCompany(companyId: string) {
-    const owner = await this.prisma.user.findFirst({
+    const owner = await this.prisma.profile.findFirst({
       where: { companyId: companyId, role: { code: 'OWNER' } },
     });
 
     if (!owner) throw new NotFoundException('Company owner not found');
 
-    if (owner.status !== UserStatus.PENDING_APPROVAL)
+    if (owner.status !== ProfileStatus.PENDING_APPROVAL)
       throw new BadRequestException('Owner is not pending approval');
 
-    const approvedOwner = await this.prisma.user.update({
+    const approvedOwner = await this.prisma.profile.update({
       where: { id: owner.id },
-      data: { status: UserStatus.ACTIVE },
+      data: { status: ProfileStatus.ACTIVE },
     });
 
     const event: CompanyApprovedEvent = {
       companyId: companyId,
-      ownerUserId: owner.id,
+      ownerProfileId: owner.id,
     };
     this.eventEmitter.emit(NotificationEvent.COMPANY_APPROVED, event);
 
@@ -49,7 +49,7 @@ export class CompaniesService {
   }
 
   /** The code staff type at POST /auth/register/member. */
-  async getJoinCode(caller: AuthUser): Promise<{ joinCode: string }> {
+  async getJoinCode(caller: AuthProfile): Promise<{ joinCode: string }> {
     const companyId = this.requireCompany(caller);
     const company = await this.prisma.company.findFirst({
       where: { id: companyId, deletedAt: null },
@@ -63,7 +63,7 @@ export class CompaniesService {
    * Replace the code: the old one stops working immediately. Members who
    * already joined are unaffected — the code is only checked at signup.
    */
-  async rotateJoinCode(caller: AuthUser): Promise<{ joinCode: string }> {
+  async rotateJoinCode(caller: AuthProfile): Promise<{ joinCode: string }> {
     const companyId = this.requireCompany(caller);
     const joinCode = await generateUniqueJoinCode(this.prisma);
     const result = await this.prisma.company.updateMany({
@@ -80,7 +80,7 @@ export class CompaniesService {
    * confirm it exists); this company's managers and staff get 403.
    */
   async listHistory(
-    caller: AuthUser,
+    caller: AuthProfile,
     companyId: string,
     query: HistoryQueryDto,
   ): Promise<MembershipHistoryPage> {
@@ -99,7 +99,7 @@ export class CompaniesService {
   }
 
   /** The caller's own company id; the platform admin has none. */
-  private requireCompany(caller: AuthUser): string {
+  private requireCompany(caller: AuthProfile): string {
     if (!caller.companyId) {
       throw new ForbiddenException('You do not belong to a company');
     }

@@ -4,35 +4,38 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AuthUser } from '../auth/types/auth-user';
+import { AuthProfile } from '../auth/types/auth-profile';
 
 @Injectable()
 export class OwnershipService {
   constructor() {}
 
   scopeToCompany(
-    user: AuthUser,
+    profile: AuthProfile,
     field: string = 'companyId',
   ): Record<string, string> {
-    if (user.roleCode === 'ADMIN') {
+    if (profile.roleCode === 'ADMIN') {
       return {};
     }
 
-    if (!user.companyId)
+    if (!profile.companyId)
       throw new ForbiddenException('User must have a company');
 
-    return { [field]: user.companyId };
+    return { [field]: profile.companyId };
   }
 
-  assertOwns(user: AuthUser, resourceCompanyId: string | null): void {
-    if (user.roleCode === 'ADMIN') {
+  assertOwns(profile: AuthProfile, resourceCompanyId: string | null): void {
+    if (profile.roleCode === 'ADMIN') {
       return;
     }
 
-    if (resourceCompanyId !== user.companyId) throw new NotFoundException();
+    if (resourceCompanyId !== profile.companyId) throw new NotFoundException();
   }
 
-  resolveTargetCompany(caller: AuthUser, requestedCompanyId?: string): string {
+  resolveTargetCompany(
+    caller: AuthProfile,
+    requestedCompanyId?: string,
+  ): string {
     const companyId =
       caller.roleCode === 'ADMIN' ? requestedCompanyId : caller.companyId;
     if (!companyId) throw new BadRequestException('companyId is required');

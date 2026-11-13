@@ -1,8 +1,8 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { BrandsService } from './brands.service';
 import { OwnershipService } from '../authorization/ownership.service';
-import { AuthUser } from '../auth/types/auth-user';
-import { UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import { ProfileStatus } from '../generated/prisma/enums';
 
 describe('BrandsService', () => {
   let service: BrandsService;
@@ -22,21 +22,21 @@ describe('BrandsService', () => {
     deleteObject: jest.Mock;
   };
 
-  const owner: AuthUser = {
+  const owner: AuthProfile = {
     id: 'owner-1',
     accountId: 'account-of-owner-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
-  const admin: AuthUser = {
+  const admin: AuthProfile = {
     id: 'admin-1',
     accountId: 'account-of-admin-1',
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
 
   beforeEach(() => {
@@ -117,7 +117,7 @@ describe('BrandsService', () => {
 
     expect(prisma.brand.update).toHaveBeenCalledWith({
       where: { id: 5 },
-      data: { deletedAt: expect.any(Date), deletedByUserId: 'owner-1' },
+      data: { deletedAt: expect.any(Date), deletedByProfileId: 'owner-1' },
     });
   });
 

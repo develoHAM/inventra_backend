@@ -24,7 +24,7 @@ describe('Company join code (e2e)', () => {
   const taxId = '990-00-00001';
   const password = 'password123';
 
-  // users.phone is unique across the shared DB: suite 12's own block
+  // accounts.phone is unique across the shared DB: suite 12's own block
   const nextPhone = testPhones(12);
 
   const auth = (token: string): [string, string] => [
@@ -62,12 +62,12 @@ describe('Company join code (e2e)', () => {
     // awaiting signUpMember already sent the request: check the response
     const signUp = await signUpMember(await joinCodeInDb(), email);
     expect(signUp.status).toBe(201);
-    const user = await prisma.user.findFirst({
+    const profile = await prisma.profile.findFirst({
       where: { account: { loginMethods: { some: { email: email } } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
-      .patch(`/users/${user!.id}/approve`)
+      .patch(`/profiles/${profile!.id}/approve`)
       .set(...auth(ownerAccess))
       .send({ roleId: role!.id, cornerId: null })
       .expect(200);

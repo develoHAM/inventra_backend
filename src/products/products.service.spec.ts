@@ -6,8 +6,8 @@ import {
 } from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { OwnershipService } from '../authorization/ownership.service';
-import { AuthUser } from '../auth/types/auth-user';
-import { UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import { ProfileStatus } from '../generated/prisma/enums';
 
 describe('ProductsService', () => {
   let service: ProductsService;
@@ -29,29 +29,29 @@ describe('ProductsService', () => {
     deleteObject: jest.Mock;
   };
 
-  const owner: AuthUser = {
+  const owner: AuthProfile = {
     id: 'owner-1',
     accountId: 'account-of-owner-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
-  const manager: AuthUser = {
+  const manager: AuthProfile = {
     id: 'mgr-1',
     accountId: 'account-of-mgr-1',
     companyId: 'company-1',
     roleId: 3,
     roleCode: 'MANAGER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
-  const admin: AuthUser = {
+  const admin: AuthProfile = {
     id: 'admin-1',
     accountId: 'account-of-admin-1',
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
 
   const dto = {
@@ -102,7 +102,7 @@ describe('ProductsService', () => {
         data: expect.objectContaining({
           barcode: 'BC-1',
           companyId: 'company-1',
-          createdByUserId: 'owner-1',
+          createdByProfileId: 'owner-1',
         }),
       });
     });
@@ -139,7 +139,7 @@ describe('ProductsService', () => {
       expect(prisma.product.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           companyId: 'company-9',
-          createdByUserId: 'admin-1',
+          createdByProfileId: 'admin-1',
         }),
       });
     });
@@ -185,14 +185,14 @@ describe('ProductsService', () => {
       prisma.product.findFirst.mockResolvedValue({
         id: 'p1',
         companyId: 'company-1',
-        createdByUserId: 'someone-else',
+        createdByProfileId: 'someone-else',
       });
 
       await service.remove(owner, 'p1');
 
       expect(prisma.product.update).toHaveBeenCalledWith({
         where: { id: 'p1' },
-        data: { deletedAt: expect.any(Date), deletedByUserId: 'owner-1' },
+        data: { deletedAt: expect.any(Date), deletedByProfileId: 'owner-1' },
       });
     });
 
@@ -200,7 +200,7 @@ describe('ProductsService', () => {
       prisma.product.findFirst.mockResolvedValue({
         id: 'p1',
         companyId: 'company-1',
-        createdByUserId: 'someone-else',
+        createdByProfileId: 'someone-else',
       });
 
       await expect(service.remove(manager, 'p1')).rejects.toThrow(
@@ -213,14 +213,14 @@ describe('ProductsService', () => {
       prisma.product.findFirst.mockResolvedValue({
         id: 'p1',
         companyId: 'company-1',
-        createdByUserId: 'mgr-1',
+        createdByProfileId: 'mgr-1',
       });
 
       await service.remove(manager, 'p1');
 
       expect(prisma.product.update).toHaveBeenCalledWith({
         where: { id: 'p1' },
-        data: { deletedAt: expect.any(Date), deletedByUserId: 'mgr-1' },
+        data: { deletedAt: expect.any(Date), deletedByProfileId: 'mgr-1' },
       });
     });
   });

@@ -15,8 +15,8 @@ import {
 } from '@nestjs/common';
 import { BrandsService } from './brands.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { AuthUser } from '../auth/types/auth-user';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { AuthProfile } from '../auth/types/auth-profile';
 import { CreateBrandDto } from './dto/create-brand.dto';
 import { UpdateBrandDto } from './dto/update-brand.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -29,14 +29,14 @@ export class BrandsController {
 
   @RequirePermissions('brands.read')
   @Get()
-  findAll(@CurrentUser() caller: AuthUser) {
+  findAll(@CurrentProfile() caller: AuthProfile) {
     return this.brands.findAll(caller);
   }
 
   @RequirePermissions('brands.read')
   @Get(':id')
   findOne(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.brands.findOne(caller, id);
@@ -44,14 +44,14 @@ export class BrandsController {
 
   @RequirePermissions('brands.create')
   @Post()
-  create(@CurrentUser() caller: AuthUser, @Body() dto: CreateBrandDto) {
+  create(@CurrentProfile() caller: AuthProfile, @Body() dto: CreateBrandDto) {
     return this.brands.create(caller, dto);
   }
 
   @RequirePermissions('brands.update')
   @Patch(':id')
   update(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateBrandDto,
   ) {
@@ -61,7 +61,7 @@ export class BrandsController {
   @RequirePermissions('brands.delete')
   @Delete(':id')
   remove(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.brands.remove(caller, id);
@@ -71,7 +71,7 @@ export class BrandsController {
   @Post(':id/logo')
   @UseInterceptors(FileInterceptor('file'))
   uploadLogo(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseIntPipe) id: number,
     @UploadedFile(
       new ParseFilePipe({
@@ -89,7 +89,7 @@ export class BrandsController {
   @RequirePermissions('brands.update')
   @Post(':id/logo/presign')
   presignLogo(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: PresignUploadDto,
   ) {
@@ -99,7 +99,7 @@ export class BrandsController {
   @RequirePermissions('brands.update')
   @Post(':id/logo/confirm')
   confirmLogo(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ConfirmUploadDto,
   ) {

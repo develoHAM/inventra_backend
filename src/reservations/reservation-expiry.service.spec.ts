@@ -10,7 +10,7 @@ describe('ReservationExpiryService', () => {
     id: 'res-1',
     companyStoreProductId: 7,
     reservedQuantity: 3,
-    createdByUserId: 'owner-1',
+    createdByProfileId: 'owner-1',
   };
 
   beforeEach(() => {

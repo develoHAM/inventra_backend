@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
-import { AuthUser } from '../auth/types/auth-user';
+import { AuthProfile } from '../auth/types/auth-profile';
 
 @Injectable()
 export class StoresService {
@@ -37,11 +37,11 @@ export class StoresService {
     return this.prisma.store.update({ where: { id: id }, data: dto });
   }
 
-  async remove(caller: AuthUser, id: string) {
+  async remove(caller: AuthProfile, id: string) {
     await this.findOne(id);
     return this.prisma.store.update({
       where: { id: id },
-      data: { deletedAt: new Date(), deletedByUserId: caller.id },
+      data: { deletedAt: new Date(), deletedByProfileId: caller.id },
     });
   }
 }

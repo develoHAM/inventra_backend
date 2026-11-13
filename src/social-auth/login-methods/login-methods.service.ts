@@ -62,7 +62,7 @@ export class LoginMethodsService {
   }
 
   async list(accountId: string): Promise<LoginMethodSummary[]> {
-    const rows = await this.prisma.userLoginMethod.findMany({
+    const rows = await this.prisma.accountLoginMethod.findMany({
       where: { accountId: accountId },
       select: { id: true, method: true, email: true },
       orderBy: { createdAt: 'asc' },
@@ -82,7 +82,7 @@ export class LoginMethodsService {
   ): Promise<LoginMethodSummary> {
     const identity = await this.socialAuth.identify(body);
 
-    const [linked] = await this.prisma.userLoginMethod.createManyAndReturn({
+    const [linked] = await this.prisma.accountLoginMethod.createManyAndReturn({
       data: [
         {
           accountId: accountId,
@@ -110,7 +110,7 @@ export class LoginMethodsService {
     accountId: string,
     identity: SocialIdentity,
   ): Promise<string> {
-    const holder = await this.prisma.userLoginMethod.findUnique({
+    const holder = await this.prisma.accountLoginMethod.findUnique({
       where: {
         method_providerUserId: {
           method: identity.provider,
@@ -135,11 +135,11 @@ export class LoginMethodsService {
     dto: LinkPasswordDto,
   ): Promise<LoginMethodSummary> {
     const [ownPasswordLogin, emailInUse] = await Promise.all([
-      this.prisma.userLoginMethod.findUnique({
+      this.prisma.accountLoginMethod.findUnique({
         where: { accountId_method: { accountId: accountId, method: 'local' } },
         select: { id: true },
       }),
-      this.prisma.userLoginMethod.findFirst({
+      this.prisma.accountLoginMethod.findFirst({
         where: { method: 'local', email: dto.email }, // both sides lowercase
         select: { id: true },
       }),
@@ -157,22 +157,24 @@ export class LoginMethodsService {
         token: dto.emailVerificationToken,
         email: dto.email,
       });
-      const [linked] = await transaction.userLoginMethod.createManyAndReturn({
-        data: [
-          {
-            accountId: accountId,
-            method: 'local',
-            email: dto.email,
-            emailVerified: true,
-            passwordHash: passwordHash,
-          },
-        ],
-        // both rules, enforced by the database even for requests at the same instant:
-        // one password login per account (accountId, method), one account per
-        // password-login email (UQ_login_methods_local_email)
-        skipDuplicates: true,
-        select: { id: true, method: true, email: true },
-      });
+      const [linked] = await transaction.accountLoginMethod.createManyAndReturn(
+        {
+          data: [
+            {
+              accountId: accountId,
+              method: 'local',
+              email: dto.email,
+              emailVerified: true,
+              passwordHash: passwordHash,
+            },
+          ],
+          // both rules, enforced by the database even for requests at the same instant:
+          // one password login per account (accountId, method), one account per
+          // password-login email (UQ_login_methods_local_email)
+          skipDuplicates: true,
+          select: { id: true, method: true, email: true },
+        },
+      );
       if (!linked) {
         throw new ConflictException(
           await this.whyPasswordNotLinked(transaction, accountId),
@@ -187,7 +189,7 @@ export class LoginMethodsService {
     transaction: Prisma.TransactionClient,
     accountId: string,
   ): Promise<string> {
-    const ownPasswordLogin = await transaction.userLoginMethod.findUnique({
+    const ownPasswordLogin = await transaction.accountLoginMethod.findUnique({
       where: { accountId_method: { accountId: accountId, method: 'local' } },
       select: { id: true },
     });
@@ -211,12 +213,12 @@ export class LoginMethodsService {
         data: { updatedAt: new Date() },
       });
 
-      const target = await transaction.userLoginMethod.findFirst({
+      const target = await transaction.accountLoginMethod.findFirst({
         where: { id: loginMethodId, accountId: accountId },
       });
       if (!target) return null;
 
-      const count = await transaction.userLoginMethod.count({
+      const count = await transaction.accountLoginMethod.count({
         where: { accountId: accountId },
       });
       if (count <= 1) {
@@ -224,7 +226,7 @@ export class LoginMethodsService {
           'An account needs at least one way to sign in',
         );
       }
-      await transaction.userLoginMethod.delete({ where: { id: target.id } });
+      await transaction.accountLoginMethod.delete({ where: { id: target.id } });
       return target;
     });
     if (!removed) throw new NotFoundException('Login method not found');

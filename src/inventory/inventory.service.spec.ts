@@ -4,8 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
-import { AuthUser } from '../auth/types/auth-user';
-import { UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import { ProfileStatus } from '../generated/prisma/enums';
 import { NotificationEvent } from '../notifications/notification-events';
 
 describe('InventoryService', () => {
@@ -15,13 +15,13 @@ describe('InventoryService', () => {
   let transaction: any;
   let eventEmitter: { emit: jest.Mock };
 
-  const owner: AuthUser = {
+  const owner: AuthProfile = {
     id: 'owner-1',
     accountId: 'account-of-owner-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
   const placement = {
     id: 7,
@@ -97,7 +97,7 @@ describe('InventoryService', () => {
         quantity: 2,
         quantityBefore: 5,
         quantityAfter: 3,
-        createdByUserId: 'owner-1',
+        createdByProfileId: 'owner-1',
         sourceType: null,
         sourceId: null,
       }),
@@ -201,7 +201,7 @@ describe('InventoryService', () => {
         transactionType: 'ADJUSTMENT',
         quantityBefore: 5,
         quantityAfter: 12,
-        createdByUserId: 'owner-1',
+        createdByProfileId: 'owner-1',
         sourceType: 'AUDIT',
         sourceId: 'audit-1',
       }),

@@ -11,7 +11,7 @@ import { SocialNonceService } from './social-nonce.service';
 import { SignupTicketService } from './signup-tickets/signup-ticket.service';
 import type { SignupProfile } from './signup-tickets/signup-ticket.service';
 import type { SocialSignInDto } from './dto/social-sign-in.dto';
-import type { UserStatus } from '../generated/prisma/enums';
+import type { ProfileStatus } from '../generated/prisma/enums';
 import type {
   SocialIdentity,
   SocialIdentityVerifier,
@@ -23,9 +23,9 @@ export type SocialSignInResult =
       status: 'LOGGED_IN';
       accessToken: string;
       refreshToken: string;
-      user: {
+      profile: {
         id: string;
-        status: UserStatus;
+        status: ProfileStatus;
         companyId: string | null;
         roleId: number | null;
       };
@@ -94,7 +94,7 @@ export class SocialAuthService {
     const identity = await this.identify(body);
 
     // Have we seen this identity before?
-    const login = await this.prisma.userLoginMethod.findUnique({
+    const login = await this.prisma.accountLoginMethod.findUnique({
       where: {
         method_providerUserId: {
           method: provider,
@@ -123,7 +123,7 @@ export class SocialAuthService {
     );
     if (!profile) throw new UnauthorizedException('Account cannot sign in');
 
-    await this.prisma.userLoginMethod.update({
+    await this.prisma.accountLoginMethod.update({
       where: { id: login.id },
       data: {
         lastLoginAt: new Date(),
@@ -144,7 +144,7 @@ export class SocialAuthService {
       status: 'LOGGED_IN',
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
-      user: profile, // { id, status, companyId, roleId } of the open profile
+      profile: profile, // { id, status, companyId, roleId } of the open profile
     };
   }
 }

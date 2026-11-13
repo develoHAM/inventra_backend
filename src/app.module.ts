@@ -6,13 +6,13 @@ import { Env, validateEnv } from './config/env.schema';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { AuthorizationModule } from './authorization/authorization.module';
-import { UsersModule } from './users/users.module';
+import { CompaniesModule } from './companies/companies.module';
 import { CategoriesModule } from './categories/categories.module';
 import { BrandsModule } from './brands/brands.module';
 import { ProductsModule } from './products/products.module';
 import { StoresModule } from './stores/stores.module';
 import { CornersModule } from './corners/corners.module';
-import { MembersModule } from './members/members.module';
+import { ProfilesModule } from './profiles/profiles.module';
 import { PlacementsModule } from './placements/placements.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { OrdersModule } from './orders/orders.module';
@@ -56,13 +56,13 @@ import { SocialAuthModule } from './social-auth/social-auth.module';
     SpreadsheetModule,
     AuthModule,
     AuthorizationModule,
-    UsersModule,
+    CompaniesModule,
     CategoriesModule,
     BrandsModule,
     ProductsModule,
     StoresModule,
     CornersModule,
-    MembersModule,
+    ProfilesModule,
     PlacementsModule,
     InventoryModule,
     OrdersModule,

@@ -1,20 +1,20 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuthUser } from '../auth/types/auth-user';
+import { AuthProfile } from '../auth/types/auth-profile';
 import { PermissionEffect } from '../generated/prisma/enums';
 
 @Injectable()
 export class PermissionsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getEffectivePermissions(user: AuthUser): Promise<Set<string>> {
-    if (!user.roleId) {
+  async getEffectivePermissions(profile: AuthProfile): Promise<Set<string>> {
+    if (!profile.roleId) {
       return new Set();
     }
 
     const role = await this.prisma.role.findUnique({
       where: {
-        id: user.roleId,
+        id: profile.roleId,
       },
       select: {
         rolePermissions: {
@@ -37,8 +37,8 @@ export class PermissionsService {
       ),
     );
 
-    const overrides = await this.prisma.userPermission.findMany({
-      where: { userId: user.id },
+    const overrides = await this.prisma.profilePermission.findMany({
+      where: { profileId: profile.id },
       select: {
         effect: true,
         permission: { select: { code: true } },

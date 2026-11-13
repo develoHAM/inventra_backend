@@ -20,10 +20,10 @@ describe('Members (e2e)', () => {
   let managerAccess: string;
   let staffAccess: string;
 
-  let ownerUserId: string;
-  let managerUserId: string;
-  let staffUserId: string;
-  let staff2UserId: string;
+  let ownerProfileId: string;
+  let managerProfileId: string;
+  let staffProfileId: string;
+  let staff2ProfileId: string;
   let staff2Access: string; // signed in as staff; kept through promotion and demotion
 
   let branchAId: string;
@@ -33,9 +33,9 @@ describe('Members (e2e)', () => {
   let joinCode1: string;
   let joinCode2: string;
   let company2Id: string;
-  let owner2UserId: string;
+  let owner2ProfileId: string;
 
-  // users.phone is unique across the shared DB: suite 16's own block
+  // accounts.phone is unique across the shared DB: suite 16's own block
   const nextPhone = testPhones(16);
 
   // register a company → ADMIN approves it → owner logs in
@@ -66,12 +66,12 @@ describe('Members (e2e)', () => {
       .post('/auth/login')
       .send({ email: email, password: password })
       .expect(201);
-    const owner = await prisma.user.findFirst({
+    const owner = await prisma.profile.findFirst({
       where: { account: { loginMethods: { some: { email: email } } } },
     });
     return {
       access: login.body.accessToken as string,
-      userId: owner!.id,
+      profileId: owner!.id,
       companyId: company!.id,
       joinCode: company!.joinCode,
     };
@@ -96,12 +96,12 @@ describe('Members (e2e)', () => {
         phoneVerificationToken: token,
       })
       .expect(201);
-    const user = await prisma.user.findFirst({
+    const profile = await prisma.profile.findFirst({
       where: { account: { loginMethods: { some: { email: email } } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
-      .patch(`/users/${user!.id}/approve`)
+      .patch(`/profiles/${profile!.id}/approve`)
       .set('Authorization', `Bearer ${ownerAccess}`)
       .send({ roleId: role!.id, cornerId: null })
       .expect(200);
@@ -109,7 +109,7 @@ describe('Members (e2e)', () => {
       .post('/auth/login')
       .send({ email: email, password: password })
       .expect(201);
-    return { access: login.body.accessToken as string, userId: user!.id };
+    return { access: login.body.accessToken as string, profileId: profile!.id };
   };
 
   // member self-registers via join code and waits for approval (not approved here)
@@ -129,22 +129,22 @@ describe('Members (e2e)', () => {
         phoneVerificationToken: token,
       })
       .expect(201);
-    const user = await prisma.user.findFirst({
+    const profile = await prisma.profile.findFirst({
       where: {
         account: { loginMethods: { some: { email: `${tag}@mbr.test` } } },
       },
     });
-    return user!.id;
+    return profile!.id;
   };
 
   const approve = (
     access: string,
-    userId: string,
+    profileId: string,
     roleId: number,
     cornerId: string | null,
   ) =>
     request(http)
-      .patch(`/users/${userId}/approve`)
+      .patch(`/profiles/${profileId}/approve`)
       .set('Authorization', `Bearer ${access}`)
       .send({ roleId: roleId, cornerId: cornerId });
 
@@ -153,19 +153,19 @@ describe('Members (e2e)', () => {
 
   const setRole = (
     access: string,
-    userId: string,
+    profileId: string,
     role: string,
     cornerId?: string | null,
   ) =>
     request(http)
-      .put(`/users/${userId}/role`)
+      .put(`/profiles/${profileId}/role`)
       .set('Authorization', `Bearer ${access}`)
       // cornerId left undefined is dropped from the JSON: "not sent"
       .send({ role: role, cornerId: cornerId });
 
-  const userIdByEmail = async (email: string) =>
+  const profileIdByEmail = async (email: string) =>
     (
-      await prisma.user.findFirstOrThrow({
+      await prisma.profile.findFirstOrThrow({
         where: { account: { loginMethods: { some: { email: email } } } },
       })
     ).id;
@@ -179,15 +179,15 @@ describe('Members (e2e)', () => {
     return response.body.id as string;
   };
 
-  const moveTo = (access: string, userId: string, cornerId: string | null) =>
+  const moveTo = (access: string, profileId: string, cornerId: string | null) =>
     request(http)
-      .put(`/users/${userId}/branch`)
+      .put(`/profiles/${profileId}/branch`)
       .set('Authorization', `Bearer ${access}`)
       .send({ cornerId: cornerId });
 
-  const historyOf = (userId: string) =>
+  const historyOf = (profileId: string) =>
     prisma.membershipChange.findMany({
-      where: { userId: userId },
+      where: { profileId: profileId },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -232,10 +232,10 @@ describe('Members (e2e)', () => {
     const company1 = await registerCompany(1);
     joinCode1 = company1.joinCode;
     ownerAccess = company1.access;
-    ownerUserId = company1.userId;
+    ownerProfileId = company1.profileId;
     const company2 = await registerCompany(2);
     owner2Access = company2.access;
-    owner2UserId = company2.userId;
+    owner2ProfileId = company2.profileId;
     company2Id = company2.companyId;
     joinCode2 = company2.joinCode;
 
@@ -255,12 +255,12 @@ describe('Members (e2e)', () => {
       'manager',
     );
     managerAccess = manager.access;
-    managerUserId = manager.userId;
+    managerProfileId = manager.profileId;
     const staff = await registerMember(company1.joinCode, 'STAFF', 'staff');
     staffAccess = staff.access;
-    staffUserId = staff.userId;
+    staffProfileId = staff.profileId;
     const staff2 = await registerMember(company1.joinCode, 'STAFF', 'staff2');
-    staff2UserId = staff2.userId;
+    staff2ProfileId = staff2.profileId;
     staff2Access = staff2.access;
   });
 
@@ -283,17 +283,17 @@ describe('Members (e2e)', () => {
     it('the owner puts the manager and the staff into Branch A', async () => {
       const managerMoved = await moveTo(
         ownerAccess,
-        managerUserId,
+        managerProfileId,
         branchAId,
       ).expect(200);
       expect(managerMoved.body).toMatchObject({
-        id: managerUserId,
+        id: managerProfileId,
         role: { code: 'MANAGER' },
         branch: { id: branchAId, name: 'Branch A' },
       });
 
-      for (const userId of [staffUserId, staff2UserId]) {
-        await moveTo(ownerAccess, userId, branchAId).expect(200);
+      for (const profileId of [staffProfileId, staff2ProfileId]) {
+        await moveTo(ownerAccess, profileId, branchAId).expect(200);
       }
     });
 
@@ -311,13 +311,13 @@ describe('Members (e2e)', () => {
     });
 
     it('the owner moves staff A → B → no branch; each move is one history row', async () => {
-      await moveTo(ownerAccess, staffUserId, branchBId).expect(200);
-      const offBranch = await moveTo(ownerAccess, staffUserId, null).expect(
+      await moveTo(ownerAccess, staffProfileId, branchBId).expect(200);
+      const offBranch = await moveTo(ownerAccess, staffProfileId, null).expect(
         200,
       );
       expect(offBranch.body.branch).toBeNull();
 
-      const moves = (await historyOf(staffUserId)).filter(
+      const moves = (await historyOf(staffProfileId)).filter(
         (row) => row.reason === 'MOVED',
       );
       expect(
@@ -329,7 +329,7 @@ describe('Members (e2e)', () => {
       ]);
       for (const row of moves) {
         expect(row.fromRoleId).toBe(row.toRoleId); // a snapshot: role unchanged
-        expect(row.changedByUserId).toBe(ownerUserId);
+        expect(row.changedByProfileId).toBe(ownerProfileId);
       }
     });
 
@@ -340,50 +340,53 @@ describe('Members (e2e)', () => {
     it('the moved member is notified', async () => {
       const notification = await waitFor(() =>
         prisma.notification.findFirst({
-          where: { recipientUserId: staffUserId, eventType: 'member.moved' },
+          where: {
+            recipientProfileId: staffProfileId,
+            eventType: 'member.moved',
+          },
         }),
       );
       expect(notification.channel).toBe('EMAIL');
     });
 
     it('moving someone to the branch they are already in changes nothing', async () => {
-      const before = (await historyOf(staff2UserId)).length;
+      const before = (await historyOf(staff2ProfileId)).length;
 
-      await moveTo(ownerAccess, staff2UserId, branchAId).expect(200);
+      await moveTo(ownerAccess, staff2ProfileId, branchAId).expect(200);
 
-      expect(await historyOf(staff2UserId)).toHaveLength(before);
+      expect(await historyOf(staff2ProfileId)).toHaveLength(before);
     });
 
     it('managers and staff cannot move anyone (403)', async () => {
-      await moveTo(managerAccess, staff2UserId, branchBId).expect(403);
-      await moveTo(staffAccess, staff2UserId, branchBId).expect(403);
+      await moveTo(managerAccess, staff2ProfileId, branchBId).expect(403);
+      await moveTo(staffAccess, staff2ProfileId, branchBId).expect(403);
     });
 
     it("another company's owner cannot see the member (404)", async () => {
-      await moveTo(owner2Access, staff2UserId, company2BranchId).expect(404);
+      await moveTo(owner2Access, staff2ProfileId, company2BranchId).expect(404);
     });
 
     it('a branch of another company is not found (404) and nothing changes', async () => {
-      await moveTo(ownerAccess, staff2UserId, company2BranchId).expect(404);
+      await moveTo(ownerAccess, staff2ProfileId, company2BranchId).expect(404);
 
-      const staff2 = await prisma.user.findUnique({
-        where: { id: staff2UserId },
+      const staff2 = await prisma.profile.findUnique({
+        where: { id: staff2ProfileId },
       });
       expect(staff2!.companyStoreId).toBe(branchAId);
     });
 
     it('owners have no branch (400); cornerId is required (400)', async () => {
-      await moveTo(ownerAccess, ownerUserId, branchAId).expect(400);
+      await moveTo(ownerAccess, ownerProfileId, branchAId).expect(400);
       await request(http)
-        .put(`/users/${staff2UserId}/branch`)
+        .put(`/profiles/${staff2ProfileId}/branch`)
         .set('Authorization', `Bearer ${ownerAccess}`)
         .send({})
         .expect(400);
     });
 
     it('the admin can move a member of any company', async () => {
-      await moveTo(adminAccess, staff2UserId, branchBId).expect(200);
-      await moveTo(adminAccess, staff2UserId, branchAId).expect(200);
+      await moveTo(adminAccess, staff2ProfileId, branchBId).expect(200);
+      await moveTo(adminAccess, staff2ProfileId, branchAId).expect(200);
 
       // staff2 was moved 3 times (owner → A, admin → B, admin → A). Wait for
       // all 3 emails to be sent, so the app isn't closed while the
@@ -391,7 +394,7 @@ describe('Members (e2e)', () => {
       await waitFor(async () => {
         const sent = await prisma.notification.count({
           where: {
-            recipientUserId: staff2UserId,
+            recipientProfileId: staff2ProfileId,
             eventType: 'member.moved',
             status: 'SENT',
           },
@@ -425,7 +428,7 @@ describe('Members (e2e)', () => {
         toRoleId: await roleIdOf('STAFF'),
         fromCompanyStoreId: null,
         toCompanyStoreId: branchAId,
-        changedByUserId: managerUserId,
+        changedByProfileId: managerProfileId,
       });
     });
 
@@ -451,7 +454,7 @@ describe('Members (e2e)', () => {
         null,
       ).expect(403);
 
-      const stillPending = await prisma.user.findUniqueOrThrow({
+      const stillPending = await prisma.profile.findUniqueOrThrow({
         where: { id: newcomerId },
       });
       expect(stillPending.status).toBe('PENDING_APPROVAL');
@@ -483,7 +486,7 @@ describe('Members (e2e)', () => {
         company2BranchId,
       ).expect(404);
 
-      const stillPending = await prisma.user.findUniqueOrThrow({
+      const stillPending = await prisma.profile.findUniqueOrThrow({
         where: { id: newcomerId },
       });
       expect(stillPending.status).toBe('PENDING_APPROVAL');
@@ -514,7 +517,7 @@ describe('Members (e2e)', () => {
       const newcomerId = await registerPending('newcomer6');
 
       await request(http)
-        .patch(`/users/${newcomerId}/approve`)
+        .patch(`/profiles/${newcomerId}/approve`)
         .set('Authorization', `Bearer ${ownerAccess}`)
         .send({ roleId: await roleIdOf('STAFF') })
         .expect(400);
@@ -538,7 +541,7 @@ describe('Members (e2e)', () => {
           ownerPhoneVerificationToken: token,
         })
         .expect(201);
-      const pendingOwnerId = await userIdByEmail('owner3@mbr.test');
+      const pendingOwnerId = await profileIdByEmail('owner3@mbr.test');
 
       await approve(
         adminAccess,
@@ -547,7 +550,7 @@ describe('Members (e2e)', () => {
         null,
       ).expect(400);
 
-      const pendingOwner = await prisma.user.findUniqueOrThrow({
+      const pendingOwner = await prisma.profile.findUniqueOrThrow({
         where: { id: pendingOwnerId },
         include: { role: true },
       });
@@ -556,16 +559,16 @@ describe('Members (e2e)', () => {
       expect(await historyOf(pendingOwnerId)).toEqual([]);
     });
 
-    it('staff given a personal users.approve grant still cannot approve (403), nor see who is waiting: the role decides', async () => {
+    it('staff given a personal profiles.approve grant still cannot approve (403), nor see who is waiting: the role decides', async () => {
       const newcomerId = await registerPending('newcomer7');
       const approvePermission = await prisma.permission.findUniqueOrThrow({
-        where: { code: 'users.approve' },
+        where: { code: 'profiles.approve' },
       });
       // The grant lets staff past the permission guard; the service's rule
       // for their role must still refuse.
-      await prisma.userPermission.create({
+      await prisma.profilePermission.create({
         data: {
-          userId: staffUserId,
+          profileId: staffProfileId,
           permissionId: approvePermission.id,
           effect: 'GRANT',
         },
@@ -580,7 +583,7 @@ describe('Members (e2e)', () => {
 
         // Pending people are listed only for those who can really approve.
         const list = await request(http)
-          .get('/users')
+          .get('/profiles')
           .set('Authorization', `Bearer ${staffAccess}`)
           .expect(200);
         const listedIds = (list.body as Array<{ id: string }>).map(
@@ -588,17 +591,17 @@ describe('Members (e2e)', () => {
         );
         expect(listedIds).not.toContain(newcomerId);
       } finally {
-        await prisma.userPermission.delete({
+        await prisma.profilePermission.delete({
           where: {
-            userId_permissionId: {
-              userId: staffUserId,
+            profileId_permissionId: {
+              profileId: staffProfileId,
               permissionId: approvePermission.id,
             },
           },
         });
       }
 
-      const newcomer = await prisma.user.findUniqueOrThrow({
+      const newcomer = await prisma.profile.findUniqueOrThrow({
         where: { id: newcomerId },
       });
       expect(newcomer.status).toBe('PENDING_APPROVAL');
@@ -609,7 +612,7 @@ describe('Members (e2e)', () => {
     let promotedId: string; // newcomer1: STAFF in Branch A, approved by the manager
 
     beforeAll(async () => {
-      promotedId = await userIdByEmail('newcomer1@mbr.test');
+      promotedId = await profileIdByEmail('newcomer1@mbr.test');
     });
 
     it('a manager promotes staff of their own branch to manager; they stay there', async () => {
@@ -630,7 +633,7 @@ describe('Members (e2e)', () => {
         toRoleId: await roleIdOf('MANAGER'),
         fromCompanyStoreId: branchAId,
         toCompanyStoreId: branchAId, // a snapshot: the branch didn't change
-        changedByUserId: managerUserId,
+        changedByProfileId: managerProfileId,
       });
     });
 
@@ -638,7 +641,7 @@ describe('Members (e2e)', () => {
       await waitFor(() =>
         prisma.notification.findFirst({
           where: {
-            recipientUserId: promotedId,
+            recipientProfileId: promotedId,
             eventType: 'member.roleChanged',
           },
         }),
@@ -646,9 +649,9 @@ describe('Members (e2e)', () => {
     });
 
     it('a manager cannot promote outside their branch, demote a manager, or touch an owner (403)', async () => {
-      await setRole(managerAccess, staffUserId, 'MANAGER').expect(403); // staff has no branch
+      await setRole(managerAccess, staffProfileId, 'MANAGER').expect(403); // staff has no branch
       await setRole(managerAccess, promotedId, 'STAFF').expect(403);
-      await setRole(managerAccess, ownerUserId, 'STAFF').expect(403);
+      await setRole(managerAccess, ownerProfileId, 'STAFF').expect(403);
     });
 
     it('staff cannot change roles at all (403)', async () => {
@@ -672,9 +675,11 @@ describe('Members (e2e)', () => {
     });
 
     it('the owner promotes staff to owner; they leave their branch', async () => {
-      const changed = await setRole(ownerAccess, staff2UserId, 'OWNER').expect(
-        200,
-      );
+      const changed = await setRole(
+        ownerAccess,
+        staff2ProfileId,
+        'OWNER',
+      ).expect(200);
 
       expect(changed.body).toMatchObject({
         role: { code: 'OWNER' },
@@ -682,20 +687,20 @@ describe('Members (e2e)', () => {
       });
       // The token staff2 signed in with as staff now opens owner-only routes:
       // a move (owners only) of the manager into the branch they're already in.
-      await moveTo(staff2Access, managerUserId, branchAId).expect(200);
+      await moveTo(staff2Access, managerProfileId, branchAId).expect(200);
     });
 
     it('owners cannot demote another owner, or themselves (403)', async () => {
-      await setRole(ownerAccess, staff2UserId, 'MANAGER').expect(403);
-      await setRole(ownerAccess, ownerUserId, 'MANAGER').expect(403);
+      await setRole(ownerAccess, staff2ProfileId, 'MANAGER').expect(403);
+      await setRole(ownerAccess, ownerProfileId, 'MANAGER').expect(403);
     });
 
     it('the admin demotes one of two owners into Branch B; the last owner stays (409)', async () => {
-      await setRole(adminAccess, staff2UserId, 'STAFF').expect(400); // must say where they go
+      await setRole(adminAccess, staff2ProfileId, 'STAFF').expect(400); // must say where they go
 
       const demoted = await setRole(
         adminAccess,
-        staff2UserId,
+        staff2ProfileId,
         'STAFF',
         branchBId,
       ).expect(200);
@@ -704,9 +709,9 @@ describe('Members (e2e)', () => {
         branch: { id: branchBId },
       });
 
-      await setRole(adminAccess, ownerUserId, 'STAFF', null).expect(409);
-      const owner = await prisma.user.findUniqueOrThrow({
-        where: { id: ownerUserId },
+      await setRole(adminAccess, ownerProfileId, 'STAFF', null).expect(409);
+      const owner = await prisma.profile.findUniqueOrThrow({
+        where: { id: ownerProfileId },
         include: { role: true },
       });
       expect(owner.role!.code).toBe('OWNER');
@@ -715,7 +720,7 @@ describe('Members (e2e)', () => {
     it("the demoted owner's existing token loses owner-only routes (403)", async () => {
       // Same token as before the demotion: the guard reads the role from the
       // database on every request.
-      await moveTo(staff2Access, managerUserId, branchAId).expect(403);
+      await moveTo(staff2Access, managerProfileId, branchAId).expect(403);
     });
 
     it('two admin demotions of the last two owners at once leave exactly one owner', async () => {
@@ -733,12 +738,12 @@ describe('Members (e2e)', () => {
       // [200, 409] comes out with or without the lock. The next test proves
       // the lock itself.
       const results = await Promise.all([
-        setRole(adminAccess, owner2UserId, 'STAFF', null),
+        setRole(adminAccess, owner2ProfileId, 'STAFF', null),
         setRole(adminAccess, secondOwnerId, 'STAFF', null),
       ]);
 
       expect(results.map((result) => result.status).sort()).toEqual([200, 409]);
-      const owners = await prisma.user.findMany({
+      const owners = await prisma.profile.findMany({
         where: {
           companyId: company2Id,
           role: { code: 'OWNER' },
@@ -749,14 +754,14 @@ describe('Members (e2e)', () => {
       expect(owners).toHaveLength(1);
 
       // keep company 2's original owner an owner for the rest of the suite
-      if (owners[0].id !== owner2UserId) {
-        await setRole(adminAccess, owner2UserId, 'OWNER').expect(200);
+      if (owners[0].id !== owner2ProfileId) {
+        await setRole(adminAccess, owner2ProfileId, 'OWNER').expect(200);
       }
     });
 
     it('an owner demotion waits for the company row lock before counting owners', async () => {
-      const owner = await prisma.user.findUniqueOrThrow({
-        where: { id: ownerUserId },
+      const owner = await prisma.profile.findUniqueOrThrow({
+        where: { id: ownerProfileId },
       });
       const company1Id = owner.companyId!;
 
@@ -782,7 +787,7 @@ describe('Members (e2e)', () => {
 
       // Company 1's only owner: once it gets in, the count says 1 → 409.
       let answered = false;
-      const demotion = setRole(adminAccess, ownerUserId, 'STAFF', null).then(
+      const demotion = setRole(adminAccess, ownerProfileId, 'STAFF', null).then(
         (response) => {
           answered = true;
           return response;
@@ -806,9 +811,9 @@ describe('Members (e2e)', () => {
 
     beforeAll(async () => {
       branchCId = await openBranch(ownerAccess, storeId, 'Branch C');
-      releasedManagerId = await userIdByEmail('newcomer3@mbr.test');
+      releasedManagerId = await profileIdByEmail('newcomer3@mbr.test');
       await moveTo(ownerAccess, releasedManagerId, branchCId).expect(200);
-      await moveTo(ownerAccess, staffUserId, branchCId).expect(200);
+      await moveTo(ownerAccess, staffProfileId, branchCId).expect(200);
     });
 
     it('the owner deletes Branch C: its manager and staff now have no branch', async () => {
@@ -817,9 +822,9 @@ describe('Members (e2e)', () => {
         .set('Authorization', `Bearer ${ownerAccess}`)
         .expect(200);
 
-      for (const userId of [releasedManagerId, staffUserId]) {
-        const member = await prisma.user.findUniqueOrThrow({
-          where: { id: userId },
+      for (const profileId of [releasedManagerId, staffProfileId]) {
+        const member = await prisma.profile.findUniqueOrThrow({
+          where: { id: profileId },
         });
         expect(member.companyStoreId).toBeNull();
       }
@@ -830,22 +835,22 @@ describe('Members (e2e)', () => {
         where: { reason: 'BRANCH_DELETED', fromCompanyStoreId: branchCId },
       });
 
-      expect(rows.map((row) => row.userId).sort()).toEqual(
-        [releasedManagerId, staffUserId].sort(),
+      expect(rows.map((row) => row.profileId).sort()).toEqual(
+        [releasedManagerId, staffProfileId].sort(),
       );
       for (const row of rows) {
         expect(row.toCompanyStoreId).toBeNull();
         expect(row.fromRoleId).toBe(row.toRoleId); // a snapshot: role unchanged
-        expect(row.changedByUserId).toBe(ownerUserId);
+        expect(row.changedByProfileId).toBe(ownerProfileId);
       }
     });
 
     it('each released person is told their branch was closed', async () => {
-      for (const userId of [releasedManagerId, staffUserId]) {
+      for (const profileId of [releasedManagerId, staffProfileId]) {
         await waitFor(() =>
           prisma.notification.findFirst({
             where: {
-              recipientUserId: userId,
+              recipientProfileId: profileId,
               eventType: 'member.moved',
               AND: [
                 { body: { contains: 'Branch C' } },
@@ -858,7 +863,7 @@ describe('Members (e2e)', () => {
     });
 
     it('nobody can be moved into the deleted branch (404)', async () => {
-      await moveTo(ownerAccess, staff2UserId, branchCId).expect(404);
+      await moveTo(ownerAccess, staff2ProfileId, branchCId).expect(404);
     });
 
     it('deleting it again is 404, and writes no more history', async () => {
@@ -878,7 +883,7 @@ describe('Members (e2e)', () => {
   describe('the member list', () => {
     const listAs = (access: string, query: Record<string, string> = {}) =>
       request(http)
-        .get('/users')
+        .get('/profiles')
         .query(query)
         .set('Authorization', `Bearer ${access}`);
 
@@ -886,7 +891,7 @@ describe('Members (e2e)', () => {
       const list = await listAs(staffAccess).expect(200);
 
       const manager = list.body.find(
-        (member: { id: string }) => member.id === managerUserId,
+        (member: { id: string }) => member.id === managerProfileId,
       );
       expect(manager).toMatchObject({
         name: 'manager',
@@ -904,12 +909,12 @@ describe('Members (e2e)', () => {
       }).expect(200);
 
       const ids = list.body.map((member: { id: string }) => member.id);
-      expect(ids).toContain(ownerUserId);
-      expect(ids).not.toContain(owner2UserId);
+      expect(ids).toContain(ownerProfileId);
+      expect(ids).not.toContain(owner2ProfileId);
     });
 
     it('pending members are listed, with no role and no branch', async () => {
-      const pendingId = await userIdByEmail('newcomer2@mbr.test');
+      const pendingId = await profileIdByEmail('newcomer2@mbr.test');
 
       const pending = await listAs(ownerAccess, {
         status: 'PENDING_APPROVAL',
@@ -928,7 +933,7 @@ describe('Members (e2e)', () => {
     });
 
     it('managers, who can approve, see people waiting for approval', async () => {
-      const pendingId = await userIdByEmail('newcomer2@mbr.test');
+      const pendingId = await profileIdByEmail('newcomer2@mbr.test');
 
       const list = await listAs(managerAccess).expect(200);
 
@@ -938,7 +943,7 @@ describe('Members (e2e)', () => {
     });
 
     it('staff, who cannot approve, never see people waiting for approval', async () => {
-      const pendingId = await userIdByEmail('newcomer2@mbr.test');
+      const pendingId = await profileIdByEmail('newcomer2@mbr.test');
 
       const list = await listAs(staffAccess).expect(200);
       expect(
@@ -958,7 +963,7 @@ describe('Members (e2e)', () => {
 
       expect(
         inBranchA.body.map((member: { id: string }) => member.id),
-      ).toContain(managerUserId);
+      ).toContain(managerProfileId);
       for (const member of inBranchA.body) {
         expect(member.branch.id).toBe(branchAId);
       }
@@ -970,8 +975,8 @@ describe('Members (e2e)', () => {
       );
 
       const ids = noBranch.body.map((member: { id: string }) => member.id);
-      expect(ids).toContain(staffUserId); // released with Branch C
-      expect(ids).not.toContain(managerUserId); // in Branch A
+      expect(ids).toContain(staffProfileId); // released with Branch C
+      expect(ids).not.toContain(managerProfileId); // in Branch A
       for (const member of noBranch.body) {
         expect(member.branch).toBeNull();
       }
@@ -984,7 +989,7 @@ describe('Members (e2e)', () => {
 
       expect(
         managers.body.map((member: { id: string }) => member.id),
-      ).toContain(managerUserId);
+      ).toContain(managerProfileId);
       for (const member of managers.body) {
         expect(member.role.code).toBe('MANAGER');
       }
@@ -998,8 +1003,8 @@ describe('Members (e2e)', () => {
       }).expect(200);
 
       const ids = list.body.map((member: { id: string }) => member.id);
-      expect(ids).toContain(owner2UserId);
-      expect(ids).not.toContain(ownerUserId);
+      expect(ids).toContain(owner2ProfileId);
+      expect(ids).not.toContain(ownerProfileId);
     });
 
     it('bad filters are 400', async () => {
@@ -1050,12 +1055,12 @@ describe('Members (e2e)', () => {
       (await readAs(access, path, query).expect(200)).body as HistoryPageBody;
 
     beforeAll(async () => {
-      const owner = await prisma.user.findUniqueOrThrow({
-        where: { id: ownerUserId },
+      const owner = await prisma.profile.findUniqueOrThrow({
+        where: { id: ownerProfileId },
       });
       company1Id = owner.companyId!;
-      promotedId = await userIdByEmail('newcomer1@mbr.test');
-      pendingId = await userIdByEmail('newcomer2@mbr.test');
+      promotedId = await profileIdByEmail('newcomer1@mbr.test');
+      pendingId = await profileIdByEmail('newcomer2@mbr.test');
     });
 
     it("a manager's promotion in Branch A shows in Branch A's history, from A to A", async () => {
@@ -1077,7 +1082,7 @@ describe('Members (e2e)', () => {
       // Exactly an id and a name: no phone or email travels with history.
       expect(promotion.member).toEqual({ id: promotedId, name: 'newcomer1' });
       expect(promotion.changedBy).toEqual({
-        id: managerUserId,
+        id: managerProfileId,
         name: 'manager',
       });
     });
@@ -1116,7 +1121,9 @@ describe('Members (e2e)', () => {
         404,
       );
       await readAs(owner2Access, `/corners/${branchAId}/history`).expect(404);
-      await readAs(owner2Access, `/users/${staffUserId}/history`).expect(404);
+      await readAs(owner2Access, `/profiles/${staffProfileId}/history`).expect(
+        404,
+      );
     });
 
     it('branch history: staff get 403, and so does a manager asking about another branch', async () => {
@@ -1139,7 +1146,7 @@ describe('Members (e2e)', () => {
       expect(feed.items).toContainEqual(
         expect.objectContaining({
           reason: 'BRANCH_DELETED',
-          member: { id: staffUserId, name: 'staff' },
+          member: { id: staffProfileId, name: 'staff' },
           fromBranch: { id: branchC.id, name: 'Branch C' },
           toBranch: null,
         }),
@@ -1147,24 +1154,36 @@ describe('Members (e2e)', () => {
     });
 
     it("staff read their own history, newest first, but not a colleague's (403)", async () => {
-      const own = await pageAs(staffAccess, `/users/${staffUserId}/history`);
+      const own = await pageAs(
+        staffAccess,
+        `/profiles/${staffProfileId}/history`,
+      );
 
       expect(own.items.length).toBeGreaterThan(0);
       for (const item of own.items) {
-        expect(item.member.id).toBe(staffUserId);
+        expect(item.member.id).toBe(staffProfileId);
       }
       expect(own.items[0].reason).toBe('BRANCH_DELETED'); // their latest change
 
-      await readAs(staffAccess, `/users/${managerUserId}/history`).expect(403);
+      await readAs(staffAccess, `/profiles/${managerProfileId}/history`).expect(
+        403,
+      );
     });
 
     it('a manager reads the people in their branch, but not someone outside it (403)', async () => {
-      await readAs(managerAccess, `/users/${promotedId}/history`).expect(200); // in Branch A
-      await readAs(managerAccess, `/users/${staffUserId}/history`).expect(403); // no branch
+      await readAs(managerAccess, `/profiles/${promotedId}/history`).expect(
+        200,
+      ); // in Branch A
+      await readAs(managerAccess, `/profiles/${staffProfileId}/history`).expect(
+        403,
+      ); // no branch
     });
 
     it('someone waiting for approval has a history too: empty so far', async () => {
-      const pending = await pageAs(ownerAccess, `/users/${pendingId}/history`);
+      const pending = await pageAs(
+        ownerAccess,
+        `/profiles/${pendingId}/history`,
+      );
 
       expect(pending).toEqual({ items: [], nextCursor: null });
     });
@@ -1232,9 +1251,9 @@ describe('Members (e2e)', () => {
         { limit: '1' },
       );
       const companyEntry = feed.items[0]; // newcomer1's promotion
-      expect(companyEntry.member.id).not.toBe(staffUserId);
+      expect(companyEntry.member.id).not.toBe(staffProfileId);
 
-      await readAs(ownerAccess, `/users/${staffUserId}/history`, {
+      await readAs(ownerAccess, `/profiles/${staffProfileId}/history`, {
         cursor: companyEntry.id,
       }).expect(400);
     });
@@ -1256,8 +1275,8 @@ describe('Members (e2e)', () => {
     });
 
     it('so a closed branch can never be erased from under its history', async () => {
-      const owner = await prisma.user.findUniqueOrThrow({
-        where: { id: ownerUserId },
+      const owner = await prisma.profile.findUniqueOrThrow({
+        where: { id: ownerProfileId },
       });
       const branchC = await prisma.companyStore.findFirstOrThrow({
         where: { companyId: owner.companyId!, name: 'Branch C' },

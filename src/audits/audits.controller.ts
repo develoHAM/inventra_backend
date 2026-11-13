@@ -17,8 +17,8 @@ import {
 } from '@nestjs/common';
 import { AuditsService } from './audits.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { AuthUser } from '../auth/types/auth-user';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { AuthProfile } from '../auth/types/auth-profile';
 import { CreateAuditDto } from './dto/create-audit.dto';
 import { UpdateAuditDto } from './dto/update-audit.dto';
 import { ExportQueryDto } from '../spreadsheet/dto/export-query.dto';
@@ -31,7 +31,7 @@ export class AuditsController {
   @RequirePermissions('audits.read')
   @Get()
   findAll(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
   ) {
     return this.audits.findAll(caller, cornerId);
@@ -40,7 +40,7 @@ export class AuditsController {
   @RequirePermissions('audits.read')
   @Get(':auditId')
   findOne(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('auditId', ParseUUIDPipe) auditId: string,
   ) {
@@ -50,7 +50,7 @@ export class AuditsController {
   @RequirePermissions('audits.create')
   @Post()
   create(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Body() dto: CreateAuditDto,
   ) {
@@ -60,7 +60,7 @@ export class AuditsController {
   @RequirePermissions('audits.update')
   @Patch(':auditId')
   update(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('auditId', ParseUUIDPipe) auditId: string,
     @Body() dto: UpdateAuditDto,
@@ -71,7 +71,7 @@ export class AuditsController {
   @RequirePermissions('audits.delete')
   @Delete(':auditId')
   remove(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('auditId', ParseUUIDPipe) auditId: string,
   ) {
@@ -81,7 +81,7 @@ export class AuditsController {
   @RequirePermissions('audits.apply')
   @Post(':auditId/apply')
   apply(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('auditId', ParseUUIDPipe) auditId: string,
   ) {
@@ -91,7 +91,7 @@ export class AuditsController {
   @RequirePermissions('audits.read')
   @Get(':auditId/export')
   async export(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('auditId', ParseUUIDPipe) auditId: string,
     @Query() query: ExportQueryDto,
@@ -113,7 +113,7 @@ export class AuditsController {
   @Post('import')
   @UseInterceptors(FileInterceptor('file'))
   importCreate(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @UploadedFile(
       new ParseFilePipe({
@@ -130,7 +130,7 @@ export class AuditsController {
   @HttpCode(200)
   @UseInterceptors(FileInterceptor('file'))
   importUpdate(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('auditId', ParseUUIDPipe) auditId: string,
     @UploadedFile(

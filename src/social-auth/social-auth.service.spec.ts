@@ -4,13 +4,13 @@ import {
 } from '@nestjs/common';
 import { SocialAuthService } from './social-auth.service';
 import { decryptToken } from '../common/token-cipher';
-import { UserStatus } from '../generated/prisma/enums';
+import { ProfileStatus } from '../generated/prisma/enums';
 import type { SocialIdentity } from './verifiers/social-identity-verifier';
 
 describe('SocialAuthService', () => {
   let service: SocialAuthService;
   let prisma: {
-    userLoginMethod: { findUnique: jest.Mock; update: jest.Mock };
+    accountLoginMethod: { findUnique: jest.Mock; update: jest.Mock };
   };
   let nonces: { issue: jest.Mock; consume: jest.Mock };
   let verifiers: Record<string, { verify: jest.Mock; disconnect: jest.Mock }>;
@@ -45,14 +45,14 @@ describe('SocialAuthService', () => {
     account: {
       id: 'account-1',
       deletedAt: null,
-      lastProfileId: 'user-1',
+      lastProfileId: 'profile-1',
       ...accountChanges,
     },
   });
   /** The profile AccountsService decides to open. */
   const openProfile = (changes: Record<string, unknown> = {}) => ({
-    id: 'user-1',
-    status: UserStatus.ACTIVE,
+    id: 'profile-1',
+    status: ProfileStatus.ACTIVE,
     companyId: 'company-1',
     roleId: 2,
     ...changes,
@@ -66,7 +66,7 @@ describe('SocialAuthService', () => {
   beforeEach(() => {
     jest.useFakeTimers({ now: now });
     prisma = {
-      userLoginMethod: {
+      accountLoginMethod: {
         findUnique: jest.fn().mockResolvedValue(null),
         update: jest.fn().mockResolvedValue({}),
       },
@@ -126,7 +126,7 @@ describe('SocialAuthService', () => {
     await expect(service.identify(kakaoBody)).resolves.toEqual(kakaoIdentity);
 
     expect(nonces.consume).toHaveBeenCalledWith('raw-nonce');
-    expect(prisma.userLoginMethod.findUnique).not.toHaveBeenCalled();
+    expect(prisma.accountLoginMethod.findUnique).not.toHaveBeenCalled();
     expect(tickets.create).not.toHaveBeenCalled();
   });
 
@@ -213,14 +213,14 @@ describe('SocialAuthService', () => {
       verifiers.kakao.verify.mockRejectedValue(failure);
 
       await expect(service.signIn(kakaoBody)).rejects.toBe(failure);
-      expect(prisma.userLoginMethod.findUnique).not.toHaveBeenCalled();
+      expect(prisma.accountLoginMethod.findUnique).not.toHaveBeenCalled();
     },
   );
 
   it('looks the identity up by (provider, provider user id) — never by email', async () => {
     await service.signIn(kakaoBody);
 
-    expect(prisma.userLoginMethod.findUnique).toHaveBeenCalledWith(
+    expect(prisma.accountLoginMethod.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           method_providerUserId: {
@@ -256,7 +256,7 @@ describe('SocialAuthService', () => {
 
   describe('a known identity → LOGGED_IN', () => {
     beforeEach(() => {
-      prisma.userLoginMethod.findUnique.mockResolvedValue(knownLogin());
+      prisma.accountLoginMethod.findUnique.mockResolvedValue(knownLogin());
     });
 
     it('issues OUR tokens, in the same shape as password login', async () => {
@@ -264,14 +264,17 @@ describe('SocialAuthService', () => {
         status: 'LOGGED_IN',
         accessToken: 'our-access',
         refreshToken: 'our-refresh',
-        user: {
-          id: 'user-1',
-          status: UserStatus.ACTIVE,
+        profile: {
+          id: 'profile-1',
+          status: ProfileStatus.ACTIVE,
           companyId: 'company-1',
           roleId: 2,
         },
       });
-      expect(auth.issueSessionFor).toHaveBeenCalledWith('account-1', 'user-1');
+      expect(auth.issueSessionFor).toHaveBeenCalledWith(
+        'account-1',
+        'profile-1',
+      );
       expect(tickets.create).not.toHaveBeenCalled();
     });
 
@@ -280,21 +283,21 @@ describe('SocialAuthService', () => {
 
       expect(accounts.findProfileToOpen).toHaveBeenCalledWith(
         'account-1',
-        'user-1',
+        'profile-1',
       );
     });
 
     it('records lastLoginAt; no new provider refresh token → the stored one is kept', async () => {
       await service.signIn(kakaoBody);
 
-      expect(prisma.userLoginMethod.update).toHaveBeenCalledWith({
+      expect(prisma.accountLoginMethod.update).toHaveBeenCalledWith({
         where: { id: 'login-method-1' },
         data: { lastLoginAt: now },
       });
     });
 
     it('a new provider refresh token (Google) replaces the stored one, encrypted', async () => {
-      prisma.userLoginMethod.findUnique.mockResolvedValue({
+      prisma.accountLoginMethod.findUnique.mockResolvedValue({
         ...knownLogin(),
         method: 'google',
       });
@@ -304,7 +307,7 @@ describe('SocialAuthService', () => {
         credential: { idToken: 'g' },
       });
 
-      const { data } = prisma.userLoginMethod.update.mock.calls[0][0];
+      const { data } = prisma.accountLoginMethod.update.mock.calls[0][0];
       expect(data.lastLoginAt).toEqual(now);
       expect(data.refreshToken).not.toContain('1//google-refresh');
       expect(decryptToken(data.refreshToken, encryptionKey)).toBe(
@@ -314,7 +317,7 @@ describe('SocialAuthService', () => {
 
     it('a pending-approval profile may be opened (same rule as password login)', async () => {
       accounts.findProfileToOpen.mockResolvedValue(
-        openProfile({ status: UserStatus.PENDING_APPROVAL }),
+        openProfile({ status: ProfileStatus.PENDING_APPROVAL }),
       );
 
       await expect(service.signIn(kakaoBody)).resolves.toMatchObject({
@@ -323,7 +326,7 @@ describe('SocialAuthService', () => {
     });
 
     it('a soft-deleted account → 401, no profile looked up, no session, nothing updated', async () => {
-      prisma.userLoginMethod.findUnique.mockResolvedValue(
+      prisma.accountLoginMethod.findUnique.mockResolvedValue(
         knownLogin({ deletedAt: new Date('2026-10-01') }),
       );
 
@@ -332,7 +335,7 @@ describe('SocialAuthService', () => {
       );
       expect(accounts.findProfileToOpen).not.toHaveBeenCalled();
       expect(auth.issueSessionFor).not.toHaveBeenCalled();
-      expect(prisma.userLoginMethod.update).not.toHaveBeenCalled();
+      expect(prisma.accountLoginMethod.update).not.toHaveBeenCalled();
     });
 
     it('no profile can be opened (suspended, rejected, left…) → 401, no session, nothing updated', async () => {
@@ -342,7 +345,7 @@ describe('SocialAuthService', () => {
         new UnauthorizedException('Account cannot sign in'),
       );
       expect(auth.issueSessionFor).not.toHaveBeenCalled();
-      expect(prisma.userLoginMethod.update).not.toHaveBeenCalled();
+      expect(prisma.accountLoginMethod.update).not.toHaveBeenCalled();
     });
   });
 });

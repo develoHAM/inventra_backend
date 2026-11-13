@@ -55,7 +55,7 @@ describe('File Uploads (e2e)', () => {
     const taxId = '110-00-00001';
     const email = 'owner1@upl.test';
     const password = 'password123';
-    // users.phone is unique across the shared DB: suite 09's own block
+    // accounts.phone is unique across the shared DB: suite 09's own block
     const { phone, token } = await verifiedPhone(app, testPhones(9));
     await request(http)
       .post('/auth/register')
@@ -215,10 +215,10 @@ describe('File Uploads (e2e)', () => {
       .expect(400);
   });
 
-  // ── User avatar (self-service) ──
+  // ── Profile photo (self-service) ──
   it('avatar: proxied upload sets a presigned profileImageUrl', async () => {
     const res = await request(http)
-      .post('/users/me/avatar')
+      .post('/profiles/me/avatar')
       .set(...auth(ownerAccess))
       .attach('file', PNG, 'me.png')
       .expect(201);
@@ -227,7 +227,7 @@ describe('File Uploads (e2e)', () => {
 
   it('avatar: presign -> PUT to storage -> confirm sets profileImageUrl', async () => {
     const presign = await request(http)
-      .post('/users/me/avatar/presign')
+      .post('/profiles/me/avatar/presign')
       .set(...auth(ownerAccess))
       .send({ contentType: 'image/png' })
       .expect(201);
@@ -240,7 +240,7 @@ describe('File Uploads (e2e)', () => {
     expect(put.ok).toBe(true);
 
     const confirm = await request(http)
-      .post('/users/me/avatar/confirm')
+      .post('/profiles/me/avatar/confirm')
       .set(...auth(ownerAccess))
       .send({ key: presign.body.key })
       .expect(201);
@@ -249,9 +249,9 @@ describe('File Uploads (e2e)', () => {
 
   it('avatar: confirm rejects a key not under the caller (400)', async () => {
     await request(http)
-      .post('/users/me/avatar/confirm')
+      .post('/profiles/me/avatar/confirm')
       .set(...auth(ownerAccess))
-      .send({ key: 'users/not-me/x.png' })
+      .send({ key: 'profiles/not-me/x.png' })
       .expect(400);
   });
 });

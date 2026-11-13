@@ -9,11 +9,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
 import { RegisterDto } from './dto/register.dto';
-import { UserModel } from '../generated/prisma/models';
+import { ProfileModel } from '../generated/prisma/models';
 import { RegisterMemberDto } from './dto/register-member.dto';
 import {
   PhoneVerificationPurpose,
-  UserStatus,
+  ProfileStatus,
 } from '../generated/prisma/enums';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
@@ -24,7 +24,7 @@ import type {
   MemberJoinRequestedEvent,
 } from '../notifications/notification-events';
 import { PhoneVerificationService } from '../phone-verification/phone-verification.service';
-import { generateUniqueJoinCode } from '../users/join-code';
+import { generateUniqueJoinCode } from '../companies/join-code';
 import { DevicesService } from '../devices/devices.service';
 import { LogoutDto } from './dto/logout.dto';
 import { Prisma } from '../generated/prisma/client';
@@ -41,7 +41,7 @@ import { AccountsService } from '../accounts/accounts.service';
 /** What a signup creates for its credentials, decided inside the transaction. */
 interface SignupLogin {
   contactEmail: string; // where notifications go
-  loginMethod: Omit<Prisma.UserLoginMethodCreateManyInput, 'accountId'>; // the account doesn't exist yet
+  loginMethod: Omit<Prisma.AccountLoginMethodCreateManyInput, 'accountId'>; // the account doesn't exist yet
 }
 
 @Injectable()
@@ -92,7 +92,7 @@ export class AuthService {
     credentials: SignupCredentials,
   ): Promise<boolean> {
     if (credentials.type !== 'password') return false;
-    const existing = await this.prisma.userLoginMethod.findFirst({
+    const existing = await this.prisma.accountLoginMethod.findFirst({
       where: { email: credentials.email },
     });
     return existing !== null;
@@ -186,7 +186,7 @@ export class AuthService {
     accountId: string,
     loginMethod: SignupLogin['loginMethod'],
   ): Promise<void> {
-    const inserted = await transaction.userLoginMethod.createMany({
+    const inserted = await transaction.accountLoginMethod.createMany({
       data: [{ ...loginMethod, accountId: accountId }],
       skipDuplicates: true,
     });
@@ -203,7 +203,7 @@ export class AuthService {
   async register(dto: RegisterDto): Promise<{
     accessToken: string;
     refreshToken: string;
-    user: Partial<UserModel>;
+    profile: Partial<ProfileModel>;
   }> {
     const {
       companyName,
@@ -234,7 +234,7 @@ export class AuthService {
 
     const companyJoinCode = await generateUniqueJoinCode(this.prisma);
 
-    const { user, company, accountId } = await this.prisma.$transaction(
+    const { profile, company, accountId } = await this.prisma.$transaction(
       async (transaction) => {
         // Spend the proofs first: if anything below fails, they roll back too.
         await this.phoneVerification.consume(transaction, {
@@ -256,7 +256,7 @@ export class AuthService {
         if (newAccountId === null) {
           throw new ConflictException('Phone already registered'); // taken meanwhile
         }
-        const newUser = await transaction.user.create({
+        const newProfile = await transaction.profile.create({
           data: {
             accountId: newAccountId,
             name: ownerName,
@@ -277,19 +277,19 @@ export class AuthService {
             name: companyName,
             taxId: taxId,
             joinCode: companyJoinCode,
-            createdByUserId: newUser.id,
+            createdByProfileId: newProfile.id,
           },
         });
 
-        const updatedUser = await transaction.user.update({
-          where: { id: newUser.id },
+        const updatedProfile = await transaction.profile.update({
+          where: { id: newProfile.id },
           data: {
             companyId: newCompany.id,
           },
         });
 
         return {
-          user: updatedUser,
+          profile: updatedProfile,
           company: newCompany,
           accountId: newAccountId,
         };
@@ -304,16 +304,16 @@ export class AuthService {
       registeredEvent,
     );
 
-    const tokens = await this.issueSessionFor(accountId, user.id);
+    const tokens = await this.issueSessionFor(accountId, profile.id);
 
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
-      user: {
-        id: user.id,
-        status: user.status, // PENDING_APPROVAL
-        companyId: user.companyId,
-        roleId: user.roleId,
+      profile: {
+        id: profile.id,
+        status: profile.status, // PENDING_APPROVAL
+        companyId: profile.companyId,
+        roleId: profile.roleId,
       },
     };
   }
@@ -321,7 +321,7 @@ export class AuthService {
   async registerMember(dto: RegisterMemberDto): Promise<{
     accessToken: string;
     refreshToken: string;
-    user: Partial<UserModel>;
+    profile: Partial<ProfileModel>;
   }> {
     const { joinCode, name, phone, phoneVerificationToken, credentials } = dto;
 
@@ -362,42 +362,42 @@ export class AuthService {
       if (accountId === null) {
         throw new ConflictException('Phone already registered'); // taken meanwhile
       }
-      const user = await transaction.user.create({
+      const profile = await transaction.profile.create({
         data: {
           accountId: accountId,
           name: name,
           contactEmail: login.contactEmail,
           companyId: company.id,
           roleId: null, // role assigned by the owner at approval
-          status: UserStatus.PENDING_APPROVAL,
+          status: ProfileStatus.PENDING_APPROVAL,
         },
       });
       await this.addFirstLoginMethod(transaction, accountId, login.loginMethod);
-      return { user: user, companyId: company.id, accountId: accountId };
+      return { profile: profile, companyId: company.id, accountId: accountId };
     });
 
     if (!created) throw new NotFoundException('Invalid join code');
-    const { user, companyId, accountId } = created;
+    const { profile, companyId, accountId } = created;
 
     const joinRequestedEvent: MemberJoinRequestedEvent = {
       companyId: companyId,
-      memberUserId: user.id,
+      memberProfileId: profile.id,
     };
     this.eventEmitter.emit(
       NotificationEvent.MEMBER_JOIN_REQUESTED,
       joinRequestedEvent,
     );
 
-    const tokens = await this.issueSessionFor(accountId, user.id);
+    const tokens = await this.issueSessionFor(accountId, profile.id);
 
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
-      user: {
-        id: user.id,
-        status: user.status, // PENDING_APPROVAL
-        companyId: user.companyId,
-        roleId: user.roleId, // null
+      profile: {
+        id: profile.id,
+        status: profile.status, // PENDING_APPROVAL
+        companyId: profile.companyId,
+        roleId: profile.roleId, // null
       },
     };
   }
@@ -405,7 +405,7 @@ export class AuthService {
   async login(dto: LoginDto) {
     const { email, password } = dto;
 
-    const loginMethod = await this.prisma.userLoginMethod.findFirst({
+    const loginMethod = await this.prisma.accountLoginMethod.findFirst({
       where: { email: email, method: 'local' },
       include: {
         account: { select: { id: true, deletedAt: true, lastProfileId: true } },
@@ -437,7 +437,7 @@ export class AuthService {
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
-      user: profile, // { id, status, companyId, roleId } of the open profile
+      profile: profile, // { id, status, companyId, roleId } of the open profile
     };
   }
 

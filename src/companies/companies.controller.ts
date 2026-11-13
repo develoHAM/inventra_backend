@@ -11,8 +11,8 @@ import {
 } from '@nestjs/common';
 import { CompaniesService } from './companies.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { AuthUser } from '../auth/types/auth-user';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { AuthProfile } from '../auth/types/auth-profile';
 import { HistoryQueryDto } from '../membership-history/dto/history-query.dto';
 
 @Controller('companies')
@@ -28,21 +28,21 @@ export class CompaniesController {
   // "me" = the caller's own company, taken from the JWT, never from the URL.
   @RequirePermissions('companies.invite')
   @Get('me/join-code')
-  getJoinCode(@CurrentUser() caller: AuthUser) {
+  getJoinCode(@CurrentProfile() caller: AuthProfile) {
     return this.companiesService.getJoinCode(caller);
   }
 
   @RequirePermissions('companies.rotateJoinCode')
   @Post('me/join-code/rotate')
   @HttpCode(HttpStatus.OK)
-  rotateJoinCode(@CurrentUser() caller: AuthUser) {
+  rotateJoinCode(@CurrentProfile() caller: AuthProfile) {
     return this.companiesService.rotateJoinCode(caller);
   }
 
   @RequirePermissions('companies.read')
   @Get(':id/history')
   history(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseUUIDPipe) id: string,
     @Query() query: HistoryQueryDto,
   ) {

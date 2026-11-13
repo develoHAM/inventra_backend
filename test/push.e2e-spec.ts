@@ -32,7 +32,7 @@ describe('Push notifications (e2e)', () => {
   const ownerEmail = 'owner@push.test';
   const password = 'password123';
 
-  // users.phone is unique across the shared DB: suite 14's own block
+  // accounts.phone is unique across the shared DB: suite 14's own block
   const nextPhone = testPhones(14);
 
   let adminAccess: string;
@@ -75,7 +75,7 @@ describe('Push notifications (e2e)', () => {
       .expect(201);
     return {
       access: response.body.accessToken as string,
-      userId: response.body.user.id as string,
+      profileId: response.body.profile.id as string,
     };
   };
 
@@ -123,7 +123,7 @@ describe('Push notifications (e2e)', () => {
       })
       .expect(201);
     adminAccess = adminLogin.body.accessToken;
-    adminId = adminLogin.body.user.id;
+    adminId = adminLogin.body.profile.id;
 
     // a pending owner, logged in straight after signup
     const { phone, token } = await verifiedPhone(app, nextPhone);
@@ -143,7 +143,7 @@ describe('Push notifications (e2e)', () => {
       })
       .expect(201);
     ownerAccess = registered.body.accessToken;
-    ownerId = registered.body.user.id;
+    ownerId = registered.body.profile.id;
   });
 
   afterAll(async () => {
@@ -185,7 +185,7 @@ describe('Push notifications (e2e)', () => {
       },
       NotificationStatus.SENT,
     );
-    expect(pushRow.recipientUserId).toBe(ownerId);
+    expect(pushRow.recipientProfileId).toBe(ownerId);
     await waitForRow(
       {
         eventType: NotificationEvent.COMPANY_APPROVED,
@@ -222,7 +222,7 @@ describe('Push notifications (e2e)', () => {
       {
         eventType: NotificationEvent.COMPANY_REGISTERED,
         channel: NotificationChannel.EMAIL,
-        recipientUserId: adminId,
+        recipientProfileId: adminId,
         body: { contains: companyName },
       },
       NotificationStatus.SENT,
@@ -231,7 +231,7 @@ describe('Push notifications (e2e)', () => {
       where: {
         eventType: NotificationEvent.COMPANY_REGISTERED,
         channel: NotificationChannel.PUSH,
-        recipientUserId: adminId,
+        recipientProfileId: adminId,
       },
     });
     expect(adminPushes).toBe(0);
@@ -240,7 +240,7 @@ describe('Push notifications (e2e)', () => {
   it('a token re-registered by another user moves to them (shared phone)', async () => {
     const member = await signUpMember('member@push.test');
     memberAccess = member.access;
-    memberId = member.userId;
+    memberId = member.profileId;
 
     await registerDevice(ownerAccess, 'push-shared-phone').expect(204);
     expect(await deviceOwner('push-shared-phone')).toBe(ownerId);

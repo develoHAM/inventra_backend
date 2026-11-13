@@ -7,7 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CornersService } from '../corners/corners.service';
 import { ProductsService } from '../products/products.service';
-import { AuthUser } from '../auth/types/auth-user';
+import { AuthProfile } from '../auth/types/auth-profile';
 import { CreatePlacementDto } from './dto/create-placement.dto';
 import { UpdatePlacementDto } from './dto/update-placement.dto';
 
@@ -28,7 +28,7 @@ export class PlacementsService {
     return placement;
   }
 
-  async create(caller: AuthUser, cornerId: string, dto: CreatePlacementDto) {
+  async create(caller: AuthProfile, cornerId: string, dto: CreatePlacementDto) {
     const corner = await this.corners.assertWorksCorner(caller, cornerId); // 404/403
     const { productId, targetStockQuantity, ...fields } = dto;
 
@@ -49,7 +49,7 @@ export class PlacementsService {
         data: {
           ...fields,
           deletedAt: null,
-          deletedByUserId: null,
+          deletedByProfileId: null,
           stock: {
             update: {
               targetStockQuantity: targetStockQuantity ?? 0,
@@ -68,7 +68,7 @@ export class PlacementsService {
     });
   }
 
-  async findAll(caller: AuthUser, cornerId: string) {
+  async findAll(caller: AuthProfile, cornerId: string) {
     await this.corners.findOne(caller, cornerId); // read scope → 404
     return this.prisma.companyStoreProduct.findMany({
       where: { companyStoreId: cornerId, deletedAt: null },
@@ -76,13 +76,13 @@ export class PlacementsService {
     });
   }
 
-  async findOne(caller: AuthUser, cornerId: string, placementId: number) {
+  async findOne(caller: AuthProfile, cornerId: string, placementId: number) {
     await this.corners.findOne(caller, cornerId); // read scope → 404
     return this.getPlacement(cornerId, placementId);
   }
 
   async update(
-    caller: AuthUser,
+    caller: AuthProfile,
     cornerId: string,
     placementId: number,
     dto: UpdatePlacementDto,
@@ -102,12 +102,12 @@ export class PlacementsService {
     });
   }
 
-  async remove(caller: AuthUser, cornerId: string, placementId: number) {
+  async remove(caller: AuthProfile, cornerId: string, placementId: number) {
     await this.corners.assertWorksCorner(caller, cornerId);
     await this.getPlacement(cornerId, placementId);
     return this.prisma.companyStoreProduct.update({
       where: { id: placementId },
-      data: { deletedAt: new Date(), deletedByUserId: caller.id },
+      data: { deletedAt: new Date(), deletedByProfileId: caller.id },
     });
   }
 }

@@ -1,8 +1,8 @@
 import type { Prisma } from '../generated/prisma/client';
-import type { UserStatus } from '../generated/prisma/enums';
+import type { ProfileStatus } from '../generated/prisma/enums';
 
 /** The columns every member read selects: what the screen shows + what the rules need. */
-export const MEMBER_SELECT = {
+export const PROFILE_SELECT = {
   id: true,
   name: true,
   profileImageUrl: true,
@@ -15,18 +15,20 @@ export const MEMBER_SELECT = {
   roleId: true,
   role: { select: { code: true, name: true } },
   companyStore: { select: { id: true, name: true } },
-} satisfies Prisma.UserSelect;
+} satisfies Prisma.ProfileSelect;
 
-export type MemberRow = Prisma.UserGetPayload<{ select: typeof MEMBER_SELECT }>;
+export type ProfileRow = Prisma.ProfileGetPayload<{
+  select: typeof PROFILE_SELECT;
+}>;
 
 /** One member as the API returns it. */
-export interface MemberView {
+export interface ProfileView {
   id: string;
   name: string;
   profileImageUrl: string | null; // a short-lived presigned URL
   phone: string | null;
   contactEmail: string | null;
-  status: UserStatus;
+  status: ProfileStatus;
   role: { code: string; name: string } | null;
   branch: { id: string; name: string } | null;
   createdAt: Date;

@@ -12,8 +12,8 @@ import { CategoriesService } from './categories.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDTO } from './dto/update-category.dto';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { AuthUser } from '../auth/types/auth-user';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { AuthProfile } from '../auth/types/auth-profile';
 
 @Controller('categories')
 export class CategoriesController {
@@ -49,7 +49,7 @@ export class CategoriesController {
   @RequirePermissions('categories.delete')
   @Delete(':id')
   remove(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.categories.remove(caller, id);

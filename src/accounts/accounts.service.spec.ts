@@ -1,15 +1,15 @@
 import { AccountsService } from './accounts.service';
-import { UserStatus } from '../generated/prisma/enums';
+import { ProfileStatus } from '../generated/prisma/enums';
 
 describe('AccountsService', () => {
   let service: AccountsService;
-  let prisma: { user: { findFirst: jest.Mock } };
+  let prisma: { profile: { findFirst: jest.Mock } };
   let transaction: { account: { createManyAndReturn: jest.Mock } };
 
   /** A profile as findProfileToOpen selects it. */
   const profile = (id: string, changes: Record<string, unknown> = {}) => ({
     id: id,
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
     companyId: 'company-1',
     roleId: 4,
     ...changes,
@@ -18,7 +18,7 @@ describe('AccountsService', () => {
   const openableOf = (accountId: string) => ({
     accountId: accountId,
     deletedAt: null,
-    status: { in: [UserStatus.PENDING_APPROVAL, UserStatus.ACTIVE] },
+    status: { in: [ProfileStatus.PENDING_APPROVAL, ProfileStatus.ACTIVE] },
   });
   const OPEN_PROFILE_SELECT = {
     id: true,
@@ -28,7 +28,7 @@ describe('AccountsService', () => {
   };
 
   beforeEach(() => {
-    prisma = { user: { findFirst: jest.fn().mockResolvedValue(null) } };
+    prisma = { profile: { findFirst: jest.fn().mockResolvedValue(null) } };
     transaction = {
       account: {
         createManyAndReturn: jest.fn().mockResolvedValue([{ id: 'account-1' }]),
@@ -69,29 +69,29 @@ describe('AccountsService', () => {
 
   describe('findProfileToOpen', () => {
     it('opens the preferred profile when it is still openable and belongs to the account', async () => {
-      prisma.user.findFirst.mockResolvedValueOnce(profile('user-2'));
+      prisma.profile.findFirst.mockResolvedValueOnce(profile('profile-2'));
 
       await expect(
-        service.findProfileToOpen('account-1', 'user-2'),
-      ).resolves.toEqual(profile('user-2'));
+        service.findProfileToOpen('account-1', 'profile-2'),
+      ).resolves.toEqual(profile('profile-2'));
 
-      expect(prisma.user.findFirst).toHaveBeenCalledTimes(1);
-      expect(prisma.user.findFirst).toHaveBeenCalledWith({
-        where: { id: 'user-2', ...openableOf('account-1') },
+      expect(prisma.profile.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.profile.findFirst).toHaveBeenCalledWith({
+        where: { id: 'profile-2', ...openableOf('account-1') },
         select: OPEN_PROFILE_SELECT,
       });
     });
 
     it('a preferred profile that is left, suspended, deleted or another account’s → the newest openable one instead', async () => {
-      prisma.user.findFirst
+      prisma.profile.findFirst
         .mockResolvedValueOnce(null) // the preferred one didn't match "openable, this account"
-        .mockResolvedValueOnce(profile('user-3'));
+        .mockResolvedValueOnce(profile('profile-3'));
 
       await expect(
-        service.findProfileToOpen('account-1', 'user-2'),
-      ).resolves.toEqual(profile('user-3'));
+        service.findProfileToOpen('account-1', 'profile-2'),
+      ).resolves.toEqual(profile('profile-3'));
 
-      expect(prisma.user.findFirst).toHaveBeenLastCalledWith({
+      expect(prisma.profile.findFirst).toHaveBeenLastCalledWith({
         where: openableOf('account-1'),
         orderBy: { createdAt: 'desc' },
         select: OPEN_PROFILE_SELECT,
@@ -99,14 +99,14 @@ describe('AccountsService', () => {
     });
 
     it('no preferred profile → straight to the newest openable one', async () => {
-      prisma.user.findFirst.mockResolvedValueOnce(profile('user-3'));
+      prisma.profile.findFirst.mockResolvedValueOnce(profile('profile-3'));
 
       await expect(
         service.findProfileToOpen('account-1', null),
-      ).resolves.toEqual(profile('user-3'));
+      ).resolves.toEqual(profile('profile-3'));
 
-      expect(prisma.user.findFirst).toHaveBeenCalledTimes(1);
-      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+      expect(prisma.profile.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.profile.findFirst).toHaveBeenCalledWith({
         where: openableOf('account-1'),
         orderBy: { createdAt: 'desc' },
         select: OPEN_PROFILE_SELECT,
@@ -115,7 +115,7 @@ describe('AccountsService', () => {
 
     it('nothing openable at all → null', async () => {
       await expect(
-        service.findProfileToOpen('account-1', 'user-2'),
+        service.findProfileToOpen('account-1', 'profile-2'),
       ).resolves.toBeNull();
     });
   });

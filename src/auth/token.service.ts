@@ -16,9 +16,9 @@ export class TokenService {
     private readonly config: ConfigService<Env, true>,
   ) {}
 
-  async signAccess(userId: string) {
+  async signAccess(profileId: string) {
     const payload = {
-      sub: userId,
+      sub: profileId,
       type: TokenType.ACCESS,
     };
 
@@ -30,11 +30,11 @@ export class TokenService {
     return this.jwt.signAsync(payload, signOptions);
   }
 
-  async signRefresh(userId: string) {
+  async signRefresh(profileId: string) {
     const jti = randomUUID();
 
     const payload = {
-      sub: userId,
+      sub: profileId,
       type: TokenType.REFRESH,
       jti: jti,
     };

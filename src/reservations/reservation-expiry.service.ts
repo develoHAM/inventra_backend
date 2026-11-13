@@ -34,7 +34,7 @@ export class ReservationExpiryService {
         id: true,
         companyStoreProductId: true,
         reservedQuantity: true,
-        createdByUserId: true,
+        createdByProfileId: true,
       },
     });
 
@@ -59,7 +59,7 @@ export class ReservationExpiryService {
               transactionType: InventoryTransactionType.RESERVATION_RELEASE,
               quantity: reservation.reservedQuantity,
             },
-            reservation.createdByUserId, // actor: the reservation's creator
+            reservation.createdByProfileId, // actor: the reservation's creator
             { type: TransactionSourceType.RESERVATION, id: reservation.id },
           );
           return true;

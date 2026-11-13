@@ -7,7 +7,7 @@ import {
 import { AuthService } from './auth.service';
 import {
   PhoneVerificationPurpose,
-  UserStatus,
+  ProfileStatus,
 } from '../generated/prisma/enums';
 import { NotificationEvent } from '../notifications/notification-events';
 
@@ -15,9 +15,9 @@ describe('AuthService', () => {
   let service: AuthService;
   let prisma: any;
   let tx: {
-    user: { create: jest.Mock; update: jest.Mock };
+    profile: { create: jest.Mock; update: jest.Mock };
     company: { create: jest.Mock; findUnique: jest.Mock };
-    userLoginMethod: { createMany: jest.Mock };
+    accountLoginMethod: { createMany: jest.Mock };
   };
   let passwordService: { hash: jest.Mock; verify: jest.Mock };
   let tokenService: {
@@ -35,8 +35,8 @@ describe('AuthService', () => {
 
   /** The profile AccountsService opens at login. */
   const openProfile = (changes: Record<string, unknown> = {}) => ({
-    id: 'user-1',
-    status: UserStatus.ACTIVE,
+    id: 'profile-1',
+    status: ProfileStatus.ACTIVE,
     companyId: 'company-1',
     roleId: 2,
     ...changes,
@@ -80,10 +80,10 @@ describe('AuthService', () => {
   beforeEach(() => {
     // transaction-scoped client used by the owner-register flow
     tx = {
-      user: {
-        create: jest.fn().mockResolvedValue({ id: 'user-1' }),
+      profile: {
+        create: jest.fn().mockResolvedValue({ id: 'profile-1' }),
         update: jest.fn().mockResolvedValue({
-          id: 'user-1',
+          id: 'profile-1',
           status: 'PENDING_APPROVAL',
           companyId: 'company-1',
           roleId: 2,
@@ -98,13 +98,13 @@ describe('AuthService', () => {
         }),
       },
       // the first login method: ON CONFLICT DO NOTHING → count 1 inserted, 0 skipped
-      userLoginMethod: {
+      accountLoginMethod: {
         createMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
 
     prisma = {
-      userLoginMethod: { findFirst: jest.fn().mockResolvedValue(null) },
+      accountLoginMethod: { findFirst: jest.fn().mockResolvedValue(null) },
       // null default = "not taken" (register tax-ID check) / "not found" (member join-code)
       company: { findUnique: jest.fn().mockResolvedValue(null) },
       role: {
@@ -137,7 +137,7 @@ describe('AuthService', () => {
       hashToken: jest.fn().mockReturnValue('hashed-refresh'),
       verifyRefresh: jest
         .fn()
-        .mockResolvedValue({ sub: 'user-1', jti: 'jti-1' }),
+        .mockResolvedValue({ sub: 'profile-1', jti: 'jti-1' }),
     };
 
     eventEmitter = { emit: jest.fn().mockReturnValue(true) };
@@ -168,24 +168,24 @@ describe('AuthService', () => {
     it('creates company + owner and returns a pending session', async () => {
       const result = await service.register(registerDto as any);
 
-      // company references the just-created user (circular-FK, user-first)
+      // company references the just-created profile (circular-FK, profile-first)
       expect(tx.company.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           name: 'Acme',
           taxId: '123-45-67890',
-          createdByUserId: 'user-1',
+          createdByProfileId: 'profile-1',
         }),
       });
       // user linked back to the company
-      expect(tx.user.update).toHaveBeenCalledWith({
-        where: { id: 'user-1' },
+      expect(tx.profile.update).toHaveBeenCalledWith({
+        where: { id: 'profile-1' },
         data: { companyId: 'company-1' },
       });
       // refresh token stored HASHED, on the account's session, with the new profile open
       expect(prisma.refreshToken.create).toHaveBeenCalledWith({
         data: {
           accountId: 'account-1',
-          profileId: 'user-1',
+          profileId: 'profile-1',
           tokenHash: 'hashed-refresh',
           expiresAt: expect.any(Date),
         },
@@ -193,8 +193,8 @@ describe('AuthService', () => {
       expect(result).toEqual({
         accessToken: 'access-token',
         refreshToken: 'refresh-token',
-        user: {
-          id: 'user-1',
+        profile: {
+          id: 'profile-1',
           status: 'PENDING_APPROVAL',
           companyId: 'company-1',
           roleId: 2,
@@ -224,7 +224,7 @@ describe('AuthService', () => {
     });
 
     it('rejects a duplicate email with 409 before any writes', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue({ id: 'lm-1' });
+      prisma.accountLoginMethod.findFirst.mockResolvedValue({ id: 'lm-1' });
 
       await expect(service.register(registerDto as any)).rejects.toThrow(
         ConflictException,
@@ -266,13 +266,13 @@ describe('AuthService', () => {
       });
       expect(
         phoneVerification.consume.mock.invocationCallOrder[0],
-      ).toBeLessThan(tx.user.create.mock.invocationCallOrder[0]);
+      ).toBeLessThan(tx.profile.create.mock.invocationCallOrder[0]);
     });
 
     it('sets the contact email to the login email (where notifications go)', async () => {
       await service.register(registerDto as any);
 
-      expect(tx.user.create).toHaveBeenCalledWith({
+      expect(tx.profile.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ contactEmail: 'jane@acme.com' }),
       });
     });
@@ -282,10 +282,10 @@ describe('AuthService', () => {
 
       expect(accounts.createAccount).toHaveBeenCalledWith(tx, '01012345678');
       expect(accounts.createAccount.mock.invocationCallOrder[0]).toBeLessThan(
-        tx.user.create.mock.invocationCallOrder[0],
+        tx.profile.create.mock.invocationCallOrder[0],
       );
       // the profile belongs to the account; the phone is the account's, not the profile's
-      const ownerData = tx.user.create.mock.calls[0][0].data;
+      const ownerData = tx.profile.create.mock.calls[0][0].data;
       expect(ownerData.accountId).toBe('account-1');
       expect(ownerData).not.toHaveProperty('phone');
     });
@@ -299,7 +299,7 @@ describe('AuthService', () => {
       await expect(prisma.$transaction.mock.results[0].value).rejects.toThrow(
         ConflictException,
       );
-      expect(tx.user.create).not.toHaveBeenCalled();
+      expect(tx.profile.create).not.toHaveBeenCalled();
       expect(eventEmitter.emit).not.toHaveBeenCalled();
       expect(prisma.refreshToken.create).not.toHaveBeenCalled();
     });
@@ -312,7 +312,7 @@ describe('AuthService', () => {
       await expect(service.register(registerDto as any)).rejects.toThrow(
         BadRequestException,
       );
-      expect(tx.user.create).not.toHaveBeenCalled();
+      expect(tx.profile.create).not.toHaveBeenCalled();
       expect(tx.company.create).not.toHaveBeenCalled();
       expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
@@ -323,15 +323,15 @@ describe('AuthService', () => {
     const socialOwner = (credentials: Record<string, unknown> = social) =>
       ({ ...registerDto, credentials: credentials }) as any;
     /** The data the owner was created with. */
-    const createdOwner = () => tx.user.create.mock.calls[0][0].data;
-    /** The login row inserted for the new user. */
+    const createdOwner = () => tx.profile.create.mock.calls[0][0].data;
+    /** The login row inserted for the new account. */
     const insertedLogin = () =>
-      tx.userLoginMethod.createMany.mock.calls[0][0].data[0];
+      tx.accountLoginMethod.createMany.mock.calls[0][0].data[0];
 
     it('creates the owner with the provider login (no password), from the ticket', async () => {
       const result = await service.register(socialOwner());
 
-      expect(tx.userLoginMethod.createMany).toHaveBeenCalledWith({
+      expect(tx.accountLoginMethod.createMany).toHaveBeenCalledWith({
         data: [
           {
             method: 'kakao',
@@ -346,7 +346,7 @@ describe('AuthService', () => {
       });
       expect(result).toMatchObject({
         accessToken: 'access-token',
-        user: { id: 'user-1' },
+        profile: { id: 'profile-1' },
       });
     });
 
@@ -368,14 +368,14 @@ describe('AuthService', () => {
         phoneVerification.consume.mock.invocationCallOrder[0],
       ).toBeLessThan(signupTickets.consume.mock.invocationCallOrder[0]);
       expect(signupTickets.consume.mock.invocationCallOrder[0]).toBeLessThan(
-        tx.user.create.mock.invocationCallOrder[0],
+        tx.profile.create.mock.invocationCallOrder[0],
       );
     });
 
     it('no password: no email-taken check, no hashing (never matched by email)', async () => {
       await service.register(socialOwner());
 
-      expect(prisma.userLoginMethod.findFirst).not.toHaveBeenCalled();
+      expect(prisma.accountLoginMethod.findFirst).not.toHaveBeenCalled();
       expect(passwordService.hash).not.toHaveBeenCalled();
     });
 
@@ -402,7 +402,7 @@ describe('AuthService', () => {
       await expect(service.register(socialOwner())).rejects.toThrow(
         new BadRequestException('Invalid or expired signup token'),
       );
-      expect(tx.user.create).not.toHaveBeenCalled();
+      expect(tx.profile.create).not.toHaveBeenCalled();
       expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
@@ -423,7 +423,7 @@ describe('AuthService', () => {
         'fulfilled',
         'rejected',
       ]);
-      expect(tx.user.create).toHaveBeenCalledTimes(1);
+      expect(tx.profile.create).toHaveBeenCalledTimes(1);
     });
 
     describe('the contact email', () => {
@@ -446,7 +446,7 @@ describe('AuthService', () => {
         await expect(service.register(socialOwner())).rejects.toThrow(
           new BadRequestException('A verified contact email is required'),
         );
-        expect(tx.user.create).not.toHaveBeenCalled();
+        expect(tx.profile.create).not.toHaveBeenCalled();
       });
 
       it('a typed address proven by an emailed code → spent in the same transaction, stored normalized', async () => {
@@ -495,7 +495,7 @@ describe('AuthService', () => {
             }),
           ),
         ).rejects.toThrow(BadRequestException);
-        expect(tx.user.create).not.toHaveBeenCalled();
+        expect(tx.profile.create).not.toHaveBeenCalled();
       });
 
       it.each([
@@ -517,16 +517,16 @@ describe('AuthService', () => {
     });
 
     describe('the same identity registering twice at once (two tickets)', () => {
-      it('the login row is inserted right after the user, in the same transaction', async () => {
+      it('the login row is inserted right after the profile, in the same transaction', async () => {
         await service.register(socialOwner());
 
-        expect(tx.user.create.mock.invocationCallOrder[0]).toBeLessThan(
-          tx.userLoginMethod.createMany.mock.invocationCallOrder[0],
+        expect(tx.profile.create.mock.invocationCallOrder[0]).toBeLessThan(
+          tx.accountLoginMethod.createMany.mock.invocationCallOrder[0],
         );
       });
 
       it('the identity got registered meanwhile → the insert is skipped (count 0) → 409', async () => {
-        tx.userLoginMethod.createMany.mockResolvedValue({ count: 0 });
+        tx.accountLoginMethod.createMany.mockResolvedValue({ count: 0 });
 
         await expect(service.register(socialOwner())).rejects.toThrow(
           new ConflictException('This account is already registered'),
@@ -540,7 +540,7 @@ describe('AuthService', () => {
       });
 
       it('a PASSWORD signup whose email got taken meanwhile (UQ_login_methods_local_email) → 409 Email already registered', async () => {
-        tx.userLoginMethod.createMany.mockResolvedValue({ count: 0 });
+        tx.accountLoginMethod.createMany.mockResolvedValue({ count: 0 });
 
         await expect(service.register(registerDto as any)).rejects.toThrow(
           new ConflictException('Email already registered'),
@@ -553,7 +553,7 @@ describe('AuthService', () => {
 
       it('any other failure passes through as is', async () => {
         const failure = new Error('db down');
-        tx.userLoginMethod.createMany.mockRejectedValue(failure);
+        tx.accountLoginMethod.createMany.mockRejectedValue(failure);
 
         await expect(service.register(socialOwner())).rejects.toBe(failure);
       });
@@ -563,7 +563,7 @@ describe('AuthService', () => {
       const socialMember = { ...memberDto, credentials: social } as any;
 
       beforeEach(() => {
-        tx.user.create.mockResolvedValue({
+        tx.profile.create.mockResolvedValue({
           id: 'member-1',
           status: 'PENDING_APPROVAL',
           companyId: 'company-1',
@@ -574,7 +574,7 @@ describe('AuthService', () => {
       it('creates the member with the provider login', async () => {
         await service.registerMember(socialMember);
 
-        expect(tx.user.create).toHaveBeenCalledWith({
+        expect(tx.profile.create).toHaveBeenCalledWith({
           data: expect.objectContaining({
             companyId: 'company-1',
             contactEmail: 'owner@kakao.com',
@@ -611,7 +611,7 @@ describe('AuthService', () => {
   describe('registerMember (join-code self-signup)', () => {
     beforeEach(() => {
       // the member is created inside a transaction
-      tx.user.create.mockResolvedValue({
+      tx.profile.create.mockResolvedValue({
         id: 'member-1',
         status: 'PENDING_APPROVAL',
         companyId: 'company-1',
@@ -625,15 +625,15 @@ describe('AuthService', () => {
       expect(tx.company.findUnique).toHaveBeenCalledWith({
         where: { joinCode: '48291307' },
       });
-      expect(tx.user.create).toHaveBeenCalledWith({
+      expect(tx.profile.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           name: 'Sam Staff',
           companyId: 'company-1',
           roleId: null,
-          status: UserStatus.PENDING_APPROVAL,
+          status: ProfileStatus.PENDING_APPROVAL,
         }),
       });
-      expect(tx.userLoginMethod.createMany).toHaveBeenCalledWith({
+      expect(tx.accountLoginMethod.createMany).toHaveBeenCalledWith({
         data: [
           expect.objectContaining({
             method: 'local',
@@ -653,7 +653,7 @@ describe('AuthService', () => {
       expect(result).toEqual({
         accessToken: 'access-token',
         refreshToken: 'refresh-token',
-        user: {
+        profile: {
           id: 'member-1',
           status: 'PENDING_APPROVAL',
           companyId: 'company-1',
@@ -665,7 +665,7 @@ describe('AuthService', () => {
     it('sets the contact email to the login email (where notifications go)', async () => {
       await service.registerMember(memberDto as any);
 
-      expect(tx.user.create).toHaveBeenCalledWith({
+      expect(tx.profile.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ contactEmail: 'sam@acme.com' }),
       });
     });
@@ -677,7 +677,7 @@ describe('AuthService', () => {
       expect(tx.company.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
         accounts.createAccount.mock.invocationCallOrder[0],
       );
-      const memberData = tx.user.create.mock.calls[0][0].data;
+      const memberData = tx.profile.create.mock.calls[0][0].data;
       expect(memberData.accountId).toBe('account-1');
       expect(memberData).not.toHaveProperty('phone');
     });
@@ -691,7 +691,7 @@ describe('AuthService', () => {
       await expect(prisma.$transaction.mock.results[0].value).rejects.toThrow(
         ConflictException,
       );
-      expect(tx.user.create).not.toHaveBeenCalled();
+      expect(tx.profile.create).not.toHaveBeenCalled();
       expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
@@ -700,9 +700,9 @@ describe('AuthService', () => {
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         NotificationEvent.MEMBER_JOIN_REQUESTED,
-        { companyId: 'company-1', memberUserId: 'member-1' },
+        { companyId: 'company-1', memberProfileId: 'member-1' },
       );
-      expect(tx.user.create.mock.invocationCallOrder[0]).toBeLessThan(
+      expect(tx.profile.create.mock.invocationCallOrder[0]).toBeLessThan(
         eventEmitter.emit.mock.invocationCallOrder[0],
       );
     });
@@ -730,7 +730,7 @@ describe('AuthService', () => {
           BadRequestException,
         );
         expect(tx.company.findUnique).not.toHaveBeenCalled();
-        expect(tx.user.create).not.toHaveBeenCalled();
+        expect(tx.profile.create).not.toHaveBeenCalled();
         expect(eventEmitter.emit).not.toHaveBeenCalled();
         expect(prisma.refreshToken.create).not.toHaveBeenCalled();
       });
@@ -747,13 +747,13 @@ describe('AuthService', () => {
           prisma.$transaction.mock.results[0].value,
         ).resolves.toBeDefined();
         expect(phoneVerification.consume).toHaveBeenCalledTimes(1);
-        expect(tx.user.create).not.toHaveBeenCalled();
+        expect(tx.profile.create).not.toHaveBeenCalled();
         expect(eventEmitter.emit).not.toHaveBeenCalled();
         expect(prisma.refreshToken.create).not.toHaveBeenCalled();
       });
 
       it('a failure while creating the member rolls back, so the token is NOT spent', async () => {
-        tx.user.create.mockRejectedValue(new Error('unique violation'));
+        tx.profile.create.mockRejectedValue(new Error('unique violation'));
 
         await expect(service.registerMember(memberDto as any)).rejects.toThrow(
           'unique violation',
@@ -766,7 +766,7 @@ describe('AuthService', () => {
     });
 
     it('rejects a duplicate email with 409 before any transaction', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue({ id: 'lm-1' });
+      prisma.accountLoginMethod.findFirst.mockResolvedValue({ id: 'lm-1' });
 
       await expect(service.registerMember(memberDto as any)).rejects.toThrow(
         ConflictException,
@@ -797,17 +797,17 @@ describe('AuthService', () => {
       account: {
         id: 'account-1',
         deletedAt: null,
-        lastProfileId: 'user-1',
+        lastProfileId: 'profile-1',
         ...accountChanges,
       },
     });
 
     it('finds the password login by email, with its account', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue(passwordLogin());
+      prisma.accountLoginMethod.findFirst.mockResolvedValue(passwordLogin());
 
       await service.login(loginDto as any);
 
-      expect(prisma.userLoginMethod.findFirst).toHaveBeenCalledWith({
+      expect(prisma.accountLoginMethod.findFirst).toHaveBeenCalledWith({
         where: { email: 'jane@acme.com', method: 'local' },
         include: {
           account: {
@@ -818,7 +818,7 @@ describe('AuthService', () => {
     });
 
     it("opens the profile AccountsService picks (the account's last-used one) and returns it", async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue(passwordLogin());
+      prisma.accountLoginMethod.findFirst.mockResolvedValue(passwordLogin());
 
       const result = await service.login(loginDto as any);
 
@@ -829,12 +829,12 @@ describe('AuthService', () => {
       );
       expect(accounts.findProfileToOpen).toHaveBeenCalledWith(
         'account-1',
-        'user-1',
+        'profile-1',
       );
       expect(prisma.refreshToken.create).toHaveBeenCalledWith({
         data: {
           accountId: 'account-1',
-          profileId: 'user-1',
+          profileId: 'profile-1',
           tokenHash: 'hashed-refresh',
           expiresAt: expect.any(Date),
         },
@@ -842,9 +842,9 @@ describe('AuthService', () => {
       expect(result).toEqual({
         accessToken: 'access-token',
         refreshToken: 'refresh-token',
-        user: {
-          id: 'user-1',
-          status: UserStatus.ACTIVE,
+        profile: {
+          id: 'profile-1',
+          status: ProfileStatus.ACTIVE,
           companyId: 'company-1',
           roleId: 2,
         },
@@ -852,18 +852,18 @@ describe('AuthService', () => {
     });
 
     it('a PENDING profile may be opened (lands on the pending screen)', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue(passwordLogin());
+      prisma.accountLoginMethod.findFirst.mockResolvedValue(passwordLogin());
       accounts.findProfileToOpen.mockResolvedValue(
-        openProfile({ status: UserStatus.PENDING_APPROVAL }),
+        openProfile({ status: ProfileStatus.PENDING_APPROVAL }),
       );
 
       const result = await service.login(loginDto as any);
 
-      expect(result.user.status).toBe(UserStatus.PENDING_APPROVAL);
+      expect(result.profile.status).toBe(ProfileStatus.PENDING_APPROVAL);
     });
 
     it('rejects an unknown email with a generic 401 (no enumeration)', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue(null);
+      prisma.accountLoginMethod.findFirst.mockResolvedValue(null);
 
       await expect(service.login(loginDto as any)).rejects.toThrow(
         UnauthorizedException,
@@ -872,7 +872,7 @@ describe('AuthService', () => {
     });
 
     it('rejects a wrong password with a generic 401', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue(passwordLogin());
+      prisma.accountLoginMethod.findFirst.mockResolvedValue(passwordLogin());
       passwordService.verify.mockResolvedValue(false);
 
       await expect(service.login(loginDto as any)).rejects.toThrow(
@@ -882,7 +882,7 @@ describe('AuthService', () => {
     });
 
     it('no profile can be opened (suspended, rejected, left…) → 401, no session', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue(passwordLogin());
+      prisma.accountLoginMethod.findFirst.mockResolvedValue(passwordLogin());
       accounts.findProfileToOpen.mockResolvedValue(null);
 
       await expect(service.login(loginDto as any)).rejects.toThrow(
@@ -892,7 +892,7 @@ describe('AuthService', () => {
     });
 
     it('a soft-deleted account → 401, no profile looked up, no session', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue(
+      prisma.accountLoginMethod.findFirst.mockResolvedValue(
         passwordLogin({ deletedAt: new Date('2026-12-01') }),
       );
 
@@ -911,7 +911,7 @@ describe('AuthService', () => {
     const validStored = {
       tokenHash: 'hashed-refresh',
       accountId: 'account-1',
-      profileId: 'user-1',
+      profileId: 'profile-1',
       revokedAt: null,
       expiresAt: new Date('2030-01-01T00:00:00Z'),
     };
@@ -930,7 +930,7 @@ describe('AuthService', () => {
       expect(prisma.refreshToken.create).toHaveBeenCalledWith({
         data: {
           accountId: 'account-1',
-          profileId: 'user-1',
+          profileId: 'profile-1',
           tokenHash: 'hashed-refresh',
           expiresAt: expect.any(Date),
         },

@@ -12,8 +12,11 @@ import { PermissionsService } from '../authorization/permissions.service';
 import { CornersService } from '../corners/corners.service';
 import { MembershipHistoryService } from '../membership-history/membership-history.service';
 import { StorageService } from '../storage/storage.service';
-import type { AuthUser } from '../auth/types/auth-user';
-import { MembershipChangeReason, UserStatus } from '../generated/prisma/enums';
+import type { AuthProfile } from '../auth/types/auth-profile';
+import {
+  MembershipChangeReason,
+  ProfileStatus,
+} from '../generated/prisma/enums';
 import { NotificationEvent } from '../notifications/notification-events';
 import type {
   MemberMovedEvent,
@@ -21,17 +24,17 @@ import type {
   MemberRoleChangedEvent,
 } from '../notifications/notification-events';
 import { decideRoleChange, isMemberRole } from './member-rules';
-import { MEMBER_SELECT } from './member-view';
-import type { MemberRow, MemberView } from './member-view';
+import { PROFILE_SELECT } from './profile-view';
+import type { ProfileRow, ProfileView } from './profile-view';
 import { ChangeBranchDto } from './dto/change-branch.dto';
-import { ApproveMemberDto } from './dto/approve-member.dto';
+import { ApproveProfileDto } from './dto/approve-profile.dto';
 import { ChangeRoleDto } from './dto/change-role.dto';
-import { ListMembersQueryDto } from './dto/list-members-query.dto';
+import { ListProfilesQueryDto } from './dto/list-profiles-query.dto';
 import { HistoryQueryDto } from '../membership-history/dto/history-query.dto';
 import type { MembershipHistoryPage } from '../membership-history/membership-change-view';
 
 @Injectable()
-export class MembersService {
+export class ProfilesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ownership: OwnershipService,
@@ -48,31 +51,33 @@ export class MembersService {
    * so only those who can approve them see them.
    */
   async list(
-    caller: AuthUser,
-    query: ListMembersQueryDto,
-  ): Promise<MemberView[]> {
+    caller: AuthProfile,
+    query: ListProfilesQueryDto,
+  ): Promise<ProfileView[]> {
     const companyId = this.ownership.resolveTargetCompany(
       caller,
       query.companyId,
     );
     const callerPermissions =
       await this.permissions.getEffectivePermissions(caller);
-    // Who can really approve: holds users.approve (role + personal overrides)
+    // Who can really approve: holds profiles.approve (role + personal overrides)
     // AND passes approve()'s role rules. A personal GRANT gets staff past the
     // guard but not past approve(), and a manager with no branch can approve
     // no one, so neither is shown who is waiting.
     const canApprove =
-      callerPermissions.has('users.approve') &&
+      callerPermissions.has('profiles.approve') &&
       (caller.roleCode === 'ADMIN' ||
         caller.roleCode === 'OWNER' ||
         (caller.roleCode === 'MANAGER' &&
           (caller.companyStoreId ?? null) !== null));
 
-    const rows = await this.prisma.user.findMany({
+    const rows = await this.prisma.profile.findMany({
       where: {
         companyId: companyId,
         deletedAt: null,
-        ...(canApprove ? {} : { NOT: { status: UserStatus.PENDING_APPROVAL } }),
+        ...(canApprove
+          ? {}
+          : { NOT: { status: ProfileStatus.PENDING_APPROVAL } }),
         ...(query.cornerId
           ? {
               companyStoreId: query.cornerId === 'none' ? null : query.cornerId,
@@ -81,7 +86,7 @@ export class MembersService {
         ...(query.role ? { role: { code: query.role } } : {}),
         ...(query.status ? { status: query.status } : {}),
       },
-      select: MEMBER_SELECT,
+      select: PROFILE_SELECT,
       orderBy: { createdAt: 'asc' },
     });
     return Promise.all(rows.map((row) => this.toView(row)));
@@ -93,23 +98,23 @@ export class MembersService {
    * branch.
    */
   async approve(
-    caller: AuthUser,
-    userId: string,
-    dto: ApproveMemberDto,
-  ): Promise<MemberView> {
+    caller: AuthProfile,
+    profileId: string,
+    dto: ApproveProfileDto,
+  ): Promise<ProfileView> {
     // A pending member has no role yet, so this is the plain scoped lookup
     // (findTarget would treat them as "not found").
-    const target = await this.prisma.user.findFirst({
+    const target = await this.prisma.profile.findFirst({
       where: {
-        id: userId,
+        id: profileId,
         ...this.ownership.scopeToCompany(caller),
         deletedAt: null,
       },
-      select: MEMBER_SELECT,
+      select: PROFILE_SELECT,
     });
     if (!target || target.companyId === null)
       throw new NotFoundException('Member not found');
-    if (target.status !== UserStatus.PENDING_APPROVAL)
+    if (target.status !== ProfileStatus.PENDING_APPROVAL)
       throw new BadRequestException('Member is not pending approval');
     // Pending with a role already = a company owner waiting for their company
     // to be approved (PATCH /companies/:id/approve). Approving them here as a
@@ -129,7 +134,7 @@ export class MembersService {
 
     // A guest list, not a blacklist: the admin and owners approve freely,
     // managers within their limits, and every other role is refused, even
-    // one given users.approve personally.
+    // one given profiles.approve personally.
     const isAdminOrOwner =
       caller.roleCode === 'ADMIN' || caller.roleCode === 'OWNER';
     if (!isAdminOrOwner) {
@@ -163,16 +168,16 @@ export class MembersService {
 
       // Still a pending newcomer? If someone approved them a moment ago,
       // nothing matches and count is 0.
-      const approved = await transaction.user.updateMany({
+      const approved = await transaction.profile.updateMany({
         where: {
           id: target.id,
-          status: UserStatus.PENDING_APPROVAL,
+          status: ProfileStatus.PENDING_APPROVAL,
           roleId: null,
           deletedAt: null,
         },
         data: {
           roleId: role.id,
-          status: UserStatus.ACTIVE,
+          status: ProfileStatus.ACTIVE,
           companyStoreId: dto.cornerId,
         },
       });
@@ -182,20 +187,20 @@ export class MembersService {
       await this.history.record(transaction, [
         {
           companyId: companyId,
-          userId: target.id,
+          profileId: target.id,
           reason: MembershipChangeReason.APPROVED,
           fromRoleId: target.roleId,
           toRoleId: role.id,
           fromCornerId: target.companyStoreId,
           toCornerId: dto.cornerId,
-          changedByUserId: caller.id,
+          changedByProfileId: caller.id,
         },
       ]);
     });
 
     const event: MemberApprovedEvent = {
-      memberUserId: target.id,
-      approvedByUserId: caller.id,
+      memberProfileId: target.id,
+      approvedByProfileId: caller.id,
     };
     this.eventEmitter.emit(NotificationEvent.MEMBER_APPROVED, event);
 
@@ -204,17 +209,17 @@ export class MembersService {
 
   /** Move a manager or staff member to another branch, or off theirs (null). */
   async changeBranch(
-    caller: AuthUser,
-    userId: string,
+    caller: AuthProfile,
+    profileId: string,
     dto: ChangeBranchDto,
-  ): Promise<MemberView> {
+  ): Promise<ProfileView> {
     if (caller.roleCode !== 'ADMIN' && caller.roleCode !== 'OWNER')
       throw new ForbiddenException(
         'Only an owner can move members between branches',
       );
 
-    const target = await this.findTarget(caller, userId);
-    if (target.status !== UserStatus.ACTIVE)
+    const target = await this.findTarget(caller, profileId);
+    if (target.status !== ProfileStatus.ACTIVE)
       throw new BadRequestException('Only active members can be changed');
     if (target.roleCode !== 'MANAGER' && target.roleCode !== 'STAFF')
       throw new BadRequestException(
@@ -234,13 +239,13 @@ export class MembersService {
 
       // The where repeats what we read: if anyone changed this member in
       // between, nothing matches and count is 0.
-      const moved = await transaction.user.updateMany({
+      const moved = await transaction.profile.updateMany({
         where: {
           id: target.id,
           companyId: target.companyId,
           roleId: target.roleId,
           companyStoreId: target.companyStoreId,
-          status: UserStatus.ACTIVE,
+          status: ProfileStatus.ACTIVE,
           deletedAt: null,
         },
         data: { companyStoreId: dto.cornerId },
@@ -251,20 +256,20 @@ export class MembersService {
       await this.history.record(transaction, [
         {
           companyId: target.companyId,
-          userId: target.id,
+          profileId: target.id,
           reason: MembershipChangeReason.MOVED,
           fromRoleId: target.roleId,
           toRoleId: target.roleId,
           fromCornerId: target.companyStoreId,
           toCornerId: dto.cornerId,
-          changedByUserId: caller.id,
+          changedByProfileId: caller.id,
         },
       ]);
     });
 
     const event: MemberMovedEvent = {
-      memberUserId: target.id,
-      changedByUserId: caller.id,
+      memberProfileId: target.id,
+      changedByProfileId: caller.id,
       fromCornerId: target.companyStoreId,
       toCornerId: dto.cornerId,
       reason: 'MOVED',
@@ -279,12 +284,12 @@ export class MembersService {
    * once; the person is notified.
    */
   async changeRole(
-    caller: AuthUser,
-    userId: string,
+    caller: AuthProfile,
+    profileId: string,
     dto: ChangeRoleDto,
-  ): Promise<MemberView> {
-    const target = await this.findTarget(caller, userId);
-    if (target.status !== UserStatus.ACTIVE)
+  ): Promise<ProfileView> {
+    const target = await this.findTarget(caller, profileId);
+    if (target.status !== ProfileStatus.ACTIVE)
       throw new BadRequestException('Only active members can be changed');
 
     // "Not sent" (undefined) is not the same answer as null ("no branch").
@@ -319,11 +324,11 @@ export class MembersService {
           where: { id: target.companyId },
           data: { updatedAt: new Date() },
         });
-        const activeOwners = await transaction.user.count({
+        const activeOwners = await transaction.profile.count({
           where: {
             companyId: target.companyId,
             role: { code: 'OWNER' },
-            status: UserStatus.ACTIVE,
+            status: ProfileStatus.ACTIVE,
             deletedAt: null,
           },
         });
@@ -340,13 +345,13 @@ export class MembersService {
         if (!isLive) throw new NotFoundException('Branch not found');
       }
 
-      const changed = await transaction.user.updateMany({
+      const changed = await transaction.profile.updateMany({
         where: {
           id: target.id,
           companyId: target.companyId,
           roleId: target.roleId,
           companyStoreId: target.companyStoreId,
-          status: UserStatus.ACTIVE,
+          status: ProfileStatus.ACTIVE,
           deletedAt: null,
         },
         data: { roleId: role.id, companyStoreId: branchAfter },
@@ -357,20 +362,20 @@ export class MembersService {
       await this.history.record(transaction, [
         {
           companyId: target.companyId,
-          userId: target.id,
+          profileId: target.id,
           reason: MembershipChangeReason.ROLE_CHANGED,
           fromRoleId: target.roleId,
           toRoleId: role.id,
           fromCornerId: target.companyStoreId,
           toCornerId: branchAfter,
-          changedByUserId: caller.id,
+          changedByProfileId: caller.id,
         },
       ]);
     });
 
     const event: MemberRoleChangedEvent = {
-      memberUserId: target.id,
-      changedByUserId: caller.id,
+      memberProfileId: target.id,
+      changedByProfileId: caller.id,
       toRoleCode: dto.role,
     };
     this.eventEmitter.emit(NotificationEvent.MEMBER_ROLE_CHANGED, event);
@@ -383,15 +388,15 @@ export class MembersService {
    * the admin, an owner, or a manager whose branch the person is in now.
    */
   async listHistory(
-    caller: AuthUser,
-    userId: string,
+    caller: AuthProfile,
+    profileId: string,
     query: HistoryQueryDto,
   ): Promise<MembershipHistoryPage> {
     // A plain scoped lookup, not findTarget: someone still waiting for
     // approval has no role yet, but their (empty) history is theirs to read.
-    const person = await this.prisma.user.findFirst({
+    const person = await this.prisma.profile.findFirst({
       where: {
-        id: userId,
+        id: profileId,
         ...this.ownership.scopeToCompany(caller),
         deletedAt: null,
       },
@@ -412,7 +417,7 @@ export class MembersService {
     if (!isSelf && !isAdminOrOwner && !managesPersonsBranch)
       throw new ForbiddenException("You cannot read this member's history");
 
-    return this.history.page({ userId: person.id }, query);
+    return this.history.page({ profileId: person.id }, query);
   }
 
   /**
@@ -420,14 +425,14 @@ export class MembersService {
    * moved or re-roled. Everyone else is "not found": the admin's scope is {},
    * so this also rules out the platform admin and members with no role yet.
    */
-  private async findTarget(caller: AuthUser, userId: string) {
-    const target = await this.prisma.user.findFirst({
+  private async findTarget(caller: AuthProfile, profileId: string) {
+    const target = await this.prisma.profile.findFirst({
       where: {
-        id: userId,
+        id: profileId,
         ...this.ownership.scopeToCompany(caller),
         deletedAt: null,
       },
-      select: MEMBER_SELECT,
+      select: PROFILE_SELECT,
     });
     const roleCode = target?.role?.code;
     if (
@@ -440,14 +445,14 @@ export class MembersService {
     return { ...target, companyId: target.companyId, roleCode: roleCode };
   }
 
-  private findRow(userId: string): Promise<MemberRow> {
-    return this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-      select: MEMBER_SELECT,
+  private findRow(profileId: string): Promise<ProfileRow> {
+    return this.prisma.profile.findUniqueOrThrow({
+      where: { id: profileId },
+      select: PROFILE_SELECT,
     });
   }
 
-  private async toView(row: MemberRow): Promise<MemberView> {
+  private async toView(row: ProfileRow): Promise<ProfileView> {
     return {
       id: row.id,
       name: row.name,

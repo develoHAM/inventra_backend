@@ -11,7 +11,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CornersService } from '../corners/corners.service';
 import { InventoryService } from '../inventory/inventory.service';
-import { AuthUser } from '../auth/types/auth-user';
+import { AuthProfile } from '../auth/types/auth-profile';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { CancelReservationDto } from './dto/cancel-reservation.dto';
 import { ListReservationsQueryDto } from './dto/list-reservations.query.dto';
@@ -40,7 +40,11 @@ export class ReservationsService {
     return reservation;
   }
 
-  async create(caller: AuthUser, cornerId: string, dto: CreateReservationDto) {
+  async create(
+    caller: AuthProfile,
+    cornerId: string,
+    dto: CreateReservationDto,
+  ) {
     await this.corners.assertWorksCorner(caller, cornerId);
     await this.getPlacement(cornerId, dto.companyStoreProductId);
 
@@ -56,7 +60,7 @@ export class ReservationsService {
             status: ReservationStatus.RESERVED,
             remark: dto.remark ?? null,
             expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
-            createdByUserId: caller.id,
+            createdByProfileId: caller.id,
           },
         });
 
@@ -80,7 +84,7 @@ export class ReservationsService {
   }
 
   async findAll(
-    caller: AuthUser,
+    caller: AuthProfile,
     cornerId: string,
     query: ListReservationsQueryDto,
   ) {
@@ -97,12 +101,12 @@ export class ReservationsService {
     });
   }
 
-  async findOne(caller: AuthUser, cornerId: string, reservationId: string) {
+  async findOne(caller: AuthProfile, cornerId: string, reservationId: string) {
     await this.corners.findOne(caller, cornerId);
     return this.getReservation(cornerId, reservationId);
   }
 
-  async fulfill(caller: AuthUser, cornerId: string, reservationId: string) {
+  async fulfill(caller: AuthProfile, cornerId: string, reservationId: string) {
     await this.corners.assertWorksCorner(caller, cornerId);
     const reservation = await this.getReservation(cornerId, reservationId);
     if (reservation.status !== ReservationStatus.RESERVED)
@@ -150,7 +154,7 @@ export class ReservationsService {
   }
 
   async cancel(
-    caller: AuthUser,
+    caller: AuthProfile,
     cornerId: string,
     reservationId: string,
     dto: CancelReservationDto,

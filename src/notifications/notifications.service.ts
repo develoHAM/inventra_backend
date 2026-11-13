@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
-import { NotificationChannel, UserStatus } from '../generated/prisma/enums';
+import { NotificationChannel, ProfileStatus } from '../generated/prisma/enums';
 import {
   NOTIFICATIONS_QUEUE,
   REDACTED_SEND_JOB_OPTIONS,
@@ -18,7 +18,7 @@ import type { NotificationEventName } from './event-channels';
 export interface DispatchInput {
   eventType: string;
   channel: NotificationChannel;
-  recipientUserId?: string;
+  recipientProfileId?: string;
   recipientAddress: string;
   subject?: string;
   body: string;
@@ -44,7 +44,7 @@ export class NotificationsService {
       data: {
         eventType: input.eventType,
         channel: input.channel,
-        recipientUserId: input.recipientUserId ?? null,
+        recipientProfileId: input.recipientProfileId ?? null,
         recipientAddress: input.recipientAddress,
         subject: input.subject ?? null,
         // a redacted row never holds the secret text
@@ -63,19 +63,19 @@ export class NotificationsService {
   }
 
   /** Where this profile's notifications go: its company's contact email (independent of how the person signs in). */
-  async findUserEmail(userId: string): Promise<string | null> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
+  async findProfileEmail(profileId: string): Promise<string | null> {
+    const profile = await this.prisma.profile.findUnique({
+      where: { id: profileId },
       select: { contactEmail: true },
     });
-    return user?.contactEmail ?? null;
+    return profile?.contactEmail ?? null;
   }
 
   async findPlatformAdminIds(): Promise<string[]> {
-    const admins = await this.prisma.user.findMany({
+    const admins = await this.prisma.profile.findMany({
       where: {
         role: { code: 'ADMIN' },
-        status: UserStatus.ACTIVE,
+        status: ProfileStatus.ACTIVE,
         deletedAt: null,
       },
       select: { id: true },
@@ -84,11 +84,11 @@ export class NotificationsService {
   }
 
   async findCompanyOwnerIds(companyId: string): Promise<string[]> {
-    const owners = await this.prisma.user.findMany({
+    const owners = await this.prisma.profile.findMany({
       where: {
         companyId: companyId,
         role: { code: 'OWNER' },
-        status: UserStatus.ACTIVE,
+        status: ProfileStatus.ACTIVE,
         deletedAt: null,
       },
       select: { id: true },
@@ -103,11 +103,11 @@ export class NotificationsService {
       select: { companyId: true },
     });
     if (!corner) return [];
-    const managers = await this.prisma.user.findMany({
+    const managers = await this.prisma.profile.findMany({
       where: {
         companyStoreId: cornerId,
         role: { code: 'MANAGER' },
-        status: UserStatus.ACTIVE,
+        status: ProfileStatus.ACTIVE,
         deletedAt: null,
       },
       select: { id: true },
@@ -121,28 +121,28 @@ export class NotificationsService {
    * one EMAIL per user with an email login, one PUSH per registered device.
    * Duplicates are collapsed and the actor is never notified.
    */
-  async notifyUsers(input: {
-    userIds: string[];
-    excludeUserId?: string;
+  async notifyProfiles(input: {
+    profileIds: string[];
+    excludeProfileId?: string;
     eventType: NotificationEventName;
     message: RenderedMessage;
     data?: Record<string, string>; // deep-link ids, sent with push only
   }): Promise<void> {
-    const recipientIds = [...new Set(input.userIds)].filter(
-      (userId) => userId !== input.excludeUserId,
+    const recipientIds = [...new Set(input.profileIds)].filter(
+      (profileId) => profileId !== input.excludeProfileId,
     );
     if (recipientIds.length === 0) return;
 
     const channels = EVENT_CHANNELS[input.eventType];
 
     if (channels.includes(NotificationChannel.EMAIL)) {
-      for (const userId of recipientIds) {
-        const email = await this.findUserEmail(userId);
+      for (const profileId of recipientIds) {
+        const email = await this.findProfileEmail(profileId);
         if (!email) continue;
         await this.dispatch({
           eventType: input.eventType,
           channel: NotificationChannel.EMAIL,
-          recipientUserId: userId,
+          recipientProfileId: profileId,
           recipientAddress: email,
           subject: input.message.subject,
           body: input.message.body,
@@ -154,7 +154,7 @@ export class NotificationsService {
       // A device belongs to the person's account, so each recipient profile
       // leads to its account's devices. One row per device (each succeeds,
       // retries or dies on its own), recording the profile it is for.
-      const profiles = await this.prisma.user.findMany({
+      const profiles = await this.prisma.profile.findMany({
         where: { id: { in: recipientIds } },
         select: { id: true, accountId: true },
       });
@@ -169,7 +169,7 @@ export class NotificationsService {
           await this.dispatch({
             eventType: input.eventType,
             channel: NotificationChannel.PUSH,
-            recipientUserId: profile.id,
+            recipientProfileId: profile.id,
             recipientAddress: device.token,
             subject: input.message.subject,
             body: input.message.body,
@@ -193,7 +193,7 @@ export class NotificationsService {
     const channels = EVENT_CHANNELS[input.eventType];
 
     if (channels.includes(NotificationChannel.EMAIL)) {
-      const passwordLogin = await this.prisma.userLoginMethod.findFirst({
+      const passwordLogin = await this.prisma.accountLoginMethod.findFirst({
         where: { accountId: input.accountId, method: 'local' },
         select: { email: true },
       });

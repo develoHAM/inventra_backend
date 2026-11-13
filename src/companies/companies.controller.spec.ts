@@ -2,8 +2,8 @@ import { HttpStatus } from '@nestjs/common';
 import { HTTP_CODE_METADATA } from '@nestjs/common/constants';
 import { CompaniesController } from './companies.controller';
 import { REQUIRE_PERMISSIONS_KEY } from '../authorization/decorators/require-permissions.decorator';
-import { AuthUser } from '../auth/types/auth-user';
-import { UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import { ProfileStatus } from '../generated/prisma/enums';
 
 describe('CompaniesController', () => {
   let controller: CompaniesController;
@@ -14,13 +14,13 @@ describe('CompaniesController', () => {
     listHistory: jest.Mock;
   };
 
-  const manager: AuthUser = {
+  const manager: AuthProfile = {
     id: 'manager-1',
     accountId: 'account-of-manager-1',
     companyId: 'company-1',
     roleId: 3,
     roleCode: 'MANAGER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
 
   // The permission on each route IS the security boundary: read it back

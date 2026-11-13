@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-11-11.
+> Last updated: 2026-11-13.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -28,8 +28,21 @@
 | Notify | **Notifications** (email · SMS · push) + **account security** (OCTOMO phone verification · find ID · password reset) | ✅ complete (Slices 1a–4) |
 | Social | **Social login** (Kakao · Google · Facebook · Apple, native app-to-app) + **login methods** (link · add a password · unlink) | ✅ complete (Tasks 1–14) |
 | Members | **Roles & branches** (membership piece 1 of 3: promote/demote, move between branches, one branch per manager, change history, notifications) | ✅ complete (Tasks 1–8) |
+| Members | **One sign-in, many companies** (membership piece 2 of 3: a profile per company, switching, join/create from inside the app) | 🔨 Tasks 1, 1b done; Task 2 next |
 
-## Where we are right now — Roles & branches complete (membership piece 1, Tasks 1–8)
+## Where we are right now — One sign-in, many companies (membership piece 2): Tasks 1 + 1b done
+
+Spec `docs/superpowers/specs/2026-11-12-one-sign-in-many-companies-design.md`, plan `docs/superpowers/plans/2026-11-12-one-sign-in-many-companies.md` (7 tasks, native execution: per task teach → reference code → user applies or asks Claude to → Claude tests → human runs migrate + e2e). Ledger `.superpowers/sdd/2026-11-12-one-sign-in-many-companies/progress.md` (git-ignored).
+
+- **Vocabulary:** **Account** = the sign-in (`accounts`: phone, login methods, sessions, devices). **Profile** = the person in one company (`profiles`: name, photo, contact email, role, branch, status). No model is called "User".
+- **Task 1** (`5b24f87`): the sign-in moved off the company profile onto `accounts` — phone, login methods, sessions (a refresh token also remembers the profile it has open) and devices. Behaviour unchanged. Migration `20261112162955_accounts` (hand-ordered expand → copy → contract; every migrated account reuses its profile's id).
+- **Task 1b**: names only — the company profile is a Profile. `User→Profile`, `UserPermission→ProfilePermission`, `UserStatus→ProfileStatus`, `UserLoginMethod→AccountLoginMethod` (`account_login_methods`); every `*_user_id` → `*_profile_id` (`*ByUser→*ByProfile`, `recipientProfileId`); `AuthUser→AuthProfile` (`{ id, accountId, … }`), `@CurrentUser→@CurrentProfile`, `request.user→request.profile`; `notifyUsers→notifyProfiles`, `findUserEmail→findProfileEmail`. Modules: `src/accounts` = the sign-in (unchanged), `src/profiles` = members + photos (`ProfilesService`, `ProfilePhotosService`), `src/companies` = companies + join code. **Routes** `/users`, `/users/:id/{approve,branch,role,history}`, `/users/me/avatar*` → `/profiles/…`; `/users/me/login-methods` → `/accounts/me/login-methods`. **Permissions** `users.*` → `profiles.*`. Auth responses' `user` key → `profile`. Photo keys `profiles/<id>/…`. Migration `20261113120851_profiles`: hand-written RENAMEs only (3 tables, enum, 19 columns, 3 primary keys, 25 foreign keys, 3 indexes) + the permission-code UPDATE — no row moves. Kept: "member" as the business word; end-user error copy.
+- **1083 unit tests green (76 suites) + 227 e2e green (16 suites)** — both **measured** 2026-11-13 after Task 1b (`Tests: 227 passed`, on a database rebuilt from all 28 migrations).
+- The sections below are history: they use the names of their time (`users.*` permissions, `/users/:id/...` routes, `src/members`, `src/users`).
+
+**Next:** Task 2 — tokens name the account + the open profile, `POST /auth/switch`, `SessionResponse { accessToken, refreshToken, profile, companies }`.
+
+## Prior — Roles & branches complete (membership piece 1, Tasks 1–8)
 
 Spec `docs/superpowers/specs/2026-11-06-roles-and-branches-design.md` (status: built; **"As built"** at the end lists every deviation), plan `docs/superpowers/plans/2026-11-06-roles-and-branches.md`. Piece 1 of the membership track; piece 2 (one sign-in, a separate profile per company, Slack-style switching) and piece 3 (leaving: leave a company vs delete an account, company closure, successor/auto-promotion, provider disconnect) get their own designs.
 

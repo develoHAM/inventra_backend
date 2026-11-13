@@ -14,14 +14,14 @@ datasource db {
   provider = "postgresql"
 }
 
-enum UserStatus {
+enum ProfileStatus {
   PENDING_APPROVAL
   ACTIVE
   REJECTED
   SUSPENDED
   DEACTIVATED
 
-  @@map("user_status")
+  @@map("profile_status")
 }
 
 enum PermissionEffect {
@@ -64,7 +64,7 @@ enum DevicePlatform {
 }
 
 /// The sign-in: one per person. Phone, login methods, sessions and devices
-/// belong here; each company the person works for has its own profile (User).
+/// belong here; each company the person works for has its own Profile.
 model Account {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   phone         String?   @db.VarChar(20) // null only for the seeded platform admin
@@ -73,9 +73,9 @@ model Account {
   updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  lastProfile   User?             @relation("AccountLastProfile", fields: [lastProfileId], references: [id])
-  profiles      User[]            @relation("AccountProfiles")
-  loginMethods  UserLoginMethod[]
+  lastProfile   Profile?             @relation("AccountLastProfile", fields: [lastProfileId], references: [id])
+  profiles      Profile[]            @relation("AccountProfiles")
+  loginMethods  AccountLoginMethod[]
   refreshTokens RefreshToken[]
   deviceTokens  DeviceToken[]
 
@@ -86,7 +86,7 @@ model Account {
 
 /// A company profile: a person's name, photo, contact email, role, branch and
 /// status in ONE company. Everything "recorded by" points here.
-model User {
+model Profile {
   id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   accountId       String     @map("account_id") @db.Uuid
   name            String     @db.VarChar(100)
@@ -96,7 +96,7 @@ model User {
   profileImageUrl String?    @map("profile_image_url") @db.VarChar(2048)
   contactEmail    String?    @map("contact_email") @db.VarChar(255) // where this company's notifications go
   biography       String?    @db.Text
-  status          UserStatus @default(PENDING_APPROVAL)
+  status          ProfileStatus @default(PENDING_APPROVAL)
   createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt       DateTime?  @map("deleted_at") @db.Timestamptz(6)
@@ -109,7 +109,7 @@ model User {
   lastProfileOf           Account[]             @relation("AccountLastProfile")
   openSessions            RefreshToken[]        @relation("RefreshTokenProfile")
   createdCompanies        Company[]             @relation("CompanyCreator")
-  permissions             UserPermission[]
+  permissions             ProfilePermission[]
   createdProducts         Product[]             @relation("ProductCreatedBy")
   deletedProducts         Product[]             @relation("ProductDeletedBy")
   deletedBrands           Brand[]               @relation("BrandDeletedBy")
@@ -124,19 +124,19 @@ model User {
   deletedAudits           InventoryAudit[]      @relation("AuditsDeletedBy")
   createdTransactions     InventoryTransaction[]
   createdReservations     PurchaseReservation[] @relation("ReservationsCreatedBy")
-  receivedNotifications Notification[] @relation("NotificationRecipient")
+  receivedNotifications   Notification[]        @relation("NotificationRecipient")
   membershipChanges       MembershipChange[]    @relation("MembershipChangeMember")
   madeMembershipChanges   MembershipChange[]    @relation("MembershipChangeActor")
 
-  @@index([companyId], map: "IDX_users_company")
+  @@index([companyId], map: "IDX_profiles_company")
   // one current profile per person per company: a left (DEACTIVATED) or
   // deleted profile frees the slot; suspended and rejected ones keep it.
   // Written as Postgres stores the condition (see UQ_login_methods_local_email).
-  @@unique([accountId, companyId], map: "UQ_users_account_company", where: raw("((deleted_at IS NULL) AND (status <> 'DEACTIVATED'::user_status))"))
-  @@map("users")
+  @@unique([accountId, companyId], map: "UQ_profiles_account_company", where: raw("((deleted_at IS NULL) AND (status <> 'DEACTIVATED'::profile_status))"))
+  @@map("profiles")
 }
 
-model UserLoginMethod {
+model AccountLoginMethod {
   id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   accountId        String    @map("account_id") @db.Uuid
   method           String    @db.VarChar(20)
@@ -166,7 +166,7 @@ model UserLoginMethod {
   // renders as ("method" = 'local'), which it then sees as a changed index on
   // every `migrate dev` and tries to drop and recreate.
   @@unique([email], map: "UQ_login_methods_local_email", where: raw("((method)::text = 'local'::text)"))
-  @@map("user_login_methods")
+  @@map("account_login_methods")
 }
 
 model Role {
@@ -177,7 +177,7 @@ model Role {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  users           User[]
+  profiles        Profile[]
   rolePermissions RolePermission[]
   changesFrom     MembershipChange[] @relation("MembershipChangeFromRole")
   changesTo       MembershipChange[] @relation("MembershipChangeToRole")
@@ -197,7 +197,7 @@ model Permission {
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   rolePermissions RolePermission[]
-  userPermissions UserPermission[]
+  profilePermissions ProfilePermission[]
 
   @@map("permissions")
 }
@@ -214,17 +214,17 @@ model RolePermission {
   @@map("role_permissions")
 }
 
-model UserPermission {
-  userId       String           @map("user_id") @db.Uuid
+model ProfilePermission {
+  profileId    String           @map("profile_id") @db.Uuid
   permissionId Int              @map("permission_id")
   effect       PermissionEffect
   createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  user       User       @relation(fields: [userId], references: [id])
+  profile    Profile    @relation(fields: [profileId], references: [id])
   permission Permission @relation(fields: [permissionId], references: [id])
 
-  @@id([userId, permissionId])
-  @@map("user_permissions")
+  @@id([profileId, permissionId])
+  @@map("profile_permissions")
 }
 
 /// A session: belongs to the account, and remembers which profile it has open.
@@ -238,7 +238,7 @@ model RefreshToken {
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   account Account @relation(fields: [accountId], references: [id])
-  profile User?   @relation("RefreshTokenProfile", fields: [profileId], references: [id])
+  profile Profile?   @relation("RefreshTokenProfile", fields: [profileId], references: [id])
 
   @@index([accountId], map: "IDX_refresh_tokens_account_id")
   @@map("refresh_tokens")
@@ -248,7 +248,7 @@ model Notification {
   id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   eventType        String              @map("event_type") @db.VarChar(64)
   channel          NotificationChannel
-  recipientUserId  String?             @map("recipient_user_id") @db.Uuid
+  recipientProfileId  String?             @map("recipient_profile_id") @db.Uuid
   recipientAddress String              @map("recipient_address") @db.VarChar(255)
   subject          String?             @db.VarChar(255)
   body             String              @db.Text
@@ -261,9 +261,9 @@ model Notification {
   createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  recipientUser User? @relation("NotificationRecipient", fields: [recipientUserId], references: [id])
+  recipientProfile Profile? @relation("NotificationRecipient", fields: [recipientProfileId], references: [id])
 
-  @@index([recipientUserId], map: "IDX_notifications_recipient")
+  @@index([recipientProfileId], map: "IDX_notifications_recipient")
   @@index([status], map: "IDX_notifications_status")
   @@map("notifications")
 }
@@ -294,10 +294,10 @@ model Store {
   createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt        DateTime?  @map("deleted_at") @db.Timestamptz(6)
-  deletedByUserId  String?   @map("deleted_by_user_id") @db.Uuid
+  deletedByProfileId  String?   @map("deleted_by_profile_id") @db.Uuid
 
   companyStores CompanyStore[]
-  deletedByUser User? @relation("StoreDeletedBy", fields: [deletedByUserId], references: [id])
+  deletedByProfile Profile? @relation("StoreDeletedBy", fields: [deletedByProfileId], references: [id])
 
 
   @@map("stores")
@@ -312,13 +312,13 @@ model Company {
   description       String?   @db.Text
   headOfficePhone   String?   @map("head_office_phone") @db.VarChar(20)
   headOfficeEmail   String?   @map("head_office_email") @db.VarChar(255)
-  createdByUserId   String    @map("created_by_user_id") @db.Uuid
+  createdByProfileId   String    @map("created_by_profile_id") @db.Uuid
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  createdByUser User           @relation("CompanyCreator", fields: [createdByUserId], references: [id])
-  users             User[]             @relation("CompanyEmployees")
+  createdByProfile Profile           @relation("CompanyCreator", fields: [createdByProfileId], references: [id])
+  profiles          Profile[]          @relation("CompanyEmployees")
   brands            Brand[]
   products          Product[]
   companyStores     CompanyStore[]
@@ -337,14 +337,14 @@ model CompanyStore {
   createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt         DateTime?   @map("deleted_at") @db.Timestamptz(6)
-  deletedByUserId   String?     @map("deleted_by_user_id") @db.Uuid
+  deletedByProfileId   String?     @map("deleted_by_profile_id") @db.Uuid
 
 
   company Company       @relation(fields: [companyId], references: [id])
   store   Store         @relation(fields: [storeId], references: [id])
-  deletedByUser User?   @relation("CompanyStoreDeletedBy", fields: [deletedByUserId], references: [id])
+  deletedByProfile Profile?   @relation("CompanyStoreDeletedBy", fields: [deletedByProfileId], references: [id])
 
-  users                User[]                @relation("CompanyStoreMembers") // its managers and staff
+  profiles             Profile[]             @relation("CompanyStoreMembers") // its managers and staff
   companyStoreProducts CompanyStoreProduct[]
   orders               Order[]
   inventoryAudits      InventoryAudit[]
@@ -370,27 +370,27 @@ enum MembershipChangeReason {
 model MembershipChange {
   id                 String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   companyId          String                 @map("company_id") @db.Uuid
-  userId             String                 @map("user_id") @db.Uuid
+  profileId          String                 @map("profile_id") @db.Uuid
   reason             MembershipChangeReason
   fromRoleId         Int?                   @map("from_role_id")
   toRoleId           Int?                   @map("to_role_id")
   fromCompanyStoreId String?                @map("from_company_store_id") @db.Uuid
   toCompanyStoreId   String?                @map("to_company_store_id") @db.Uuid
-  changedByUserId    String?                @map("changed_by_user_id") @db.Uuid // null = made by the system
+  changedByProfileId    String?                @map("changed_by_profile_id") @db.Uuid // null = made by the system
   createdAt          DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // History is permanent: a referenced row can't be hard-deleted (soft delete
   // keeps names on records), never blanked to NULL, which would read as
   // "made by the system".
   company          Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  user             User          @relation("MembershipChangeMember", fields: [userId], references: [id], onDelete: Restrict)
-  changedByUser    User?         @relation("MembershipChangeActor", fields: [changedByUserId], references: [id], onDelete: Restrict)
+  profile          Profile       @relation("MembershipChangeMember", fields: [profileId], references: [id], onDelete: Restrict)
+  changedByProfile Profile?      @relation("MembershipChangeActor", fields: [changedByProfileId], references: [id], onDelete: Restrict)
   fromRole         Role?         @relation("MembershipChangeFromRole", fields: [fromRoleId], references: [id], onDelete: Restrict)
   toRole           Role?         @relation("MembershipChangeToRole", fields: [toRoleId], references: [id], onDelete: Restrict)
   fromCompanyStore CompanyStore? @relation("MembershipChangeFromBranch", fields: [fromCompanyStoreId], references: [id], onDelete: Restrict)
   toCompanyStore   CompanyStore? @relation("MembershipChangeToBranch", fields: [toCompanyStoreId], references: [id], onDelete: Restrict)
 
-  @@index([userId, createdAt], map: "IDX_membership_changes_user_created")
+  @@index([profileId, createdAt], map: "IDX_membership_changes_profile_created")
   @@index([companyId, createdAt], map: "IDX_membership_changes_company_created")
   @@index([fromCompanyStoreId], map: "IDX_membership_changes_from_branch")
   @@index([toCompanyStoreId], map: "IDX_membership_changes_to_branch")
@@ -405,11 +405,11 @@ model Category {
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
-  deletedByUserId  String?   @map("deleted_by_user_id") @db.Uuid
+  deletedByProfileId  String?   @map("deleted_by_profile_id") @db.Uuid
 
   parent   Category?  @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id])
   children Category[] @relation("CategoryHierarchy")
-  deletedByUser User? @relation("CategoryDeletedBy", fields: [deletedByUserId], references: [id])
+  deletedByProfile Profile? @relation("CategoryDeletedBy", fields: [deletedByProfileId], references: [id])
   products Product[]
 
   @@map("categories")
@@ -425,10 +425,10 @@ model Brand {
   updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdByCompanyId String   @map("created_by_company_id") @db.Uuid
   deletedAt          DateTime? @map("deleted_at") @db.Timestamptz(6)
-  deletedByUserId    String?   @map("deleted_by_user_id") @db.Uuid
+  deletedByProfileId    String?   @map("deleted_by_profile_id") @db.Uuid
 
   createdByCompany Company   @relation(fields: [createdByCompanyId], references: [id])
-  deletedByUser    User?     @relation("BrandDeletedBy", fields: [deletedByUserId], references: [id])
+  deletedByProfile    Profile?     @relation("BrandDeletedBy", fields: [deletedByProfileId], references: [id])
   products         Product[]
 
   @@map("brands")
@@ -445,17 +445,17 @@ model Product {
   color           String?   @db.VarChar(255)
   imageUrl        String?   @map("image_url") @db.VarChar(2048)
   isActive        Boolean   @default(true) @map("is_active")
-  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  createdByProfileId String    @map("created_by_profile_id") @db.Uuid
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
-  deletedByUserId String?   @map("deleted_by_user_id")  @db.Uuid
+  deletedByProfileId String?   @map("deleted_by_profile_id")  @db.Uuid
 
   company       Company  @relation(fields: [companyId], references: [id])
   category      Category @relation(fields: [categoryId], references: [id])
   brand         Brand    @relation(fields: [brandId], references: [id])
-  createdByUser User     @relation("ProductCreatedBy", fields: [createdByUserId], references: [id])
-  deletedByUser User?     @relation("ProductDeletedBy", fields: [deletedByUserId], references: [id])
+  createdByProfile Profile     @relation("ProductCreatedBy", fields: [createdByProfileId], references: [id])
+  deletedByProfile Profile?     @relation("ProductDeletedBy", fields: [deletedByProfileId], references: [id])
 
   companyStoreProducts CompanyStoreProduct[]
 
@@ -472,11 +472,11 @@ model CompanyStoreProduct {
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt           DateTime?   @map("deleted_at") @db.Timestamptz(6)
-  deletedByUserId     String?     @map("deleted_by_user_id") @db.Uuid
+  deletedByProfileId     String?     @map("deleted_by_profile_id") @db.Uuid
 
   companyStore    CompanyStore @relation(fields: [companyStoreId], references: [id])
   product         Product      @relation(fields: [productId], references: [id])
-  deletedByUser   User?        @relation("CompanyStoreProductDeletedBy", fields: [deletedByUserId], references: [id])
+  deletedByProfile   Profile?        @relation("CompanyStoreProductDeletedBy", fields: [deletedByProfileId], references: [id])
 
   stock                 CompanyStoreProductStock?
   orderItems            OrderItem[]
@@ -511,15 +511,15 @@ model Order {
   description     String?     @db.Text
   fileUrl         String?     @map("file_url") @db.VarChar(2048)
   orderDate       DateTime    @map("order_date") @db.Timestamptz(6)
-  createdByUserId String      @map("created_by_user_id") @db.Uuid
+  createdByProfileId String      @map("created_by_profile_id") @db.Uuid
   createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
-  deletedByUserId  String?   @map("deleted_by_user_id") @db.Uuid
+  deletedByProfileId  String?   @map("deleted_by_profile_id") @db.Uuid
 
   companyStore  CompanyStore  @relation(fields: [companyStoreId], references: [id])
-  createdByUser User          @relation("OrdersCreatedBy", fields: [createdByUserId], references: [id])
-  deletedByUser User?         @relation("OrdersDeletedBy", fields: [deletedByUserId], references: [id])
+  createdByProfile Profile          @relation("OrdersCreatedBy", fields: [createdByProfileId], references: [id])
+  deletedByProfile Profile?         @relation("OrdersDeletedBy", fields: [deletedByProfileId], references: [id])
   orderItems    OrderItem[]
 
   @@id([id, companyStoreId])
@@ -549,18 +549,18 @@ model InventoryAudit {
   description     String?  @db.Text
   fileUrl         String?  @map("file_url") @db.VarChar(2048)
   auditedDate     DateTime @map("audited_date") @db.Timestamptz(6)
-  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdByProfileId String   @map("created_by_profile_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   appliedAt       DateTime? @map("applied_at") @db.Timestamptz(6)
-  appliedByUserId String?   @map("applied_by_user_id") @db.Uuid
+  appliedByProfileId String?   @map("applied_by_profile_id") @db.Uuid
   deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
-  deletedByUserId String?   @map("deleted_by_user_id") @db.Uuid
+  deletedByProfileId String?   @map("deleted_by_profile_id") @db.Uuid
 
   companyStore        CompanyStore         @relation(fields: [companyStoreId], references: [id])
-  createdByUser       User                 @relation("AuditsCreatedBy",fields: [createdByUserId], references: [id])
-  appliedByUser       User?                 @relation("AuditsAppliedBy", fields: [appliedByUserId], references: [id])
-  deletedByUser       User?                 @relation("AuditsDeletedBy", fields: [deletedByUserId], references: [id])
+  createdByProfile       Profile                 @relation("AuditsCreatedBy",fields: [createdByProfileId], references: [id])
+  appliedByProfile       Profile?                 @relation("AuditsAppliedBy", fields: [appliedByProfileId], references: [id])
+  deletedByProfile       Profile?                 @relation("AuditsDeletedBy", fields: [deletedByProfileId], references: [id])
 
   inventoryAuditItems InventoryAuditItem[]
 
@@ -592,14 +592,14 @@ model InventoryTransaction {
   quantityBefore        Int?                     @map("quantity_before")
   quantityAfter         Int?                     @map("quantity_after")
   remarks               String?                  @db.Text
-  createdByUserId       String                   @map("created_by_user_id") @db.Uuid
+  createdByProfileId       String                   @map("created_by_profile_id") @db.Uuid
   createdAt             DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime                 @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   sourceType            TransactionSourceType?   @map("source_type")
   sourceId              String?                  @map("source_id") @db.Uuid
 
   companyStoreProduct CompanyStoreProduct @relation(fields: [companyStoreProductId], references: [id])
-  createdByUser       User                @relation(fields: [createdByUserId], references: [id])
+  createdByProfile       Profile                @relation(fields: [createdByProfileId], references: [id])
 
   @@index([sourceType, sourceId], map: "IDX_inventory_transactions_source")
   @@map("inventory_transactions")
@@ -672,11 +672,11 @@ model PurchaseReservation {
   cancelReason          String?           @map("cancel_reason") @db.Text
   reservedAt            DateTime          @default(now()) @map("reserved_at") @db.Timestamptz(6)
   updatedAt             DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdByUserId       String            @map("created_by_user_id") @db.Uuid
+  createdByProfileId       String            @map("created_by_profile_id") @db.Uuid
 
 
   companyStoreProduct CompanyStoreProduct @relation(fields: [companyStoreProductId, companyStoreId], references: [id, companyStoreId])
-  createdByUser       User @relation("ReservationsCreatedBy", fields: [createdByUserId], references: [id])
+  createdByProfile       Profile @relation("ReservationsCreatedBy", fields: [createdByProfileId], references: [id])
 
   @@map("purchase_reservations")
 }

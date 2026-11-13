@@ -44,13 +44,13 @@ export class AccountsService {
       status: { in: [...CAN_AUTHENTICATE] },
     };
     if (preferredProfileId !== null) {
-      const preferred = await this.prisma.user.findFirst({
+      const preferred = await this.prisma.profile.findFirst({
         where: { id: preferredProfileId, ...openable },
         select: OPEN_PROFILE_SELECT,
       });
       if (preferred) return preferred;
     }
-    return this.prisma.user.findFirst({
+    return this.prisma.profile.findFirst({
       where: openable,
       orderBy: { createdAt: 'desc' },
       select: OPEN_PROFILE_SELECT,

@@ -32,8 +32,8 @@ export class NotificationsListener {
     if (!company) return;
 
     // Approved by the platform admin, so there is no actor to exclude.
-    await this.notifications.notifyUsers({
-      userIds: [event.ownerUserId],
+    await this.notifications.notifyProfiles({
+      profileIds: [event.ownerProfileId],
       eventType: NotificationEvent.COMPANY_APPROVED,
       message: notificationTemplates.companyApproved(company.name),
       data: { companyId: event.companyId },
@@ -47,8 +47,8 @@ export class NotificationsListener {
       select: { name: true },
     });
     if (!company) return;
-    await this.notifications.notifyUsers({
-      userIds: await this.notifications.findPlatformAdminIds(),
+    await this.notifications.notifyProfiles({
+      profileIds: await this.notifications.findPlatformAdminIds(),
       eventType: NotificationEvent.COMPANY_REGISTERED,
       message: notificationTemplates.companyRegistered(company.name),
       data: { companyId: event.companyId },
@@ -64,34 +64,37 @@ export class NotificationsListener {
         where: { id: event.companyId },
         select: { name: true },
       }),
-      this.prisma.user.findUnique({
-        where: { id: event.memberUserId },
+      this.prisma.profile.findUnique({
+        where: { id: event.memberProfileId },
         select: { name: true },
       }),
     ]);
     if (!company || !member) return;
-    await this.notifications.notifyUsers({
-      userIds: await this.notifications.findCompanyOwnerIds(event.companyId),
-      excludeUserId: event.memberUserId,
+    await this.notifications.notifyProfiles({
+      profileIds: await this.notifications.findCompanyOwnerIds(event.companyId),
+      excludeProfileId: event.memberProfileId,
       eventType: NotificationEvent.MEMBER_JOIN_REQUESTED,
       message: notificationTemplates.memberJoinRequested(
         member.name,
         company.name,
       ),
-      data: { companyId: event.companyId, memberUserId: event.memberUserId },
+      data: {
+        companyId: event.companyId,
+        memberProfileId: event.memberProfileId,
+      },
     });
   }
 
   @OnEvent(NotificationEvent.MEMBER_APPROVED)
   async handleMemberApproved(event: MemberApprovedEvent): Promise<void> {
-    const member = await this.prisma.user.findUnique({
-      where: { id: event.memberUserId },
+    const member = await this.prisma.profile.findUnique({
+      where: { id: event.memberProfileId },
       select: { company: { select: { id: true, name: true } } },
     });
     if (!member?.company) return;
-    await this.notifications.notifyUsers({
-      userIds: [event.memberUserId],
-      excludeUserId: event.approvedByUserId,
+    await this.notifications.notifyProfiles({
+      profileIds: [event.memberProfileId],
+      excludeProfileId: event.approvedByProfileId,
       eventType: NotificationEvent.MEMBER_APPROVED,
       message: notificationTemplates.memberApproved(member.company.name),
       data: { companyId: member.company.id },
@@ -100,8 +103,8 @@ export class NotificationsListener {
 
   @OnEvent(NotificationEvent.MEMBER_MOVED)
   async handleMemberMoved(event: MemberMovedEvent): Promise<void> {
-    const member = await this.prisma.user.findUnique({
-      where: { id: event.memberUserId },
+    const member = await this.prisma.profile.findUnique({
+      where: { id: event.memberProfileId },
       select: { company: { select: { id: true, name: true } } },
     });
     if (!member?.company) return;
@@ -115,9 +118,9 @@ export class NotificationsListener {
             select: { name: true },
           })
         : null;
-      await this.notifications.notifyUsers({
-        userIds: [event.memberUserId],
-        excludeUserId: event.changedByUserId ?? undefined,
+      await this.notifications.notifyProfiles({
+        profileIds: [event.memberProfileId],
+        excludeProfileId: event.changedByProfileId ?? undefined,
         eventType: NotificationEvent.MEMBER_MOVED,
         message: closedBranch
           ? notificationTemplates.memberBranchClosed(
@@ -136,9 +139,9 @@ export class NotificationsListener {
           select: { name: true },
         })
       : null;
-    await this.notifications.notifyUsers({
-      userIds: [event.memberUserId],
-      excludeUserId: event.changedByUserId ?? undefined,
+    await this.notifications.notifyProfiles({
+      profileIds: [event.memberProfileId],
+      excludeProfileId: event.changedByProfileId ?? undefined,
       eventType: NotificationEvent.MEMBER_MOVED,
       message: notificationTemplates.memberMoved(
         member.company.name,
@@ -152,14 +155,14 @@ export class NotificationsListener {
 
   @OnEvent(NotificationEvent.MEMBER_ROLE_CHANGED)
   async handleMemberRoleChanged(event: MemberRoleChangedEvent): Promise<void> {
-    const member = await this.prisma.user.findUnique({
-      where: { id: event.memberUserId },
+    const member = await this.prisma.profile.findUnique({
+      where: { id: event.memberProfileId },
       select: { company: { select: { id: true, name: true } } },
     });
     if (!member?.company) return;
-    await this.notifications.notifyUsers({
-      userIds: [event.memberUserId],
-      excludeUserId: event.changedByUserId ?? undefined,
+    await this.notifications.notifyProfiles({
+      profileIds: [event.memberProfileId],
+      excludeProfileId: event.changedByProfileId ?? undefined,
       eventType: NotificationEvent.MEMBER_ROLE_CHANGED,
       message: notificationTemplates.memberRoleChanged(
         member.company.name,
@@ -180,9 +183,11 @@ export class NotificationsListener {
       },
     });
     if (!order) return;
-    await this.notifications.notifyUsers({
-      userIds: await this.notifications.findCornerRecipientIds(event.cornerId),
-      excludeUserId: event.createdByUserId,
+    await this.notifications.notifyProfiles({
+      profileIds: await this.notifications.findCornerRecipientIds(
+        event.cornerId,
+      ),
+      excludeProfileId: event.createdByProfileId,
       eventType: NotificationEvent.ORDER_CREATED,
       message: notificationTemplates.orderCreated(
         order.companyStore.name,
@@ -204,9 +209,11 @@ export class NotificationsListener {
       },
     });
     if (!audit) return;
-    await this.notifications.notifyUsers({
-      userIds: await this.notifications.findCornerRecipientIds(event.cornerId),
-      excludeUserId: event.appliedByUserId,
+    await this.notifications.notifyProfiles({
+      profileIds: await this.notifications.findCornerRecipientIds(
+        event.cornerId,
+      ),
+      excludeProfileId: event.appliedByProfileId,
       eventType: NotificationEvent.AUDIT_APPLIED,
       message: notificationTemplates.auditApplied(
         audit.companyStore.name,
@@ -229,8 +236,8 @@ export class NotificationsListener {
     });
     if (!placement) return;
     // A state warning, not an action receipt: nobody is excluded.
-    await this.notifications.notifyUsers({
-      userIds: await this.notifications.findCornerRecipientIds(
+    await this.notifications.notifyProfiles({
+      profileIds: await this.notifications.findCornerRecipientIds(
         placement.companyStoreId,
       ),
       eventType: NotificationEvent.STOCK_BELOW_TARGET,

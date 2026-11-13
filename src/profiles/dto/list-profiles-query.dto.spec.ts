@@ -1,16 +1,16 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { ListMembersQueryDto } from './list-members-query.dto';
+import { ListProfilesQueryDto } from './list-profiles-query.dto';
 
 async function failedFields(query: Record<string, unknown>) {
-  const errors = await validate(plainToInstance(ListMembersQueryDto, query), {
+  const errors = await validate(plainToInstance(ListProfilesQueryDto, query), {
     whitelist: true,
     forbidNonWhitelisted: true,
   });
   return errors.map((error) => error.property);
 }
 
-describe('ListMembersQueryDto', () => {
+describe('ListProfilesQueryDto', () => {
   const BRANCH_ID = '0b9a1f3e-5c2d-4e8f-9a7b-1c2d3e4f5a6b';
 
   it('accepts no filters at all', async () => {

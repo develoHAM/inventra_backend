@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDTO } from './dto/update-category.dto';
-import { AuthUser } from '../auth/types/auth-user';
+import { AuthProfile } from '../auth/types/auth-profile';
 
 @Injectable()
 export class CategoriesService {
@@ -49,13 +49,13 @@ export class CategoriesService {
     return this.prisma.category.update({ where: { id: id }, data: dto });
   }
 
-  async remove(caller: AuthUser, id: number) {
+  async remove(caller: AuthProfile, id: number) {
     await this.findOne(id);
     return this.prisma.category.update({
       where: { id: id },
       data: {
         deletedAt: new Date(),
-        deletedByUserId: caller.id,
+        deletedByProfileId: caller.id,
       },
     });
   }

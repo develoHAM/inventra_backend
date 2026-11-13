@@ -1,4 +1,4 @@
-import type { MemberRoleCode } from '../members/member-rules';
+import type { MemberRoleCode } from '../profiles/member-rules';
 
 export interface RenderedMessage {
   subject: string;

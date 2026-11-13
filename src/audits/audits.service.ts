@@ -7,7 +7,7 @@ import {
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CornersService } from '../corners/corners.service';
-import { AuthUser } from '../auth/types/auth-user';
+import { AuthProfile } from '../auth/types/auth-profile';
 import { CreateAuditDto } from './dto/create-audit.dto';
 import { UpdateAuditDto } from './dto/update-audit.dto';
 import {
@@ -35,7 +35,7 @@ export class AuditsService {
     { key: 'title', label: { en: 'Title', ko: '제목' } },
     { key: 'description', label: { en: 'Description', ko: '설명' } },
     { key: 'auditedDate', label: { en: 'Audit Date', ko: '실사일자' } },
-    { key: 'userName', label: { en: 'Created By', ko: '작성자' } },
+    { key: 'profileName', label: { en: 'Created By', ko: '작성자' } },
     { key: 'createdAt', label: { en: 'Created At', ko: '생성일시' } },
     { key: 'appliedAt', label: { en: 'Applied At', ko: '적용일시' } },
     { key: 'companyStoreName', label: { en: 'Corner', ko: '코너' } },
@@ -218,7 +218,7 @@ export class AuditsService {
     return audit;
   }
 
-  async create(caller: AuthUser, cornerId: string, dto: CreateAuditDto) {
+  async create(caller: AuthProfile, cornerId: string, dto: CreateAuditDto) {
     await this.corners.assertWorksCorner(caller, cornerId);
     await this.validateItems(cornerId, dto.items);
 
@@ -229,7 +229,7 @@ export class AuditsService {
         description: dto.description ?? null,
         fileUrl: dto.fileUrl ?? null,
         auditedDate: new Date(dto.auditedDate),
-        createdByUserId: caller.id,
+        createdByProfileId: caller.id,
         inventoryAuditItems: {
           create: dto.items.map((item) => ({
             productQuantity: item.productQuantity,
@@ -250,7 +250,7 @@ export class AuditsService {
     });
   }
 
-  async findAll(caller: AuthUser, cornerId: string) {
+  async findAll(caller: AuthProfile, cornerId: string) {
     await this.corners.findOne(caller, cornerId);
     return this.prisma.inventoryAudit.findMany({
       where: {
@@ -262,13 +262,13 @@ export class AuditsService {
     });
   }
 
-  async findOne(caller: AuthUser, cornerId: string, auditId: string) {
+  async findOne(caller: AuthProfile, cornerId: string, auditId: string) {
     await this.corners.findOne(caller, cornerId);
     return this.getAudit(cornerId, auditId);
   }
 
   async update(
-    caller: AuthUser,
+    caller: AuthProfile,
     cornerId: string,
     auditId: string,
     dto: UpdateAuditDto,
@@ -319,7 +319,7 @@ export class AuditsService {
     });
   }
 
-  async remove(caller: AuthUser, cornerId: string, auditId: string) {
+  async remove(caller: AuthProfile, cornerId: string, auditId: string) {
     await this.corners.assertWorksCorner(caller, cornerId);
     const audit = await this.getAudit(cornerId, auditId);
     if (audit.appliedAt) throw new ConflictException('Audit already applied');
@@ -327,12 +327,12 @@ export class AuditsService {
       where: { id_companyStoreId: { id: auditId, companyStoreId: cornerId } },
       data: {
         deletedAt: new Date(),
-        deletedByUserId: caller.id,
+        deletedByProfileId: caller.id,
       },
     });
   }
 
-  async apply(caller: AuthUser, cornerId: string, auditId: string) {
+  async apply(caller: AuthProfile, cornerId: string, auditId: string) {
     await this.corners.assertWorksCorner(caller, cornerId);
     const audit = await this.getAudit(cornerId, auditId);
     if (audit.appliedAt) throw new ConflictException('Audit already applied');
@@ -360,7 +360,7 @@ export class AuditsService {
           },
           data: {
             appliedAt: new Date(),
-            appliedByUserId: caller.id,
+            appliedByProfileId: caller.id,
           },
           include: { inventoryAuditItems: true },
         });
@@ -373,7 +373,7 @@ export class AuditsService {
     const event: AuditAppliedEvent = {
       auditId: auditId,
       cornerId: cornerId,
-      appliedByUserId: caller.id,
+      appliedByProfileId: caller.id,
     };
     this.eventEmitter.emit(NotificationEvent.AUDIT_APPLIED, event);
 
@@ -381,7 +381,7 @@ export class AuditsService {
   }
 
   async exportAudit(
-    caller: AuthUser,
+    caller: AuthProfile,
     cornerId: string,
     auditId: string,
     format: 'csv' | 'xlsx' = 'csv',
@@ -391,7 +391,7 @@ export class AuditsService {
     const audit = await this.prisma.inventoryAudit.findFirst({
       where: { id: auditId, companyStoreId: cornerId, deletedAt: null },
       include: {
-        createdByUser: { select: { name: true } },
+        createdByProfile: { select: { name: true } },
         companyStore: { select: { name: true } },
         inventoryAuditItems: {
           include: {
@@ -409,7 +409,7 @@ export class AuditsService {
       title: audit.title,
       description: audit.description ?? '',
       auditedDate: audit.auditedDate.toISOString(),
-      userName: audit.createdByUser.name,
+      profileName: audit.createdByProfile.name,
       createdAt: audit.createdAt.toISOString(),
       appliedAt: audit.appliedAt ? audit.appliedAt.toISOString() : '',
       companyStoreName: audit.companyStore.name,
@@ -434,7 +434,7 @@ export class AuditsService {
   }
 
   async importCreate(
-    caller: AuthUser,
+    caller: AuthProfile,
     cornerId: string,
     file: Express.Multer.File,
   ) {
@@ -444,7 +444,7 @@ export class AuditsService {
   }
 
   async importUpdate(
-    caller: AuthUser,
+    caller: AuthProfile,
     cornerId: string,
     auditId: string,
     file: Express.Multer.File,

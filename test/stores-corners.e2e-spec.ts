@@ -17,8 +17,8 @@ describe('Stores & Corners (e2e)', () => {
   let owner2Access: string;
 
   let company1Id: string;
-  let managerUserId: string;
-  let staffUserId: string;
+  let managerProfileId: string;
+  let staffProfileId: string;
 
   let storeId: string;
   let cornerId: string;
@@ -27,7 +27,7 @@ describe('Stores & Corners (e2e)', () => {
   const MISSING_UUID = '11111111-1111-4111-8111-111111111111';
 
   // register a company → ADMIN approves it → owner logs in
-  // users.phone is unique across the shared DB: suite 03's own block
+  // accounts.phone is unique across the shared DB: suite 03's own block
   const nextPhone = testPhones(3);
 
   const registerCompany = async (n: number) => {
@@ -84,12 +84,12 @@ describe('Stores & Corners (e2e)', () => {
         phoneVerificationToken: token,
       })
       .expect(201);
-    const user = await prisma.user.findFirst({
+    const profile = await prisma.profile.findFirst({
       where: { account: { loginMethods: { some: { email: email } } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
-      .patch(`/users/${user!.id}/approve`)
+      .patch(`/profiles/${profile!.id}/approve`)
       .set('Authorization', `Bearer ${ownerToken}`)
       .send({ roleId: role!.id, cornerId: null })
       .expect(200);
@@ -99,7 +99,7 @@ describe('Stores & Corners (e2e)', () => {
       .expect(201);
     return {
       access: login.body.accessToken as string,
-      userId: user!.id as string,
+      profileId: profile!.id as string,
     };
   };
 
@@ -139,7 +139,7 @@ describe('Stores & Corners (e2e)', () => {
       'manager',
     );
     managerAccess = mgr.access;
-    managerUserId = mgr.userId;
+    managerProfileId = mgr.profileId;
 
     const staff = await registerMember(
       c1.joinCode,
@@ -147,7 +147,7 @@ describe('Stores & Corners (e2e)', () => {
       'STAFF',
       'staff',
     );
-    staffUserId = staff.userId;
+    staffProfileId = staff.profileId;
 
     const other = await registerMember(
       c1.joinCode,
@@ -195,9 +195,9 @@ describe('Stores & Corners (e2e)', () => {
       .expect(400);
   });
 
-  const moveTo = (userId: string, toCornerId: string | null) =>
+  const moveTo = (profileId: string, toCornerId: string | null) =>
     request(http)
-      .put(`/users/${userId}/branch`)
+      .put(`/profiles/${profileId}/branch`)
       .set('Authorization', `Bearer ${ownerAccess}`)
       .send({ cornerId: toCornerId });
 
@@ -211,10 +211,10 @@ describe('Stores & Corners (e2e)', () => {
       .send({ productId: MISSING_UUID });
 
   it('OWNER puts the manager and the staff member in the corner', async () => {
-    const manager = await moveTo(managerUserId, cornerId).expect(200);
+    const manager = await moveTo(managerProfileId, cornerId).expect(200);
     expect(manager.body.branch).toEqual({ id: cornerId, name: 'A-1' });
 
-    await moveTo(staffUserId, cornerId).expect(200);
+    await moveTo(staffProfileId, cornerId).expect(200);
   });
 
   it("the corner's MANAGER works it; a manager of no branch is 403", async () => {
@@ -231,19 +231,19 @@ describe('Stores & Corners (e2e)', () => {
         .expect(201)
     ).body.id;
 
-    await moveTo(managerUserId, otherCornerId).expect(200);
+    await moveTo(managerProfileId, otherCornerId).expect(200);
 
     await placeMissingProduct(managerAccess, cornerId).expect(403);
     await placeMissingProduct(managerAccess, otherCornerId).expect(400);
 
-    await moveTo(managerUserId, cornerId).expect(200); // back, for the rest of the suite
+    await moveTo(managerProfileId, cornerId).expect(200); // back, for the rest of the suite
   });
 
-  it('a corner no longer takes a manager (400: managerUserId is not a field)', async () => {
+  it('a corner no longer takes a manager (400: managerProfileId is not a field)', async () => {
     await request(http)
       .post('/corners')
       .set('Authorization', `Bearer ${ownerAccess}`)
-      .send({ storeId: storeId, name: 'X', managerUserId: managerUserId })
+      .send({ storeId: storeId, name: 'X', managerProfileId: managerProfileId })
       .expect(400);
   });
 
@@ -251,15 +251,15 @@ describe('Stores & Corners (e2e)', () => {
     await request(http)
       .put(`/corners/${cornerId}/manager`)
       .set('Authorization', `Bearer ${ownerAccess}`)
-      .send({ userId: managerUserId })
+      .send({ profileId: managerProfileId })
       .expect(404);
     await request(http)
       .post(`/corners/${cornerId}/staff`)
       .set('Authorization', `Bearer ${ownerAccess}`)
-      .send({ userId: staffUserId })
+      .send({ profileId: staffProfileId })
       .expect(404);
     await request(http)
-      .delete(`/corners/${cornerId}/staff/${staffUserId}`)
+      .delete(`/corners/${cornerId}/staff/${staffProfileId}`)
       .set('Authorization', `Bearer ${ownerAccess}`)
       .expect(404);
   });

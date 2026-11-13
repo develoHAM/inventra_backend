@@ -7,7 +7,7 @@ describe('AccountRecoveryService', () => {
   let service: AccountRecoveryService;
   let tx: {
     account: { findFirst: jest.Mock };
-    userLoginMethod: { findFirst: jest.Mock; update: jest.Mock };
+    accountLoginMethod: { findFirst: jest.Mock; update: jest.Mock };
     refreshToken: { updateMany: jest.Mock };
   };
   let prisma: { $transaction: jest.Mock };
@@ -25,7 +25,7 @@ describe('AccountRecoveryService', () => {
           loginMethods: [{ method: 'local', email: 'owner@example.com' }],
         }),
       },
-      userLoginMethod: {
+      accountLoginMethod: {
         findFirst: jest.fn().mockResolvedValue({ email: 'owner@example.com' }),
         update: jest.fn().mockResolvedValue({}),
       },
@@ -139,7 +139,7 @@ describe('AccountRecoveryService', () => {
     };
 
     beforeEach(() => {
-      tx.userLoginMethod.findFirst.mockResolvedValue({
+      tx.accountLoginMethod.findFirst.mockResolvedValue({
         id: 'login-1',
         accountId: 'account-1',
       });
@@ -164,13 +164,15 @@ describe('AccountRecoveryService', () => {
       });
       expect(
         phoneVerification.consume.mock.invocationCallOrder[0],
-      ).toBeLessThan(tx.userLoginMethod.findFirst.mock.invocationCallOrder[0]);
+      ).toBeLessThan(
+        tx.accountLoginMethod.findFirst.mock.invocationCallOrder[0],
+      );
     });
 
     it('requires the EMAIL to belong to the account that owns the PHONE (both factors)', async () => {
       await service.resetPassword(input);
 
-      expect(tx.userLoginMethod.findFirst).toHaveBeenCalledWith({
+      expect(tx.accountLoginMethod.findFirst).toHaveBeenCalledWith({
         where: {
           method: 'local',
           email: 'owner@example.com',
@@ -183,7 +185,7 @@ describe('AccountRecoveryService', () => {
     it('stores the new hash on that login method', async () => {
       await service.resetPassword(input);
 
-      expect(tx.userLoginMethod.update).toHaveBeenCalledWith({
+      expect(tx.accountLoginMethod.update).toHaveBeenCalledWith({
         where: { id: 'login-1' },
         data: { passwordHash: 'new-hash' },
       });
@@ -215,12 +217,12 @@ describe('AccountRecoveryService', () => {
     });
 
     it('an email that is not this phone’s account → 400, nothing changed, token spent', async () => {
-      tx.userLoginMethod.findFirst.mockResolvedValue(null);
+      tx.accountLoginMethod.findFirst.mockResolvedValue(null);
 
       await expect(service.resetPassword(input)).rejects.toThrow(
         new BadRequestException('Email and phone do not match an account'),
       );
-      expect(tx.userLoginMethod.update).not.toHaveBeenCalled();
+      expect(tx.accountLoginMethod.update).not.toHaveBeenCalled();
       expect(tx.refreshToken.updateMany).not.toHaveBeenCalled();
       expect(eventEmitter.emit).not.toHaveBeenCalled();
       // committed, so the token stays spent
@@ -237,8 +239,8 @@ describe('AccountRecoveryService', () => {
       await expect(service.resetPassword(input)).rejects.toThrow(
         BadRequestException,
       );
-      expect(tx.userLoginMethod.findFirst).not.toHaveBeenCalled();
-      expect(tx.userLoginMethod.update).not.toHaveBeenCalled();
+      expect(tx.accountLoginMethod.findFirst).not.toHaveBeenCalled();
+      expect(tx.accountLoginMethod.update).not.toHaveBeenCalled();
       expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 

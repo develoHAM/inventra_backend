@@ -20,15 +20,15 @@ describe('Restock Orders (e2e)', () => {
   let placementAId: number;
   let placementBId: number;
 
-  let managerUserId: string;
-  let staffUserId: string;
+  let managerProfileId: string;
+  let staffProfileId: string;
 
   const auth = (token: string): [string, string] => [
     'Authorization',
     `Bearer ${token}`,
   ];
 
-  // users.phone is unique across the shared DB: suite 06's own block
+  // accounts.phone is unique across the shared DB: suite 06's own block
   const nextPhone = testPhones(6);
 
   const registerCompany = async (n: number) => {
@@ -83,12 +83,12 @@ describe('Restock Orders (e2e)', () => {
         phoneVerificationToken: token,
       })
       .expect(201);
-    const user = await prisma.user.findFirst({
+    const profile = await prisma.profile.findFirst({
       where: { account: { loginMethods: { some: { email: email } } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
-      .patch(`/users/${user!.id}/approve`)
+      .patch(`/profiles/${profile!.id}/approve`)
       .set(...auth(ownerToken))
       .send({ roleId: role!.id, cornerId: null })
       .expect(200);
@@ -98,7 +98,7 @@ describe('Restock Orders (e2e)', () => {
       .expect(201);
     return {
       access: login.body.accessToken as string,
-      userId: user!.id as string,
+      profileId: profile!.id as string,
     };
   };
 
@@ -172,7 +172,7 @@ describe('Restock Orders (e2e)', () => {
       'MANAGER',
       'manager',
     );
-    managerUserId = manager.userId;
+    managerProfileId = manager.profileId;
     const staff = await registerMember(
       company1.joinCode,
       ownerAccess,
@@ -180,7 +180,7 @@ describe('Restock Orders (e2e)', () => {
       'staff',
     );
     staffAccess = staff.access;
-    staffUserId = staff.userId;
+    staffProfileId = staff.profileId;
     const otherManager = await registerMember(
       company1.joinCode,
       ownerAccess,
@@ -204,12 +204,12 @@ describe('Restock Orders (e2e)', () => {
         .expect(201)
     ).body.id;
     await request(http)
-      .put(`/users/${managerUserId}/branch`)
+      .put(`/profiles/${managerProfileId}/branch`)
       .set(...auth(ownerAccess))
       .send({ cornerId: cornerId })
       .expect(200);
     await request(http)
-      .put(`/users/${staffUserId}/branch`)
+      .put(`/profiles/${staffProfileId}/branch`)
       .set(...auth(ownerAccess))
       .send({ cornerId: cornerId })
       .expect(200);

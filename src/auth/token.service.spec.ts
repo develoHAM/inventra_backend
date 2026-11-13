@@ -29,33 +29,33 @@ describe('TokenService', () => {
   });
 
   it('signs an access token that verifies', async () => {
-    const token = await tokenService.signAccess('user-123');
+    const token = await tokenService.signAccess('profile-123');
     const payload = await tokenService.verifyAccess(token);
-    expect(payload.sub).toBe('user-123');
+    expect(payload.sub).toBe('profile-123');
   });
 
   it('rejects a refresh token when verified as an access token', async () => {
     // NOTE: signRefresh returns an object — destructure the token string out of it
-    const { token } = await tokenService.signRefresh('user-123');
+    const { token } = await tokenService.signRefresh('profile-123');
     // signed with the REFRESH secret → access verification (different secret) fails
     await expect(tokenService.verifyAccess(token)).rejects.toThrow();
   });
 
   it('verifyRefresh returns sub and jti', async () => {
-    const { token } = await tokenService.signRefresh('user-123');
+    const { token } = await tokenService.signRefresh('profile-123');
     const payload = await tokenService.verifyRefresh(token);
-    expect(payload.sub).toBe('user-123');
+    expect(payload.sub).toBe('profile-123');
     expect(payload).toHaveProperty('jti');
   });
 
   it('returns a jti that matches the jti embedded in the token', async () => {
-    const { token, jti } = await tokenService.signRefresh('user-123');
+    const { token, jti } = await tokenService.signRefresh('profile-123');
     const payload = await tokenService.verifyRefresh(token);
     expect(payload.jti).toBe(jti);
   });
 
   it('returns an expiresAt Date in the future', async () => {
-    const { expiresAt } = await tokenService.signRefresh('user-123');
+    const { expiresAt } = await tokenService.signRefresh('profile-123');
     expect(expiresAt).toBeInstanceOf(Date);
     expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
   });

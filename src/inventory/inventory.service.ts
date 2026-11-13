@@ -11,7 +11,7 @@ import {
 } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { CornersService } from '../corners/corners.service';
-import { AuthUser } from '../auth/types/auth-user';
+import { AuthProfile } from '../auth/types/auth-profile';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { EFFECTS } from './inventory-effects';
 import { Prisma } from '../generated/prisma/client';
@@ -30,7 +30,7 @@ export class InventoryService {
   ) {}
 
   async record(
-    caller: AuthUser,
+    caller: AuthProfile,
     cornerId: string,
     placementId: number,
     dto: CreateTransactionDto,
@@ -135,7 +135,7 @@ export class InventoryService {
         quantityBefore: quantityBefore,
         quantityAfter: quantityAfter,
         remarks: dto.remarks ?? null,
-        createdByUserId: callerId,
+        createdByProfileId: callerId,
         sourceType: source?.type ?? null,
         sourceId: source?.id ?? null,
       },
@@ -144,7 +144,7 @@ export class InventoryService {
   }
 
   async findForPlacement(
-    caller: AuthUser,
+    caller: AuthProfile,
     cornerId: string,
     placementId: number,
   ) {

@@ -1,34 +1,34 @@
 import { PermissionsService } from './permissions.service';
-import { AuthUser } from '../auth/types/auth-user';
-import { PermissionEffect, UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import { PermissionEffect, ProfileStatus } from '../generated/prisma/enums';
 
 describe('PermissionsService', () => {
   let service: PermissionsService;
   let prisma: {
     role: { findUnique: jest.Mock };
-    userPermission: { findMany: jest.Mock };
+    profilePermission: { findMany: jest.Mock };
   };
 
-  const user: AuthUser = {
-    id: 'user-1',
-    accountId: 'account-of-user-1',
+  const profile: AuthProfile = {
+    id: 'profile-1',
+    accountId: 'account-of-profile-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
 
   beforeEach(() => {
     prisma = {
       role: { findUnique: jest.fn() },
-      userPermission: { findMany: jest.fn() },
+      profilePermission: { findMany: jest.fn() },
     };
     service = new PermissionsService(prisma as any);
   });
 
   it('returns an empty set for a role-less user', async () => {
     const result = await service.getEffectivePermissions({
-      ...user,
+      ...profile,
       roleId: null,
     });
 
@@ -44,9 +44,9 @@ describe('PermissionsService', () => {
         { permission: { code: 'products.create' } },
       ],
     });
-    prisma.userPermission.findMany.mockResolvedValue([]);
+    prisma.profilePermission.findMany.mockResolvedValue([]);
 
-    const result = await service.getEffectivePermissions(user);
+    const result = await service.getEffectivePermissions(profile);
 
     expect([...result].sort()).toEqual(['products.create', 'products.read']);
   });
@@ -56,14 +56,14 @@ describe('PermissionsService', () => {
       code: 'STAFF',
       rolePermissions: [{ permission: { code: 'products.read' } }],
     });
-    prisma.userPermission.findMany.mockResolvedValue([
+    prisma.profilePermission.findMany.mockResolvedValue([
       {
         effect: PermissionEffect.GRANT,
         permission: { code: 'products.create' },
       },
     ]);
 
-    const result = await service.getEffectivePermissions(user);
+    const result = await service.getEffectivePermissions(profile);
 
     expect([...result].sort()).toEqual(['products.create', 'products.read']);
   });
@@ -76,14 +76,14 @@ describe('PermissionsService', () => {
         { permission: { code: 'products.delete' } },
       ],
     });
-    prisma.userPermission.findMany.mockResolvedValue([
+    prisma.profilePermission.findMany.mockResolvedValue([
       {
         effect: PermissionEffect.DENY,
         permission: { code: 'products.delete' },
       },
     ]);
 
-    const result = await service.getEffectivePermissions(user);
+    const result = await service.getEffectivePermissions(profile);
 
     expect([...result]).toEqual(['products.read']);
   });
@@ -98,14 +98,14 @@ describe('PermissionsService', () => {
         { permission: { code: 'orders.delete' } },
       ],
     });
-    prisma.userPermission.findMany.mockResolvedValue([
+    prisma.profilePermission.findMany.mockResolvedValue([
       { effect: PermissionEffect.DENY, permission: { code: 'orders.delete' } },
     ]);
 
-    const adminUser: AuthUser = { ...user, roleCode: 'ADMIN' };
-    const result = await service.getEffectivePermissions(adminUser);
+    const adminProfile: AuthProfile = { ...profile, roleCode: 'ADMIN' };
+    const result = await service.getEffectivePermissions(adminProfile);
 
     expect([...result]).toEqual(['stores.create']); // DENY removed orders.delete
-    expect(prisma.userPermission.findMany).toHaveBeenCalled();
+    expect(prisma.profilePermission.findMany).toHaveBeenCalled();
   });
 });

@@ -42,7 +42,7 @@ describe('buildSocialVerifiers', () => {
       const fake = new FakeSocialVerifier();
       fake.register('google-token-1', {
         provider: 'google',
-        providerUserId: 'google-user-1',
+        providerUserId: 'google-profile-1',
         email: null,
         emailVerified: false,
         name: null,
@@ -55,7 +55,7 @@ describe('buildSocialVerifiers', () => {
 
       await expect(
         verifiers.google.verify({ token: 'google-token-1' }),
-      ).resolves.toMatchObject({ providerUserId: 'google-user-1' });
+      ).resolves.toMatchObject({ providerUserId: 'google-profile-1' });
       await expect(
         verifiers.apple.verify({ token: 'google-token-1' }),
       ).rejects.toBeInstanceOf(UnauthorizedException);

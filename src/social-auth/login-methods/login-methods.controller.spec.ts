@@ -11,7 +11,7 @@ import { LoginMethodsController } from './login-methods.controller';
 import { LinkPasswordDto } from './dto/link-password.dto';
 import { IS_PUBLIC_KEY } from '../../auth/decorators/public.decorator';
 import { REQUIRE_PERMISSIONS_KEY } from '../../authorization/decorators/require-permissions.decorator';
-import type { AuthUser } from '../../auth/types/auth-user';
+import type { AuthProfile } from '../../auth/types/auth-profile';
 
 describe('LoginMethodsController', () => {
   let controller: LoginMethodsController;
@@ -22,7 +22,7 @@ describe('LoginMethodsController', () => {
     unlink: jest.Mock;
   };
 
-  const caller = { id: 'user-1', accountId: 'account-1' } as AuthUser;
+  const caller = { id: 'profile-1', accountId: 'account-1' } as AuthProfile;
   const metadata = (key: string, method: keyof LoginMethodsController) =>
     Reflect.getMetadata(key, LoginMethodsController.prototype[method]);
 
@@ -36,9 +36,9 @@ describe('LoginMethodsController', () => {
     controller = new LoginMethodsController(loginMethods as any);
   });
 
-  it('lives under /users/me/login-methods', () => {
+  it('lives under /accounts/me/login-methods', () => {
     expect(Reflect.getMetadata(PATH_METADATA, LoginMethodsController)).toBe(
-      'users/me/login-methods',
+      'accounts/me/login-methods',
     );
   });
 
@@ -149,12 +149,12 @@ describe('LinkPasswordDto', () => {
     },
   );
 
-  it('rejects unknown fields (e.g. a userId: the caller comes from the JWT)', async () => {
+  it('rejects unknown fields (e.g. an accountId: the caller comes from the JWT)', async () => {
     const { failedFields } = await check({
       ...validBody,
-      userId: 'someone-else',
+      accountId: 'someone-else',
     });
 
-    expect(failedFields).toEqual(['userId']);
+    expect(failedFields).toEqual(['accountId']);
   });
 });

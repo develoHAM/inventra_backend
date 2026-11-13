@@ -12,7 +12,7 @@ import type { SocialIdentity } from '../verifiers/social-identity-verifier';
 describe('LoginMethodsService', () => {
   let service: LoginMethodsService;
   let prisma: {
-    userLoginMethod: {
+    accountLoginMethod: {
       findMany: jest.Mock;
       findUnique: jest.Mock;
       findFirst: jest.Mock;
@@ -22,7 +22,7 @@ describe('LoginMethodsService', () => {
   };
   let tx: {
     account: { updateMany: jest.Mock };
-    userLoginMethod: {
+    accountLoginMethod: {
       findFirst: jest.Mock;
       findUnique: jest.Mock;
       count: jest.Mock;
@@ -57,7 +57,7 @@ describe('LoginMethodsService', () => {
   beforeEach(() => {
     tx = {
       account: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-      userLoginMethod: {
+      accountLoginMethod: {
         findFirst: jest.fn().mockResolvedValue(null),
         findUnique: jest.fn().mockResolvedValue(null),
         count: jest.fn().mockResolvedValue(2),
@@ -70,7 +70,7 @@ describe('LoginMethodsService', () => {
       },
     };
     prisma = {
-      userLoginMethod: {
+      accountLoginMethod: {
         findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn().mockResolvedValue(null),
         findFirst: jest.fn().mockResolvedValue(null),
@@ -115,7 +115,7 @@ describe('LoginMethodsService', () => {
 
   describe('list', () => {
     it("the account's logins, oldest first: the password email masked, providers without email", async () => {
-      prisma.userLoginMethod.findMany.mockResolvedValue([
+      prisma.accountLoginMethod.findMany.mockResolvedValue([
         { id: 'lm-1', method: 'local', email: 'owner@example.com' },
         { id: 'lm-2', method: 'kakao', email: 'owner@kakao.com' },
       ]);
@@ -124,7 +124,7 @@ describe('LoginMethodsService', () => {
         { id: 'lm-1', method: 'local', email: 'ow***@example.com' },
         { id: 'lm-2', method: 'kakao', email: null },
       ]);
-      expect(prisma.userLoginMethod.findMany).toHaveBeenCalledWith({
+      expect(prisma.accountLoginMethod.findMany).toHaveBeenCalledWith({
         where: { accountId: 'account-1' },
         select: { id: true, method: true, email: true },
         orderBy: { createdAt: 'asc' },
@@ -148,7 +148,8 @@ describe('LoginMethodsService', () => {
         email: null,
       });
 
-      const args = prisma.userLoginMethod.createManyAndReturn.mock.calls[0][0];
+      const args =
+        prisma.accountLoginMethod.createManyAndReturn.mock.calls[0][0];
       expect(args.skipDuplicates).toBe(true);
       expect(args.data).toEqual([
         {
@@ -178,7 +179,7 @@ describe('LoginMethodsService', () => {
       });
 
       expect(
-        prisma.userLoginMethod.createManyAndReturn.mock.calls[0][0].data[0]
+        prisma.accountLoginMethod.createManyAndReturn.mock.calls[0][0].data[0]
           .refreshToken,
       ).toBeNull();
     });
@@ -191,12 +192,14 @@ describe('LoginMethodsService', () => {
       await expect(
         service.linkProvider('account-1', linkBody),
       ).rejects.toBeInstanceOf(UnauthorizedException);
-      expect(prisma.userLoginMethod.createManyAndReturn).not.toHaveBeenCalled();
+      expect(
+        prisma.accountLoginMethod.createManyAndReturn,
+      ).not.toHaveBeenCalled();
     });
 
     describe('nothing inserted → 409, with the reason looked up afterwards', () => {
       beforeEach(() => {
-        prisma.userLoginMethod.createManyAndReturn.mockResolvedValue([]);
+        prisma.accountLoginMethod.createManyAndReturn.mockResolvedValue([]);
       });
 
       it.each([
@@ -216,12 +219,12 @@ describe('LoginMethodsService', () => {
           'You already have a login with this provider; unlink it first',
         ],
       ])('%s', async (_label, holder, message) => {
-        prisma.userLoginMethod.findUnique.mockResolvedValue(holder);
+        prisma.accountLoginMethod.findUnique.mockResolvedValue(holder);
 
         await expect(
           service.linkProvider('account-1', linkBody),
         ).rejects.toThrow(new ConflictException(message));
-        expect(prisma.userLoginMethod.findUnique).toHaveBeenCalledWith({
+        expect(prisma.accountLoginMethod.findUnique).toHaveBeenCalledWith({
           where: {
             method_providerUserId: {
               method: 'google',
@@ -252,7 +255,7 @@ describe('LoginMethodsService', () => {
         token: 'raw-email-token',
         email: 'owner@example.com',
       });
-      expect(tx.userLoginMethod.createManyAndReturn).toHaveBeenCalledWith({
+      expect(tx.accountLoginMethod.createManyAndReturn).toHaveBeenCalledWith({
         data: [
           {
             accountId: 'account-1',
@@ -268,7 +271,9 @@ describe('LoginMethodsService', () => {
     });
 
     it('the account already has a password login → 409 before anything is spent', async () => {
-      prisma.userLoginMethod.findUnique.mockResolvedValue({ id: 'lm-local' });
+      prisma.accountLoginMethod.findUnique.mockResolvedValue({
+        id: 'lm-local',
+      });
 
       await expect(
         service.linkPassword('account-1', linkPasswordDto),
@@ -280,12 +285,12 @@ describe('LoginMethodsService', () => {
     });
 
     it('another password login uses this email → 409 (emails are stored lowercase, so a plain comparison)', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue({ id: 'lm-other' });
+      prisma.accountLoginMethod.findFirst.mockResolvedValue({ id: 'lm-other' });
 
       await expect(
         service.linkPassword('account-1', linkPasswordDto),
       ).rejects.toThrow(new ConflictException('Email already registered'));
-      expect(prisma.userLoginMethod.findFirst).toHaveBeenCalledWith({
+      expect(prisma.accountLoginMethod.findFirst).toHaveBeenCalledWith({
         where: { method: 'local', email: 'owner@example.com' },
         select: { id: true },
       });
@@ -300,24 +305,24 @@ describe('LoginMethodsService', () => {
       await expect(
         service.linkPassword('account-1', linkPasswordDto),
       ).rejects.toBeInstanceOf(BadRequestException);
-      expect(tx.userLoginMethod.createManyAndReturn).not.toHaveBeenCalled();
+      expect(tx.accountLoginMethod.createManyAndReturn).not.toHaveBeenCalled();
     });
 
     describe('something changed between the checks and the insert (another device, the same instant)', () => {
       beforeEach(() => {
         // the database refused the row: ON CONFLICT DO NOTHING → nothing returned
-        tx.userLoginMethod.createManyAndReturn.mockResolvedValue([]);
+        tx.accountLoginMethod.createManyAndReturn.mockResolvedValue([]);
       });
 
       it('this account got a password login meanwhile → 409, read inside the transaction', async () => {
-        tx.userLoginMethod.findUnique.mockResolvedValue({ id: 'lm-local' });
+        tx.accountLoginMethod.findUnique.mockResolvedValue({ id: 'lm-local' });
 
         await expect(
           service.linkPassword('account-1', linkPasswordDto),
         ).rejects.toThrow(
           new ConflictException('You already have a password login'),
         );
-        expect(tx.userLoginMethod.findUnique).toHaveBeenCalledWith({
+        expect(tx.accountLoginMethod.findUnique).toHaveBeenCalledWith({
           where: {
             accountId_method: { accountId: 'account-1', method: 'local' },
           },
@@ -352,7 +357,7 @@ describe('LoginMethodsService', () => {
     };
 
     beforeEach(() => {
-      tx.userLoginMethod.findFirst.mockResolvedValue(googleLogin);
+      tx.accountLoginMethod.findFirst.mockResolvedValue(googleLogin);
     });
 
     it("locks the account's row FIRST, so two unlinks can't both remove the last two logins", async () => {
@@ -363,38 +368,38 @@ describe('LoginMethodsService', () => {
         data: { updatedAt: expect.any(Date) },
       });
       expect(tx.account.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
-        tx.userLoginMethod.count.mock.invocationCallOrder[0],
+        tx.accountLoginMethod.count.mock.invocationCallOrder[0],
       );
     });
 
     it('deletes only the caller’s own login', async () => {
       await service.unlink('account-1', 'lm-google');
 
-      expect(tx.userLoginMethod.findFirst).toHaveBeenCalledWith({
+      expect(tx.accountLoginMethod.findFirst).toHaveBeenCalledWith({
         where: { id: 'lm-google', accountId: 'account-1' },
       });
-      expect(tx.userLoginMethod.delete).toHaveBeenCalledWith({
+      expect(tx.accountLoginMethod.delete).toHaveBeenCalledWith({
         where: { id: 'lm-google' },
       });
     });
 
     it('not theirs, or no such login → 404, nothing deleted', async () => {
-      tx.userLoginMethod.findFirst.mockResolvedValue(null);
+      tx.accountLoginMethod.findFirst.mockResolvedValue(null);
 
       await expect(service.unlink('account-1', 'lm-google')).rejects.toThrow(
         new NotFoundException('Login method not found'),
       );
-      expect(tx.userLoginMethod.delete).not.toHaveBeenCalled();
+      expect(tx.accountLoginMethod.delete).not.toHaveBeenCalled();
       expect(verifiers.google.disconnect).not.toHaveBeenCalled();
     });
 
     it('the last login → 409, nothing deleted', async () => {
-      tx.userLoginMethod.count.mockResolvedValue(1);
+      tx.accountLoginMethod.count.mockResolvedValue(1);
 
       await expect(service.unlink('account-1', 'lm-google')).rejects.toThrow(
         new ConflictException('An account needs at least one way to sign in'),
       );
-      expect(tx.userLoginMethod.delete).not.toHaveBeenCalled();
+      expect(tx.accountLoginMethod.delete).not.toHaveBeenCalled();
       expect(verifiers.google.disconnect).not.toHaveBeenCalled();
     });
 
@@ -411,7 +416,7 @@ describe('LoginMethodsService', () => {
     });
 
     it('a password login has no provider to tell', async () => {
-      tx.userLoginMethod.findFirst.mockResolvedValue({
+      tx.accountLoginMethod.findFirst.mockResolvedValue({
         id: 'lm-local',
         accountId: 'account-1',
         method: 'local',
@@ -437,7 +442,7 @@ describe('LoginMethodsService', () => {
       [
         'the stored token cannot be decrypted',
         () =>
-          tx.userLoginMethod.findFirst.mockResolvedValue({
+          tx.accountLoginMethod.findFirst.mockResolvedValue({
             ...googleLogin,
             refreshToken: 'not-our-ciphertext',
           }),

@@ -28,7 +28,7 @@ describe('Social login (e2e)', () => {
   let http: any;
 
   const mailpitApi = `http://localhost:${process.env.MAILPIT_UI_PORT ?? 8025}/api/v1`;
-  // users.phone is unique across the shared DB: suite 15's own block
+  // accounts.phone is unique across the shared DB: suite 15's own block
   const nextPhone = testPhones(15);
 
   /** A provider identity the fake will vouch for, behind `credentialToken`. */
@@ -139,10 +139,10 @@ describe('Social login (e2e)', () => {
 
   // shared across the steps below (run in order, --runInBand)
   let ownerPhone: string;
-  let ownerUserId: string;
+  let ownerProfileId: string;
   let ownerAccess: string;
   let joinCode: string;
-  let memberUserId: string;
+  let memberProfileId: string;
   let memberAccess: string;
 
   beforeAll(async () => {
@@ -223,10 +223,10 @@ describe('Social login (e2e)', () => {
           credentials: { type: 'social', signupToken: ownerTicket },
         })
         .expect(201);
-      ownerUserId = response.body.user.id;
+      ownerProfileId = response.body.profile.id;
 
-      const owner = await prisma.user.findUniqueOrThrow({
-        where: { id: ownerUserId },
+      const owner = await prisma.profile.findUniqueOrThrow({
+        where: { id: ownerProfileId },
         include: { account: { include: { loginMethods: true } } },
       });
       expect(owner.contactEmail).toBe('owner@social.test');
@@ -240,7 +240,7 @@ describe('Social login (e2e)', () => {
         }),
       ]);
       joinCode = (await prisma.company.findFirstOrThrow({
-        where: { createdByUserId: ownerUserId },
+        where: { createdByProfileId: ownerProfileId },
       }))!.joinCode;
     });
 
@@ -272,11 +272,11 @@ describe('Social login (e2e)', () => {
         status: 'LOGGED_IN',
         accessToken: expect.any(String),
         refreshToken: expect.any(String),
-        user: expect.objectContaining({ id: ownerUserId }),
+        profile: expect.objectContaining({ id: ownerProfileId }),
       });
       ownerAccess = response.body.accessToken;
       const me = await authed(ownerAccess).get('/auth/me').expect(200);
-      expect(me.body.id).toBe(ownerUserId);
+      expect(me.body.id).toBe(ownerProfileId);
     });
 
     it('a nonce works once: replaying it → 401', async () => {
@@ -363,10 +363,10 @@ describe('Social login (e2e)', () => {
           emailVerificationToken: confirmed.body.emailVerificationToken,
         },
       }).expect(201);
-      memberUserId = response.body.user.id;
+      memberProfileId = response.body.profile.id;
 
-      const member = await prisma.user.findUniqueOrThrow({
-        where: { id: memberUserId },
+      const member = await prisma.profile.findUniqueOrThrow({
+        where: { id: memberProfileId },
         include: { account: { include: { loginMethods: true } } },
       });
       expect(member.contactEmail).toBe('member@social.test');
@@ -432,7 +432,7 @@ describe('Social login (e2e)', () => {
         responses.find((response) => response.status === 409)!.body.message,
       ).toBe('This account is already registered');
       expect(
-        await prisma.userLoginMethod.count({
+        await prisma.accountLoginMethod.count({
           where: { method: 'google', providerUserId: 'e2e-google-twice' },
         }),
       ).toBe(1);
@@ -442,7 +442,7 @@ describe('Social login (e2e)', () => {
   describe('login methods', () => {
     it("lists the owner's logins (a provider's email is not shown)", async () => {
       const response = await authed(ownerAccess)
-        .get('/users/me/login-methods')
+        .get('/accounts/me/login-methods')
         .expect(200);
 
       expect(response.body).toEqual([
@@ -458,7 +458,7 @@ describe('Social login (e2e)', () => {
       });
 
       const response = await authed(ownerAccess)
-        .post('/users/me/login-methods')
+        .post('/accounts/me/login-methods')
         .send({
           provider: 'apple',
           credential: { token: 'apple-owner' },
@@ -471,9 +471,9 @@ describe('Social login (e2e)', () => {
         email: null,
       });
 
-      const stored = await prisma.userLoginMethod.findFirstOrThrow({
+      const stored = await prisma.accountLoginMethod.findFirstOrThrow({
         where: {
-          account: { profiles: { some: { id: ownerUserId } } },
+          account: { profiles: { some: { id: ownerProfileId } } },
           method: 'apple',
         },
       });
@@ -487,7 +487,7 @@ describe('Social login (e2e)', () => {
       });
 
       const response = await authed(memberAccess)
-        .post('/users/me/login-methods')
+        .post('/accounts/me/login-methods')
         .send({
           provider: 'apple',
           credential: { token: 'apple-member-again' },
@@ -505,7 +505,7 @@ describe('Social login (e2e)', () => {
       });
 
       const response = await authed(memberAccess)
-        .post('/users/me/login-methods')
+        .post('/accounts/me/login-methods')
         .send({
           provider: 'kakao',
           credential: { token: 'kakao-owner-for-member' },
@@ -515,8 +515,8 @@ describe('Social login (e2e)', () => {
         'This account is linked to another user',
       );
       expect(
-        await prisma.userLoginMethod.count({
-          where: { account: { profiles: { some: { id: memberUserId } } } },
+        await prisma.accountLoginMethod.count({
+          where: { account: { profiles: { some: { id: memberProfileId } } } },
         }),
       ).toBe(1);
     });
@@ -528,7 +528,7 @@ describe('Social login (e2e)', () => {
       });
 
       const response = await authed(ownerAccess)
-        .post('/users/me/login-methods')
+        .post('/accounts/me/login-methods')
         .send({
           provider: 'apple',
           credential: { token: 'apple-owner-second' },
@@ -543,7 +543,7 @@ describe('Social login (e2e)', () => {
       const proof = await emailProofFor('owner-pw@social.test');
 
       const response = await authed(ownerAccess)
-        .post('/users/me/login-methods/local')
+        .post('/accounts/me/login-methods/local')
         .send({
           email: 'Owner-PW@Social.test',
           password: 'social-owner-password',
@@ -599,19 +599,19 @@ describe('Social login (e2e)', () => {
     });
 
     it('unlinks Apple: gone from the list, and Apple is asked to forget us (with the decrypted token)', async () => {
-      const apple = await prisma.userLoginMethod.findFirstOrThrow({
+      const apple = await prisma.accountLoginMethod.findFirstOrThrow({
         where: {
-          account: { profiles: { some: { id: ownerUserId } } },
+          account: { profiles: { some: { id: ownerProfileId } } },
           method: 'apple',
         },
       });
 
       await authed(ownerAccess)
-        .delete(`/users/me/login-methods/${apple.id}`)
+        .delete(`/accounts/me/login-methods/${apple.id}`)
         .expect(204);
 
       const list = await authed(ownerAccess)
-        .get('/users/me/login-methods')
+        .get('/accounts/me/login-methods')
         .expect(200);
       expect(
         list.body.map((login: { method: string }) => login.method),
@@ -624,37 +624,37 @@ describe('Social login (e2e)', () => {
     });
 
     it("someone else's login id → 404; a malformed id → 400", async () => {
-      const membersLogin = await prisma.userLoginMethod.findFirstOrThrow({
-        where: { account: { profiles: { some: { id: memberUserId } } } },
+      const membersLogin = await prisma.accountLoginMethod.findFirstOrThrow({
+        where: { account: { profiles: { some: { id: memberProfileId } } } },
       });
 
       await authed(ownerAccess)
-        .delete(`/users/me/login-methods/${membersLogin.id}`)
+        .delete(`/accounts/me/login-methods/${membersLogin.id}`)
         .expect(404);
       await authed(ownerAccess)
-        .delete('/users/me/login-methods/not-a-uuid')
+        .delete('/accounts/me/login-methods/not-a-uuid')
         .expect(400);
     });
 
     it('unlinks down to one login; the last one → 409', async () => {
-      const local = await prisma.userLoginMethod.findFirstOrThrow({
+      const local = await prisma.accountLoginMethod.findFirstOrThrow({
         where: {
-          account: { profiles: { some: { id: ownerUserId } } },
+          account: { profiles: { some: { id: ownerProfileId } } },
           method: 'local',
         },
       });
       await authed(ownerAccess)
-        .delete(`/users/me/login-methods/${local.id}`)
+        .delete(`/accounts/me/login-methods/${local.id}`)
         .expect(204);
 
-      const kakao = await prisma.userLoginMethod.findFirstOrThrow({
+      const kakao = await prisma.accountLoginMethod.findFirstOrThrow({
         where: {
-          account: { profiles: { some: { id: ownerUserId } } },
+          account: { profiles: { some: { id: ownerProfileId } } },
           method: 'kakao',
         },
       });
       const response = await authed(ownerAccess)
-        .delete(`/users/me/login-methods/${kakao.id}`)
+        .delete(`/accounts/me/login-methods/${kakao.id}`)
         .expect(409);
       expect(response.body.message).toBe(
         'An account needs at least one way to sign in',

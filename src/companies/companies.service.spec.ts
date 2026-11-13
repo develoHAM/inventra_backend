@@ -4,8 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { CompaniesService } from './companies.service';
-import { AuthUser } from '../auth/types/auth-user';
-import { UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import { ProfileStatus } from '../generated/prisma/enums';
 import { NotificationEvent } from '../notifications/notification-events';
 
 describe('CompaniesService', () => {
@@ -16,27 +16,27 @@ describe('CompaniesService', () => {
       findUnique: jest.Mock;
       updateMany: jest.Mock;
     };
-    user: { findFirst: jest.Mock; update: jest.Mock };
+    profile: { findFirst: jest.Mock; update: jest.Mock };
   };
   let history: { page: jest.Mock };
   let eventEmitter: { emit: jest.Mock };
 
-  const owner: AuthUser = {
+  const owner: AuthProfile = {
     id: 'owner-1',
     accountId: 'account-of-owner-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
   // the platform admin belongs to no company
-  const admin: AuthUser = {
+  const admin: AuthProfile = {
     id: 'admin-1',
     accountId: 'account-of-admin-1',
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
 
   beforeEach(() => {
@@ -47,7 +47,10 @@ describe('CompaniesService', () => {
         findUnique: jest.fn().mockResolvedValue(null),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      user: { findFirst: jest.fn(), update: jest.fn().mockResolvedValue({}) },
+      profile: {
+        findFirst: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
+      },
     };
     history = {
       page: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
@@ -130,52 +133,52 @@ describe('CompaniesService', () => {
   // moved unchanged from users.service.spec.ts (2026-10-03)
   describe('approveCompany', () => {
     it('activates the company owner', async () => {
-      prisma.user.findFirst.mockResolvedValue({
+      prisma.profile.findFirst.mockResolvedValue({
         id: 'owner-1',
-        status: UserStatus.PENDING_APPROVAL,
+        status: ProfileStatus.PENDING_APPROVAL,
       });
 
       await service.approveCompany('company-1');
 
-      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+      expect(prisma.profile.findFirst).toHaveBeenCalledWith({
         where: { companyId: 'company-1', role: { code: 'OWNER' } },
       });
-      expect(prisma.user.update).toHaveBeenCalledWith({
+      expect(prisma.profile.update).toHaveBeenCalledWith({
         where: { id: 'owner-1' },
-        data: { status: UserStatus.ACTIVE },
+        data: { status: ProfileStatus.ACTIVE },
       });
     });
 
     it('emits company.approved with the ids, only after the owner is activated', async () => {
-      prisma.user.findFirst.mockResolvedValue({
+      prisma.profile.findFirst.mockResolvedValue({
         id: 'owner-1',
-        status: UserStatus.PENDING_APPROVAL,
+        status: ProfileStatus.PENDING_APPROVAL,
       });
-      prisma.user.update.mockResolvedValue({
+      prisma.profile.update.mockResolvedValue({
         id: 'owner-1',
-        status: UserStatus.ACTIVE,
+        status: ProfileStatus.ACTIVE,
       });
 
       const result = await service.approveCompany('company-1');
 
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         NotificationEvent.COMPANY_APPROVED,
-        { companyId: 'company-1', ownerUserId: 'owner-1' },
+        { companyId: 'company-1', ownerProfileId: 'owner-1' },
       );
       // emit-after-commit: never announce an approval before it's written
-      expect(prisma.user.update.mock.invocationCallOrder[0]).toBeLessThan(
+      expect(prisma.profile.update.mock.invocationCallOrder[0]).toBeLessThan(
         eventEmitter.emit.mock.invocationCallOrder[0],
       );
       // the caller still gets the updated owner back, unchanged by the emit
-      expect(result).toEqual({ id: 'owner-1', status: UserStatus.ACTIVE });
+      expect(result).toEqual({ id: 'owner-1', status: ProfileStatus.ACTIVE });
     });
 
     it('does not emit when the owner update fails', async () => {
-      prisma.user.findFirst.mockResolvedValue({
+      prisma.profile.findFirst.mockResolvedValue({
         id: 'owner-1',
-        status: UserStatus.PENDING_APPROVAL,
+        status: ProfileStatus.PENDING_APPROVAL,
       });
-      prisma.user.update.mockRejectedValue(new Error('db down'));
+      prisma.profile.update.mockRejectedValue(new Error('db down'));
 
       await expect(service.approveCompany('company-1')).rejects.toThrow(
         'db down',
@@ -184,19 +187,19 @@ describe('CompaniesService', () => {
     });
 
     it('returns 404 when the company has no owner', async () => {
-      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.profile.findFirst.mockResolvedValue(null);
 
       await expect(service.approveCompany('company-x')).rejects.toThrow(
         NotFoundException,
       );
-      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.profile.update).not.toHaveBeenCalled();
       expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
 
     it('rejects approving an owner who is not PENDING (and emits nothing)', async () => {
-      prisma.user.findFirst.mockResolvedValue({
+      prisma.profile.findFirst.mockResolvedValue({
         id: 'owner-1',
-        status: UserStatus.ACTIVE,
+        status: ProfileStatus.ACTIVE,
       });
 
       await expect(service.approveCompany('company-1')).rejects.toThrow(
@@ -209,23 +212,23 @@ describe('CompaniesService', () => {
   describe('listHistory', () => {
     const QUERY = { limit: 20 };
     const PAGE = { items: [], nextCursor: null };
-    const manager: AuthUser = {
+    const manager: AuthProfile = {
       id: 'manager-1',
       accountId: 'account-of-manager-1',
       companyId: 'company-1',
       companyStoreId: 'corner-a',
       roleId: 3,
       roleCode: 'MANAGER',
-      status: UserStatus.ACTIVE,
+      status: ProfileStatus.ACTIVE,
     };
-    const staff: AuthUser = {
+    const staff: AuthProfile = {
       id: 'staff-1',
       accountId: 'account-of-staff-1',
       companyId: 'company-1',
       companyStoreId: 'corner-a',
       roleId: 4,
       roleCode: 'STAFF',
-      status: UserStatus.ACTIVE,
+      status: ProfileStatus.ACTIVE,
     };
 
     beforeEach(() => {

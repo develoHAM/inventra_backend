@@ -1,7 +1,7 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { ReservationsService } from './reservations.service';
-import { AuthUser } from '../auth/types/auth-user';
-import { UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import { ProfileStatus } from '../generated/prisma/enums';
 
 describe('ReservationsService', () => {
   let service: ReservationsService;
@@ -13,13 +13,13 @@ describe('ReservationsService', () => {
   };
   let transaction: any;
 
-  const owner: AuthUser = {
+  const owner: AuthProfile = {
     id: 'owner-1',
     accountId: 'account-of-owner-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
   const cornerId = '11111111-1111-1111-1111-111111111111';
   const placementId = 7;
@@ -95,7 +95,7 @@ describe('ReservationsService', () => {
         reservedByName: 'Kim',
         reservedQuantity: 3,
         status: 'RESERVED',
-        createdByUserId: 'owner-1',
+        createdByProfileId: 'owner-1',
       }),
     );
     expect(inventory.recordWithinTransaction).toHaveBeenCalledWith(

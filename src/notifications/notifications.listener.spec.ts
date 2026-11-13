@@ -7,16 +7,16 @@ describe('NotificationsListener', () => {
   let listener: NotificationsListener;
   let prisma: {
     company: { findUnique: jest.Mock };
-    user: { findUnique: jest.Mock };
+    profile: { findUnique: jest.Mock };
     order: { findFirst: jest.Mock };
     inventoryAudit: { findFirst: jest.Mock };
     companyStoreProduct: { findUnique: jest.Mock };
     companyStore: { findUnique: jest.Mock };
   };
   let notifications: {
-    findUserEmail: jest.Mock;
+    findProfileEmail: jest.Mock;
     dispatch: jest.Mock;
-    notifyUsers: jest.Mock;
+    notifyProfiles: jest.Mock;
     notifyAccount: jest.Mock;
     findPlatformAdminIds: jest.Mock;
     findCompanyOwnerIds: jest.Mock;
@@ -26,16 +26,16 @@ describe('NotificationsListener', () => {
   beforeEach(() => {
     prisma = {
       company: { findUnique: jest.fn().mockResolvedValue({ name: 'UPL Co' }) },
-      user: { findUnique: jest.fn() },
+      profile: { findUnique: jest.fn() },
       order: { findFirst: jest.fn() },
       inventoryAudit: { findFirst: jest.fn() },
       companyStoreProduct: { findUnique: jest.fn() },
       companyStore: { findUnique: jest.fn() },
     };
     notifications = {
-      findUserEmail: jest.fn().mockResolvedValue('owner@example.com'),
+      findProfileEmail: jest.fn().mockResolvedValue('owner@example.com'),
       dispatch: jest.fn().mockResolvedValue(undefined),
-      notifyUsers: jest.fn().mockResolvedValue(undefined),
+      notifyProfiles: jest.fn().mockResolvedValue(undefined),
       notifyAccount: jest.fn().mockResolvedValue(undefined),
       findPlatformAdminIds: jest.fn().mockResolvedValue(['admin-1']),
       findCompanyOwnerIds: jest.fn().mockResolvedValue(['owner-1']),
@@ -47,18 +47,18 @@ describe('NotificationsListener', () => {
   });
 
   describe('company.approved', () => {
-    const event = { companyId: 'company-1', ownerUserId: 'owner-1' };
+    const event = { companyId: 'company-1', ownerProfileId: 'owner-1' };
 
-    it('notifies the owner with the companyApproved template (email + push via notifyUsers)', async () => {
+    it('notifies the owner with the companyApproved template (email + push via notifyProfiles)', async () => {
       await listener.handleCompanyApproved(event);
 
       expect(prisma.company.findUnique).toHaveBeenCalledWith({
         where: { id: 'company-1' },
         select: { name: true },
       });
-      const call = notifications.notifyUsers.mock.calls[0][0];
+      const call = notifications.notifyProfiles.mock.calls[0][0];
       expect(call).toEqual({
-        userIds: ['owner-1'],
+        profileIds: ['owner-1'],
         eventType: NotificationEvent.COMPANY_APPROVED,
         message: notificationTemplates.companyApproved('UPL Co'),
         data: { companyId: 'company-1' },
@@ -73,7 +73,7 @@ describe('NotificationsListener', () => {
 
       await listener.handleCompanyApproved(event);
 
-      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      expect(notifications.notifyProfiles).not.toHaveBeenCalled();
     });
   });
 
@@ -81,8 +81,8 @@ describe('NotificationsListener', () => {
     it('emails every platform admin', async () => {
       await listener.handleCompanyRegistered({ companyId: 'company-1' });
 
-      expect(notifications.notifyUsers).toHaveBeenCalledWith({
-        userIds: ['admin-1'],
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith({
+        profileIds: ['admin-1'],
         eventType: NotificationEvent.COMPANY_REGISTERED,
         message: notificationTemplates.companyRegistered('UPL Co'),
         data: { companyId: 'company-1' },
@@ -94,57 +94,60 @@ describe('NotificationsListener', () => {
 
       await listener.handleCompanyRegistered({ companyId: 'gone' });
 
-      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      expect(notifications.notifyProfiles).not.toHaveBeenCalled();
     });
   });
 
   describe('member.joinRequested', () => {
-    const event = { companyId: 'company-1', memberUserId: 'member-1' };
+    const event = { companyId: 'company-1', memberProfileId: 'member-1' };
 
     it('emails the company owner(s), naming the member, excluding the member', async () => {
-      prisma.user.findUnique.mockResolvedValue({ name: 'Sam' });
+      prisma.profile.findUnique.mockResolvedValue({ name: 'Sam' });
 
       await listener.handleMemberJoinRequested(event);
 
       expect(notifications.findCompanyOwnerIds).toHaveBeenCalledWith(
         'company-1',
       );
-      expect(notifications.notifyUsers).toHaveBeenCalledWith({
-        userIds: ['owner-1'],
-        excludeUserId: 'member-1',
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith({
+        profileIds: ['owner-1'],
+        excludeProfileId: 'member-1',
         eventType: NotificationEvent.MEMBER_JOIN_REQUESTED,
         message: notificationTemplates.memberJoinRequested('Sam', 'UPL Co'),
-        data: { companyId: 'company-1', memberUserId: 'member-1' },
+        data: { companyId: 'company-1', memberProfileId: 'member-1' },
       });
     });
 
     it('sends nothing when the member no longer exists', async () => {
-      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.profile.findUnique.mockResolvedValue(null);
 
       await listener.handleMemberJoinRequested(event);
 
-      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      expect(notifications.notifyProfiles).not.toHaveBeenCalled();
     });
   });
 
   describe('member.approved', () => {
-    const event = { memberUserId: 'member-1', approvedByUserId: 'owner-1' };
+    const event = {
+      memberProfileId: 'member-1',
+      approvedByProfileId: 'owner-1',
+    };
 
     it("emails the member with their company's name, excluding the approver", async () => {
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.profile.findUnique.mockResolvedValue({
         company: { id: 'company-1', name: 'UPL Co' },
       });
 
       await listener.handleMemberApproved(event);
 
-      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      expect(prisma.profile.findUnique).toHaveBeenCalledWith({
         where: { id: 'member-1' },
         // id too: the push deep-links to the company
         select: { company: { select: { id: true, name: true } } },
       });
-      expect(notifications.notifyUsers).toHaveBeenCalledWith({
-        userIds: ['member-1'],
-        excludeUserId: 'owner-1',
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith({
+        profileIds: ['member-1'],
+        excludeProfileId: 'owner-1',
         eventType: NotificationEvent.MEMBER_APPROVED,
         message: notificationTemplates.memberApproved('UPL Co'),
         data: { companyId: 'company-1' },
@@ -152,13 +155,13 @@ describe('NotificationsListener', () => {
     });
 
     it('sends nothing when the member is gone or has no company', async () => {
-      prisma.user.findUnique.mockResolvedValue({ company: null });
+      prisma.profile.findUnique.mockResolvedValue({ company: null });
       await listener.handleMemberApproved(event);
 
-      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.profile.findUnique.mockResolvedValue(null);
       await listener.handleMemberApproved(event);
 
-      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      expect(notifications.notifyProfiles).not.toHaveBeenCalled();
     });
   });
 
@@ -166,7 +169,7 @@ describe('NotificationsListener', () => {
     const event = {
       orderId: 'order-1',
       cornerId: 'corner-1',
-      createdByUserId: 'manager-1',
+      createdByProfileId: 'manager-1',
     };
 
     it('emails the corner recipients minus the creator, with the item count from _count', async () => {
@@ -190,9 +193,9 @@ describe('NotificationsListener', () => {
       expect(notifications.findCornerRecipientIds).toHaveBeenCalledWith(
         'corner-1',
       );
-      expect(notifications.notifyUsers).toHaveBeenCalledWith({
-        userIds: ['manager-1', 'owner-1'],
-        excludeUserId: 'manager-1',
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith({
+        profileIds: ['manager-1', 'owner-1'],
+        excludeProfileId: 'manager-1',
         eventType: NotificationEvent.ORDER_CREATED,
         message: notificationTemplates.orderCreated(
           'Corner A',
@@ -208,7 +211,7 @@ describe('NotificationsListener', () => {
 
       await listener.handleOrderCreated(event);
 
-      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      expect(notifications.notifyProfiles).not.toHaveBeenCalled();
     });
   });
 
@@ -216,7 +219,7 @@ describe('NotificationsListener', () => {
     const event = {
       auditId: 'audit-1',
       cornerId: 'corner-1',
-      appliedByUserId: 'owner-1',
+      appliedByProfileId: 'owner-1',
     };
 
     it('emails the corner recipients minus the applier', async () => {
@@ -228,9 +231,9 @@ describe('NotificationsListener', () => {
 
       await listener.handleAuditApplied(event);
 
-      expect(notifications.notifyUsers).toHaveBeenCalledWith({
-        userIds: ['manager-1', 'owner-1'],
-        excludeUserId: 'owner-1',
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith({
+        profileIds: ['manager-1', 'owner-1'],
+        excludeProfileId: 'owner-1',
         eventType: NotificationEvent.AUDIT_APPLIED,
         message: notificationTemplates.auditApplied(
           'Corner A',
@@ -246,7 +249,7 @@ describe('NotificationsListener', () => {
 
       await listener.handleAuditApplied(event);
 
-      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      expect(notifications.notifyProfiles).not.toHaveBeenCalled();
     });
   });
 
@@ -269,9 +272,9 @@ describe('NotificationsListener', () => {
       expect(notifications.findCornerRecipientIds).toHaveBeenCalledWith(
         'corner-1',
       );
-      const call = notifications.notifyUsers.mock.calls[0][0];
+      const call = notifications.notifyProfiles.mock.calls[0][0];
       expect(call).toEqual({
-        userIds: ['manager-1', 'owner-1'],
+        profileIds: ['manager-1', 'owner-1'],
         eventType: NotificationEvent.STOCK_BELOW_TARGET,
         message: notificationTemplates.stockBelowTarget(
           'Corner A',
@@ -290,7 +293,7 @@ describe('NotificationsListener', () => {
 
       await listener.handleStockBelowTarget(event);
 
-      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      expect(notifications.notifyProfiles).not.toHaveBeenCalled();
     });
   });
 
@@ -303,13 +306,13 @@ describe('NotificationsListener', () => {
         eventType: NotificationEvent.ACCOUNT_PASSWORD_RESET,
         message: notificationTemplates.passwordReset(),
       });
-      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      expect(notifications.notifyProfiles).not.toHaveBeenCalled();
     });
 
     it('needs no database lookup (the template has no variables)', async () => {
       await listener.handleAccountPasswordReset({ accountId: 'account-1' });
 
-      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(prisma.profile.findUnique).not.toHaveBeenCalled();
       expect(prisma.company.findUnique).not.toHaveBeenCalled();
     });
   });
@@ -326,15 +329,15 @@ describe('NotificationsListener', () => {
 
   describe('member.moved', () => {
     const event = {
-      memberUserId: 'member-1',
-      changedByUserId: 'owner-1',
+      memberProfileId: 'member-1',
+      changedByProfileId: 'owner-1',
       fromCornerId: 'corner-a',
       toCornerId: 'corner-b',
       reason: 'MOVED' as const,
     };
 
     beforeEach(() => {
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.profile.findUnique.mockResolvedValue({
         company: { id: 'company-1', name: 'UPL Co' },
       });
       prisma.companyStore.findUnique.mockResolvedValue({ name: 'Branch B' });
@@ -347,9 +350,9 @@ describe('NotificationsListener', () => {
         where: { id: 'corner-b' },
         select: { name: true },
       });
-      expect(notifications.notifyUsers).toHaveBeenCalledWith({
-        userIds: ['member-1'],
-        excludeUserId: 'owner-1',
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith({
+        profileIds: ['member-1'],
+        excludeProfileId: 'owner-1',
         eventType: NotificationEvent.MEMBER_MOVED,
         message: notificationTemplates.memberMoved('UPL Co', 'Branch B'),
         data: { companyId: 'company-1', cornerId: 'corner-b' },
@@ -360,7 +363,7 @@ describe('NotificationsListener', () => {
       await listener.handleMemberMoved({ ...event, toCornerId: null });
 
       expect(prisma.companyStore.findUnique).not.toHaveBeenCalled();
-      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith(
         expect.objectContaining({
           message: notificationTemplates.memberMoved('UPL Co', null),
           data: { companyId: 'company-1' },
@@ -369,35 +372,35 @@ describe('NotificationsListener', () => {
     });
 
     it('sends nothing when the member is gone or has no company', async () => {
-      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.profile.findUnique.mockResolvedValue(null);
 
       await listener.handleMemberMoved(event);
 
-      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      expect(notifications.notifyProfiles).not.toHaveBeenCalled();
     });
   });
 
   describe('member.roleChanged', () => {
     const event = {
-      memberUserId: 'member-1',
-      changedByUserId: 'owner-1',
+      memberProfileId: 'member-1',
+      changedByProfileId: 'owner-1',
       toRoleCode: 'MANAGER' as const,
     };
 
     it('tells the member their new role, excluding whoever changed it', async () => {
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.profile.findUnique.mockResolvedValue({
         company: { id: 'company-1', name: 'UPL Co' },
       });
 
       await listener.handleMemberRoleChanged(event);
 
-      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      expect(prisma.profile.findUnique).toHaveBeenCalledWith({
         where: { id: 'member-1' },
         select: { company: { select: { id: true, name: true } } },
       });
-      expect(notifications.notifyUsers).toHaveBeenCalledWith({
-        userIds: ['member-1'],
-        excludeUserId: 'owner-1',
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith({
+        profileIds: ['member-1'],
+        excludeProfileId: 'owner-1',
         eventType: NotificationEvent.MEMBER_ROLE_CHANGED,
         message: notificationTemplates.memberRoleChanged('UPL Co', 'MANAGER'),
         data: { companyId: 'company-1' },
@@ -405,11 +408,11 @@ describe('NotificationsListener', () => {
     });
 
     it('sends nothing when the member is gone or has no company', async () => {
-      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.profile.findUnique.mockResolvedValue(null);
 
       await listener.handleMemberRoleChanged(event);
 
-      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      expect(notifications.notifyProfiles).not.toHaveBeenCalled();
     });
   });
 
@@ -431,15 +434,15 @@ describe('NotificationsListener', () => {
 
   describe('member.moved because the branch was deleted', () => {
     const event = {
-      memberUserId: 'member-1',
-      changedByUserId: 'owner-1',
+      memberProfileId: 'member-1',
+      changedByProfileId: 'owner-1',
       fromCornerId: 'corner-a',
       toCornerId: null,
       reason: 'BRANCH_DELETED' as const,
     };
 
     beforeEach(() => {
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.profile.findUnique.mockResolvedValue({
         company: { id: 'company-1', name: 'UPL Co' },
       });
     });
@@ -454,9 +457,9 @@ describe('NotificationsListener', () => {
         where: { id: 'corner-a' },
         select: { name: true },
       });
-      expect(notifications.notifyUsers).toHaveBeenCalledWith({
-        userIds: ['member-1'],
-        excludeUserId: 'owner-1',
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith({
+        profileIds: ['member-1'],
+        excludeProfileId: 'owner-1',
         eventType: NotificationEvent.MEMBER_MOVED,
         message: notificationTemplates.memberBranchClosed('UPL Co', 'Branch A'),
         data: { companyId: 'company-1' },
@@ -468,7 +471,7 @@ describe('NotificationsListener', () => {
 
       await listener.handleMemberMoved(event);
 
-      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith(
         expect.objectContaining({
           message: notificationTemplates.memberMoved('UPL Co', null),
         }),

@@ -26,7 +26,7 @@ describe('Account recovery (e2e)', () => {
   const oldPassword = 'password123';
   const newPassword = 'brand-new-password';
 
-  // users.phone is unique across the shared DB: suite 13's own block
+  // accounts.phone is unique across the shared DB: suite 13's own block
   const nextPhone = testPhones(13);
   const ownerPhone = nextPhone(); // digits, e.g. '01013000001'
   const ownerPhoneDashed = `${ownerPhone.slice(0, 3)}-${ownerPhone.slice(3, 7)}-${ownerPhone.slice(7)}`;

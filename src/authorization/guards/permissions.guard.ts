@@ -7,8 +7,8 @@ import {
 import { PermissionsService } from '../permissions.service';
 import { Reflector } from '@nestjs/core';
 import { REQUIRE_PERMISSIONS_KEY } from '../decorators/require-permissions.decorator';
-import { AuthUser } from '../../auth/types/auth-user';
-import { UserStatus } from '../../generated/prisma/enums';
+import { AuthProfile } from '../../auth/types/auth-profile';
+import { ProfileStatus } from '../../generated/prisma/enums';
 
 @Injectable()
 export class PermissionsGuard implements CanActivate {
@@ -27,18 +27,18 @@ export class PermissionsGuard implements CanActivate {
       return true;
     }
 
-    const user = context.switchToHttp().getRequest().user as AuthUser;
+    const profile = context.switchToHttp().getRequest().profile as AuthProfile;
 
-    if (!user) {
+    if (!profile) {
       throw new ForbiddenException();
     }
 
-    if (user.status !== UserStatus.ACTIVE) {
+    if (profile.status !== ProfileStatus.ACTIVE) {
       throw new ForbiddenException();
     }
 
     const effective =
-      await this.permissionsService.getEffectivePermissions(user);
+      await this.permissionsService.getEffectivePermissions(profile);
 
     const allowed = requiredPermissions.every((code) => effective.has(code));
 

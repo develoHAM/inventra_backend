@@ -15,8 +15,8 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { ProductsService } from './products.service';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { AuthUser } from '../auth/types/auth-user';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { AuthProfile } from '../auth/types/auth-profile';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -29,14 +29,14 @@ export class ProductsController {
 
   @RequirePermissions('products.read')
   @Get()
-  findAll(@CurrentUser() caller: AuthUser) {
+  findAll(@CurrentProfile() caller: AuthProfile) {
     return this.products.findAll(caller);
   }
 
   @RequirePermissions('products.read')
   @Get(':id')
   findOne(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.products.findOne(caller, id);
@@ -44,14 +44,14 @@ export class ProductsController {
 
   @RequirePermissions('products.create')
   @Post()
-  create(@CurrentUser() caller: AuthUser, @Body() dto: CreateProductDto) {
+  create(@CurrentProfile() caller: AuthProfile, @Body() dto: CreateProductDto) {
     return this.products.create(caller, dto);
   }
 
   @RequirePermissions('products.update')
   @Patch(':id')
   update(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateProductDto,
   ) {
@@ -61,7 +61,7 @@ export class ProductsController {
   @RequirePermissions('products.delete')
   @Delete(':id')
   remove(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.products.remove(caller, id);
@@ -71,7 +71,7 @@ export class ProductsController {
   @Post(':id/image')
   @UseInterceptors(FileInterceptor('file'))
   uploadImage(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseUUIDPipe) id: string,
     @UploadedFile(
       new ParseFilePipe({
@@ -89,7 +89,7 @@ export class ProductsController {
   @RequirePermissions('products.update')
   @Post(':id/image/presign')
   presignImage(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: PresignImageDto,
   ) {
@@ -99,7 +99,7 @@ export class ProductsController {
   @RequirePermissions('products.update')
   @Post(':id/image/confirm')
   confirmImage(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ConfirmImageDto,
   ) {

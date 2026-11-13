@@ -32,7 +32,7 @@ export function decideRoleChange(input: {
     input.targetRole === 'OWNER' && input.requestedRole !== 'OWNER';
 
   // Only the admin demoting an owner chooses a branch here; everyone else
-  // moves people with PUT /users/:id/branch.
+  // moves people with PUT /profiles/:id/branch.
   if (input.cornerIdSent && !(isAdmin && isOwnerDemotion))
     throw new BadRequestException(
       'cornerId is only for the admin demoting an owner',

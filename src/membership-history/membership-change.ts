@@ -7,11 +7,11 @@ import type { MembershipChangeReason } from '../generated/prisma/enums';
  */
 export interface MembershipChangeInput {
   companyId: string;
-  userId: string;
+  profileId: string;
   reason: MembershipChangeReason;
   fromRoleId: number | null;
   toRoleId: number | null;
   fromCornerId: string | null; // null = no branch
   toCornerId: string | null;
-  changedByUserId: string | null; // null = made by the system
+  changedByProfileId: string | null; // null = made by the system
 }

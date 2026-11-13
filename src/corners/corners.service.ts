@@ -13,7 +13,7 @@ import { StoresService } from '../stores/stores.service';
 import { MembershipHistoryService } from '../membership-history/membership-history.service';
 import { NotificationEvent } from '../notifications/notification-events';
 import type { MemberMovedEvent } from '../notifications/notification-events';
-import type { AuthUser } from '../auth/types/auth-user';
+import type { AuthProfile } from '../auth/types/auth-profile';
 import { CreateCornerDto } from './dto/create-corner.dto';
 import { UpdateCornerDto } from './dto/update-corner.dto';
 import { HistoryQueryDto } from '../membership-history/dto/history-query.dto';
@@ -34,7 +34,7 @@ export class CornersService {
    * own branch (`caller.companyStoreId`, reloaded from the database on every
    * request); owners and the admin anywhere in scope.
    */
-  async assertWorksCorner(caller: AuthUser, cornerId: string) {
+  async assertWorksCorner(caller: AuthProfile, cornerId: string) {
     const corner = await this.findOne(caller, cornerId); // company-scoped → 404
     if (caller.roleCode === 'MANAGER' && caller.companyStoreId !== cornerId)
       throw new ForbiddenException('You can only manage corners you manage');
@@ -45,7 +45,7 @@ export class CornersService {
     return corner;
   }
 
-  async create(caller: AuthUser, dto: CreateCornerDto) {
+  async create(caller: AuthProfile, dto: CreateCornerDto) {
     const { companyId: requested, ...data } = dto;
     const companyId = this.ownership.resolveTargetCompany(caller, requested);
 
@@ -75,13 +75,13 @@ export class CornersService {
     return locked.count === 1;
   }
 
-  async findAll(caller: AuthUser) {
+  async findAll(caller: AuthProfile) {
     return this.prisma.companyStore.findMany({
       where: { ...this.ownership.scopeToCompany(caller), deletedAt: null },
     });
   }
 
-  async findOne(caller: AuthUser, id: string) {
+  async findOne(caller: AuthProfile, id: string) {
     const corner = await this.prisma.companyStore.findFirst({
       where: {
         id: id,
@@ -98,7 +98,7 @@ export class CornersService {
    * role while in it. For the admin, owners, and the branch's own managers.
    */
   async listHistory(
-    caller: AuthUser,
+    caller: AuthProfile,
     cornerId: string,
     query: HistoryQueryDto,
   ): Promise<MembershipHistoryPage> {
@@ -125,7 +125,7 @@ export class CornersService {
     );
   }
 
-  async update(caller: AuthUser, id: string, dto: UpdateCornerDto) {
+  async update(caller: AuthProfile, id: string, dto: UpdateCornerDto) {
     await this.findOne(caller, id);
     return this.prisma.companyStore.update({ where: { id: id }, data: dto });
   }
@@ -135,7 +135,7 @@ export class CornersService {
    * history row and a notification each. A soft delete is an UPDATE, so no
    * foreign key clears the members for us: we do it in the same transaction.
    */
-  async remove(caller: AuthUser, id: string) {
+  async remove(caller: AuthProfile, id: string) {
     const corner = await this.findOne(caller, id); // company-scoped → 404
 
     const released = await this.prisma.$transaction(async (transaction) => {
@@ -144,14 +144,14 @@ export class CornersService {
       // into this branch wait and then see it deleted.
       const deleted = await transaction.companyStore.updateMany({
         where: { id: id, deletedAt: null },
-        data: { deletedAt: new Date(), deletedByUserId: caller.id },
+        data: { deletedAt: new Date(), deletedByProfileId: caller.id },
       });
       if (deleted.count === 0) throw new NotFoundException('Corner not found');
 
       // One statement clears the branch AND reports exactly who it changed,
       // so the history and the notifications can't include someone who was
       // moved out a moment earlier.
-      const releasedMembers = await transaction.user.updateManyAndReturn({
+      const releasedMembers = await transaction.profile.updateManyAndReturn({
         where: { companyStoreId: id, deletedAt: null },
         data: { companyStoreId: null },
         select: { id: true, roleId: true },
@@ -161,13 +161,13 @@ export class CornersService {
         transaction,
         releasedMembers.map((member) => ({
           companyId: corner.companyId,
-          userId: member.id,
+          profileId: member.id,
           reason: MembershipChangeReason.BRANCH_DELETED,
           fromRoleId: member.roleId,
           toRoleId: member.roleId,
           fromCornerId: id,
           toCornerId: null,
-          changedByUserId: caller.id,
+          changedByProfileId: caller.id,
         })),
       );
       return releasedMembers;
@@ -175,8 +175,8 @@ export class CornersService {
 
     for (const member of released) {
       const event: MemberMovedEvent = {
-        memberUserId: member.id,
-        changedByUserId: caller.id,
+        memberProfileId: member.id,
+        changedByProfileId: caller.id,
         fromCornerId: id,
         toCornerId: null,
         reason: 'BRANCH_DELETED',

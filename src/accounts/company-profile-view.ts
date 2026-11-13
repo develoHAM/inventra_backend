@@ -6,9 +6,9 @@ export const OPEN_PROFILE_SELECT = {
   status: true,
   companyId: true,
   roleId: true,
-} satisfies Prisma.UserSelect;
+} satisfies Prisma.ProfileSelect;
 
 /** The company profile a session has open, as auth responses show it. */
-export type OpenProfileSummary = Prisma.UserGetPayload<{
+export type OpenProfileSummary = Prisma.ProfileGetPayload<{
   select: typeof OPEN_PROFILE_SELECT;
 }>;

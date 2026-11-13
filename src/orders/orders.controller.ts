@@ -16,8 +16,8 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { AuthUser } from '../auth/types/auth-user';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { AuthProfile } from '../auth/types/auth-profile';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -31,7 +31,7 @@ export class OrdersController {
   @RequirePermissions('orders.read')
   @Get()
   findAll(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
   ) {
     return this.orders.findAll(caller, cornerId);
@@ -40,7 +40,7 @@ export class OrdersController {
   @RequirePermissions('orders.read')
   @Get(':orderId')
   findOne(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('orderId', ParseUUIDPipe) orderId: string,
   ) {
@@ -50,7 +50,7 @@ export class OrdersController {
   @RequirePermissions('orders.create')
   @Post()
   create(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Body() dto: CreateOrderDto,
   ) {
@@ -60,7 +60,7 @@ export class OrdersController {
   @RequirePermissions('orders.update')
   @Patch(':orderId')
   update(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('orderId', ParseUUIDPipe) orderId: string,
     @Body() dto: UpdateOrderDto,
@@ -71,7 +71,7 @@ export class OrdersController {
   @RequirePermissions('orders.delete')
   @Delete(':orderId')
   remove(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('orderId', ParseUUIDPipe) orderId: string,
   ) {
@@ -81,7 +81,7 @@ export class OrdersController {
   @RequirePermissions('orders.read')
   @Get(':orderId/export')
   async export(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('orderId', ParseUUIDPipe) orderId: string,
     @Query() query: ExportQueryDto,
@@ -103,7 +103,7 @@ export class OrdersController {
   @Post('import')
   @UseInterceptors(FileInterceptor('file'))
   importCreate(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @UploadedFile(
       new ParseFilePipe({
@@ -120,7 +120,7 @@ export class OrdersController {
   @HttpCode(200)
   @UseInterceptors(FileInterceptor('file'))
   importUpdate(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('orderId', ParseUUIDPipe) orderId: string,
     @UploadedFile(

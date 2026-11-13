@@ -48,7 +48,7 @@ export class NotificationsProcessor extends WorkerHost {
         // redacted rows hold a placeholder: the real text is only in the job
         body: job.data.body ?? notification.body,
         // Push: what the app needs to deep-link on tap. eventType always,
-        // plus the ids notifyUsers stored on the row (string → string).
+        // plus the ids notifyProfiles stored on the row (string → string).
         data:
           notification.channel === NotificationChannel.PUSH
             ? {

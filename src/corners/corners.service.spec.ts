@@ -5,8 +5,11 @@ import {
 } from '@nestjs/common';
 import { CornersService } from './corners.service';
 import { OwnershipService } from '../authorization/ownership.service';
-import { AuthUser } from '../auth/types/auth-user';
-import { MembershipChangeReason, UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import {
+  MembershipChangeReason,
+  ProfileStatus,
+} from '../generated/prisma/enums';
 import { NotificationEvent } from '../notifications/notification-events';
 
 describe('CornersService', () => {
@@ -23,7 +26,7 @@ describe('CornersService', () => {
   };
   let tx: {
     companyStore: { updateMany: jest.Mock };
-    user: { updateManyAndReturn: jest.Mock };
+    profile: { updateManyAndReturn: jest.Mock };
   };
   let stores: { findActive: jest.Mock };
   let history: { record: jest.Mock; page: jest.Mock };
@@ -31,39 +34,39 @@ describe('CornersService', () => {
   /** The order things happened in, to prove events fire after commit. */
   let timeline: string[];
 
-  const owner: AuthUser = {
+  const owner: AuthProfile = {
     id: 'owner-1',
     accountId: 'account-of-owner-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
-  const admin: AuthUser = {
+  const admin: AuthProfile = {
     id: 'admin-1',
     accountId: 'account-of-admin-1',
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
-  const manager: AuthUser = {
+  const manager: AuthProfile = {
     id: 'mgr-1',
     accountId: 'account-of-mgr-1',
     companyId: 'company-1',
     companyStoreId: 'c1', // the manager's branch
     roleId: 3,
     roleCode: 'MANAGER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
-  const staff: AuthUser = {
+  const staff: AuthProfile = {
     id: 'staff-1',
     accountId: 'account-of-staff-1',
     companyId: 'company-1',
     companyStoreId: 'c1',
     roleId: 4,
     roleCode: 'STAFF',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
 
   beforeEach(() => {
@@ -84,7 +87,7 @@ describe('CornersService', () => {
     timeline = [];
     tx = {
       companyStore: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-      user: { updateManyAndReturn: jest.fn().mockResolvedValue([]) },
+      profile: { updateManyAndReturn: jest.fn().mockResolvedValue([]) },
     };
     stores = { findActive: jest.fn().mockResolvedValue({ id: 'store-1' }) };
     history = {
@@ -173,7 +176,7 @@ describe('CornersService', () => {
         ...branchA,
         deletedAt: new Date('2026-11-09T00:00:00.000Z'),
       });
-      tx.user.updateManyAndReturn.mockResolvedValue([lee, park]);
+      tx.profile.updateManyAndReturn.mockResolvedValue([lee, park]);
     });
 
     it('soft-deletes the branch with a guarded write that stamps the deleter', async () => {
@@ -185,14 +188,14 @@ describe('CornersService', () => {
       });
       expect(tx.companyStore.updateMany).toHaveBeenCalledWith({
         where: { id: 'corner-a', deletedAt: null },
-        data: { deletedAt: expect.any(Date), deletedByUserId: 'owner-1' },
+        data: { deletedAt: expect.any(Date), deletedByProfileId: 'owner-1' },
       });
     });
 
     it('releases its people in the same statement that reports who was released', async () => {
       await service.remove(owner, 'corner-a');
 
-      expect(tx.user.updateManyAndReturn).toHaveBeenCalledWith({
+      expect(tx.profile.updateManyAndReturn).toHaveBeenCalledWith({
         where: { companyStoreId: 'corner-a', deletedAt: null },
         data: { companyStoreId: null },
         select: { id: true, roleId: true },
@@ -205,23 +208,23 @@ describe('CornersService', () => {
       expect(history.record).toHaveBeenCalledWith(tx, [
         {
           companyId: 'company-1',
-          userId: 'lee',
+          profileId: 'lee',
           reason: MembershipChangeReason.BRANCH_DELETED,
           fromRoleId: 3,
           toRoleId: 3,
           fromCornerId: 'corner-a',
           toCornerId: null,
-          changedByUserId: 'owner-1',
+          changedByProfileId: 'owner-1',
         },
         {
           companyId: 'company-1',
-          userId: 'park',
+          profileId: 'park',
           reason: MembershipChangeReason.BRANCH_DELETED,
           fromRoleId: 4,
           toRoleId: 4,
           fromCornerId: 'corner-a',
           toCornerId: null,
-          changedByUserId: 'owner-1',
+          changedByProfileId: 'owner-1',
         },
       ]);
     });
@@ -229,12 +232,12 @@ describe('CornersService', () => {
     it('notifies each released person, only after the transaction commits', async () => {
       await service.remove(owner, 'corner-a');
 
-      for (const memberUserId of ['lee', 'park']) {
+      for (const memberProfileId of ['lee', 'park']) {
         expect(eventEmitter.emit).toHaveBeenCalledWith(
           NotificationEvent.MEMBER_MOVED,
           {
-            memberUserId: memberUserId,
-            changedByUserId: 'owner-1',
+            memberProfileId: memberProfileId,
+            changedByProfileId: 'owner-1',
             fromCornerId: 'corner-a',
             toCornerId: null,
             reason: 'BRANCH_DELETED',
@@ -246,19 +249,19 @@ describe('CornersService', () => {
 
     it('someone who left a moment earlier is not in the receipt: no history row, no message', async () => {
       // Lee was moved to another branch before the release statement ran
-      tx.user.updateManyAndReturn.mockResolvedValue([park]);
+      tx.profile.updateManyAndReturn.mockResolvedValue([park]);
 
       await service.remove(owner, 'corner-a');
 
       expect(history.record.mock.calls[0][1]).toHaveLength(1);
       expect(history.record.mock.calls[0][1][0]).toMatchObject({
-        userId: 'park',
+        profileId: 'park',
       });
       expect(eventEmitter.emit).toHaveBeenCalledTimes(1);
     });
 
     it('an empty branch: no history rows, no notifications', async () => {
-      tx.user.updateManyAndReturn.mockResolvedValue([]);
+      tx.profile.updateManyAndReturn.mockResolvedValue([]);
 
       await service.remove(owner, 'corner-a');
 
@@ -286,7 +289,7 @@ describe('CornersService', () => {
       await expect(service.remove(owner, 'corner-a')).rejects.toThrow(
         new NotFoundException('Corner not found'),
       );
-      expect(tx.user.updateManyAndReturn).not.toHaveBeenCalled();
+      expect(tx.profile.updateManyAndReturn).not.toHaveBeenCalled();
       expect(history.record).not.toHaveBeenCalled();
       expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
@@ -423,7 +426,7 @@ describe('CornersService', () => {
     });
 
     it("a manager cannot read another branch's history (403)", async () => {
-      const managerOfOtherBranch: AuthUser = {
+      const managerOfOtherBranch: AuthProfile = {
         ...manager,
         companyStoreId: 'c2',
       };
@@ -435,7 +438,7 @@ describe('CornersService', () => {
     });
 
     it('a manager with no branch reads no branch (403)', async () => {
-      const managerWithoutBranch: AuthUser = {
+      const managerWithoutBranch: AuthProfile = {
         ...manager,
         companyStoreId: null,
       };

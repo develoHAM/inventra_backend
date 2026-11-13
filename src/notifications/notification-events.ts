@@ -1,4 +1,4 @@
-import type { MemberRoleCode } from '../members/member-rules';
+import type { MemberRoleCode } from '../profiles/member-rules';
 
 export const NotificationEvent = {
   COMPANY_APPROVED: 'company.approved',
@@ -15,7 +15,7 @@ export const NotificationEvent = {
 
 export interface CompanyApprovedEvent {
   companyId: string;
-  ownerUserId: string;
+  ownerProfileId: string;
 }
 
 export interface CompanyRegisteredEvent {
@@ -24,25 +24,25 @@ export interface CompanyRegisteredEvent {
 
 export interface MemberJoinRequestedEvent {
   companyId: string;
-  memberUserId: string;
+  memberProfileId: string;
 }
 
 export interface MemberApprovedEvent {
-  memberUserId: string;
-  approvedByUserId: string;
+  memberProfileId: string;
+  approvedByProfileId: string;
 }
 
 export interface MemberMovedEvent {
-  memberUserId: string;
-  changedByUserId: string | null; // null = moved by the system
+  memberProfileId: string;
+  changedByProfileId: string | null; // null = moved by the system
   fromCornerId: string | null;
   toCornerId: string | null; // null = no branch now
   reason: 'MOVED' | 'BRANCH_DELETED';
 }
 
 export interface MemberRoleChangedEvent {
-  memberUserId: string;
-  changedByUserId: string | null; // null = changed by the system
+  memberProfileId: string;
+  changedByProfileId: string | null; // null = changed by the system
   toRoleCode: MemberRoleCode;
 }
 
@@ -54,13 +54,13 @@ export interface AccountPasswordResetEvent {
 export interface OrderCreatedEvent {
   orderId: string;
   cornerId: string;
-  createdByUserId: string;
+  createdByProfileId: string;
 }
 
 export interface AuditAppliedEvent {
   auditId: string;
   cornerId: string;
-  appliedByUserId: string;
+  appliedByProfileId: string;
 }
 
 export interface StockBelowTargetEvent {

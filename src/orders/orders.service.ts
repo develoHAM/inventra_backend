@@ -6,7 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CornersService } from '../corners/corners.service';
 import { OrderItemDto } from './dto/order-item.dto';
-import { AuthUser } from '../auth/types/auth-user';
+import { AuthProfile } from '../auth/types/auth-profile';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { SpreadsheetService } from '../spreadsheet/spreadsheet.service';
@@ -28,7 +28,7 @@ export class OrdersService {
     { key: 'title', label: { en: 'Title', ko: '제목' } },
     { key: 'description', label: { en: 'Description', ko: '설명' } },
     { key: 'orderDate', label: { en: 'Order Date', ko: '주문일자' } },
-    { key: 'userName', label: { en: 'Created By', ko: '작성자' } },
+    { key: 'profileName', label: { en: 'Created By', ko: '작성자' } },
     { key: 'createdAt', label: { en: 'Created At', ko: '생성일시' } },
     { key: 'companyStoreName', label: { en: 'Corner', ko: '코너' } },
     { key: 'productBarcode', label: { en: 'Barcode', ko: '바코드' } },
@@ -209,7 +209,7 @@ export class OrdersService {
     return order;
   }
 
-  async create(caller: AuthUser, cornerId: string, dto: CreateOrderDto) {
+  async create(caller: AuthProfile, cornerId: string, dto: CreateOrderDto) {
     const { items: orderItems, title, description, fileUrl, orderDate } = dto;
 
     await this.corners.assertWorksCorner(caller, cornerId);
@@ -222,7 +222,7 @@ export class OrdersService {
         description: description ?? null,
         fileUrl: fileUrl ?? null,
         orderDate: new Date(orderDate),
-        createdByUserId: caller.id,
+        createdByProfileId: caller.id,
         orderItems: {
           create: orderItems.map((orderItem) => ({
             productOrderQuantity: orderItem.productOrderQuantity,
@@ -243,14 +243,14 @@ export class OrdersService {
     const event: OrderCreatedEvent = {
       orderId: order.id,
       cornerId: cornerId,
-      createdByUserId: caller.id,
+      createdByProfileId: caller.id,
     };
     this.eventEmitter.emit(NotificationEvent.ORDER_CREATED, event);
 
     return order;
   }
 
-  async findAll(caller: AuthUser, cornerId: string) {
+  async findAll(caller: AuthProfile, cornerId: string) {
     await this.corners.findOne(caller, cornerId);
     return this.prisma.order.findMany({
       where: { companyStoreId: cornerId, deletedAt: null },
@@ -259,13 +259,13 @@ export class OrdersService {
     });
   }
 
-  async findOne(caller: AuthUser, cornerId: string, orderId: string) {
+  async findOne(caller: AuthProfile, cornerId: string, orderId: string) {
     await this.corners.findOne(caller, cornerId);
     return this.getOrder(cornerId, orderId);
   }
 
   async update(
-    caller: AuthUser,
+    caller: AuthProfile,
     cornerId: string,
     orderId: string,
     dto: UpdateOrderDto,
@@ -309,17 +309,17 @@ export class OrdersService {
     });
   }
 
-  async remove(caller: AuthUser, cornerId: string, orderId: string) {
+  async remove(caller: AuthProfile, cornerId: string, orderId: string) {
     await this.corners.assertWorksCorner(caller, cornerId);
     await this.getOrder(cornerId, orderId);
     return this.prisma.order.update({
       where: { id_companyStoreId: { id: orderId, companyStoreId: cornerId } },
-      data: { deletedAt: new Date(), deletedByUserId: caller.id },
+      data: { deletedAt: new Date(), deletedByProfileId: caller.id },
     });
   }
 
   async exportOrder(
-    caller: AuthUser,
+    caller: AuthProfile,
     cornerId: string,
     orderId: string,
     format: 'csv' | 'xlsx' = 'csv',
@@ -329,7 +329,7 @@ export class OrdersService {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, companyStoreId: cornerId, deletedAt: null },
       include: {
-        createdByUser: { select: { name: true } },
+        createdByProfile: { select: { name: true } },
         companyStore: { select: { name: true } },
         orderItems: {
           include: {
@@ -347,7 +347,7 @@ export class OrdersService {
       title: order.title,
       description: order.description ?? '',
       orderDate: order.orderDate.toISOString(),
-      userName: order.createdByUser.name,
+      profileName: order.createdByProfile.name,
       createdAt: order.createdAt.toISOString(),
       companyStoreName: order.companyStore.name,
       productBarcode: item.companyStoreProduct.product.barcode,
@@ -371,7 +371,7 @@ export class OrdersService {
   }
 
   async importCreate(
-    caller: AuthUser,
+    caller: AuthProfile,
     cornerId: string,
     file: Express.Multer.File,
   ) {
@@ -381,7 +381,7 @@ export class OrdersService {
   }
 
   async importUpdate(
-    caller: AuthUser,
+    caller: AuthProfile,
     cornerId: string,
     orderId: string,
     file: Express.Multer.File,

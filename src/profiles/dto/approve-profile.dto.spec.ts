@@ -1,16 +1,16 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { ApproveMemberDto } from './approve-member.dto';
+import { ApproveProfileDto } from './approve-profile.dto';
 
 async function failedFields(body: Record<string, unknown>) {
-  const errors = await validate(plainToInstance(ApproveMemberDto, body), {
+  const errors = await validate(plainToInstance(ApproveProfileDto, body), {
     whitelist: true,
     forbidNonWhitelisted: true,
   });
   return errors.map((error) => error.property);
 }
 
-describe('ApproveMemberDto', () => {
+describe('ApproveProfileDto', () => {
   const BRANCH_ID = '0b9a1f3e-5c2d-4e8f-9a7b-1c2d3e4f5a6b';
 
   it('accepts a role and a branch', async () => {

@@ -26,13 +26,13 @@ const ROLES = [
 ];
 
 const PERMISSIONS = [
-  { code: 'users.create', name: 'Create users' },
-  { code: 'users.read', name: 'Read users' },
-  { code: 'users.update', name: 'Update users' },
-  { code: 'users.delete', name: 'Delete users' },
-  { code: 'users.approve', name: 'Approve users' },
-  { code: 'users.move', name: 'Move members between branches' },
-  { code: 'users.changeRole', name: 'Change member roles' },
+  { code: 'profiles.create', name: 'Create profiles' },
+  { code: 'profiles.read', name: 'Read profiles' },
+  { code: 'profiles.update', name: 'Update profiles' },
+  { code: 'profiles.delete', name: 'Delete profiles' },
+  { code: 'profiles.approve', name: 'Approve profiles' },
+  { code: 'profiles.move', name: 'Move members between branches' },
+  { code: 'profiles.changeRole', name: 'Change member roles' },
   { code: 'companies.read', name: 'Read companies' },
   { code: 'companies.update', name: 'Update companies' },
   { code: 'companies.approve', name: 'Approve companies' },
@@ -82,13 +82,13 @@ const PERMISSIONS = [
 const ROLE_PERMISSIONS: Record<string, string[]> = {
   ADMIN: PERMISSIONS.map((permission) => permission.code),
   OWNER: [
-    'users.create',
-    'users.read',
-    'users.update',
-    'users.delete',
-    'users.approve',
-    'users.move',
-    'users.changeRole',
+    'profiles.create',
+    'profiles.read',
+    'profiles.update',
+    'profiles.delete',
+    'profiles.approve',
+    'profiles.move',
+    'profiles.changeRole',
     'companies.read',
     'companies.update',
     'products.create',
@@ -128,12 +128,12 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'companies.rotateJoinCode',
   ],
   MANAGER: [
-    'users.create',
-    'users.read',
-    'users.update',
-    'users.delete',
-    'users.approve', // own branch, as staff only (MembersService)
-    'users.changeRole', // staff → manager in their own branch only
+    'profiles.create',
+    'profiles.read',
+    'profiles.update',
+    'profiles.delete',
+    'profiles.approve', // own branch, as staff only (ProfilesService)
+    'profiles.changeRole', // staff → manager in their own branch only
     'companies.read',
     'products.create',
     'products.read',
@@ -167,9 +167,9 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'companies.invite',
   ],
   STAFF: [
-    'users.read',
-    'users.update',
-    'users.delete',
+    'profiles.read',
+    'profiles.update',
+    'profiles.delete',
     'companies.read',
     'products.read',
     'brands.read',
@@ -208,7 +208,7 @@ async function main() {
     });
   }
 
-  // 2) Permissions — resource/action derived from the code (e.g. "users.create")
+  // 2) Permissions — resource/action derived from the code (e.g. "profiles.create")
   for (const perm of PERMISSIONS) {
     const [resource, action] = perm.code.split('.');
     await prisma.permission.upsert({
@@ -248,7 +248,7 @@ async function main() {
   const adminRole = await prisma.role.findUniqueOrThrow({
     where: { code: 'ADMIN' },
   });
-  const existing = await prisma.userLoginMethod.findFirst({
+  const existing = await prisma.accountLoginMethod.findFirst({
     where: { email, method: 'local' },
   });
 
@@ -274,7 +274,7 @@ async function main() {
             roleId: adminRole.id,
             name: 'Platform Admin',
             status: 'ACTIVE',
-            // where notifications go (findUserEmail reads contactEmail, not the login)
+            // where notifications go (findProfileEmail reads contactEmail, not the login)
             contactEmail: email,
           },
         },

@@ -85,7 +85,7 @@ export class AccountRecoveryService {
       });
 
       // Both factors must point at the same account.
-      const loginMethod = await transaction.userLoginMethod.findFirst({
+      const loginMethod = await transaction.accountLoginMethod.findFirst({
         where: {
           method: 'local',
           email: input.email,
@@ -95,7 +95,7 @@ export class AccountRecoveryService {
       });
       if (!loginMethod) return null; // commit: the token stays spent
 
-      await transaction.userLoginMethod.update({
+      await transaction.accountLoginMethod.update({
         where: { id: loginMethod.id },
         data: { passwordHash: passwordHash },
       });

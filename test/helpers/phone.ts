@@ -4,7 +4,7 @@ import { FakePhoneVerifier } from '../../src/phone-verification/verifiers/fake.v
 
 /**
  * Unique phone numbers per suite. Every e2e suite shares one database (one
- * reset per run) and users.phone is unique, so each suite gets its own
+ * reset per run) and accounts.phone is unique, so each suite gets its own
  * block: 010 + 2-digit suite number + 6-digit counter.
  *
  *   const nextPhone = testPhones(7);

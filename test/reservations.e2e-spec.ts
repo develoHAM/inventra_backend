@@ -20,14 +20,14 @@ describe('Purchase Reservations (e2e)', () => {
   let cornerId: string;
   let placementId: number;
 
-  let staffUserId: string;
+  let staffProfileId: string;
 
   const auth = (token: string): [string, string] => [
     'Authorization',
     `Bearer ${token}`,
   ];
 
-  // users.phone is unique across the shared DB: suite 08's own block
+  // accounts.phone is unique across the shared DB: suite 08's own block
   const nextPhone = testPhones(8);
 
   const registerCompany = async (n: number) => {
@@ -82,12 +82,12 @@ describe('Purchase Reservations (e2e)', () => {
         phoneVerificationToken: token,
       })
       .expect(201);
-    const user = await prisma.user.findFirst({
+    const profile = await prisma.profile.findFirst({
       where: { account: { loginMethods: { some: { email: email } } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
-      .patch(`/users/${user!.id}/approve`)
+      .patch(`/profiles/${profile!.id}/approve`)
       .set(...auth(ownerToken))
       .send({ roleId: role!.id, cornerId: null })
       .expect(200);
@@ -97,7 +97,7 @@ describe('Purchase Reservations (e2e)', () => {
       .expect(201);
     return {
       access: login.body.accessToken as string,
-      userId: user!.id as string,
+      profileId: profile!.id as string,
     };
   };
 
@@ -149,7 +149,7 @@ describe('Purchase Reservations (e2e)', () => {
       'staff',
     );
     staffAccess = staff.access;
-    staffUserId = staff.userId;
+    staffProfileId = staff.profileId;
     const otherManager = await registerMember(
       company1.joinCode,
       ownerAccess,
@@ -173,7 +173,7 @@ describe('Purchase Reservations (e2e)', () => {
         .expect(201)
     ).body.id;
     await request(http)
-      .put(`/users/${staffUserId}/branch`)
+      .put(`/profiles/${staffProfileId}/branch`)
       .set(...auth(ownerAccess))
       .send({ cornerId: cornerId })
       .expect(200);

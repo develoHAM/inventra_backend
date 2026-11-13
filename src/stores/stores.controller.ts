@@ -11,8 +11,8 @@ import {
 import { StoresService } from './stores.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { CreateStoreDto } from './dto/create-store.dto';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { AuthUser } from '../auth/types/auth-user';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { AuthProfile } from '../auth/types/auth-profile';
 import { UpdateStoreDto } from './dto/update-store.dto';
 
 @Controller('stores')
@@ -46,7 +46,7 @@ export class StoresController {
   @RequirePermissions('stores.delete')
   @Delete(':id')
   remove(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.stores.remove(caller, id);

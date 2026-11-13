@@ -4,8 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PlacementsService } from './placements.service';
-import { AuthUser } from '../auth/types/auth-user';
-import { UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import { ProfileStatus } from '../generated/prisma/enums';
 
 describe('PlacementsService', () => {
   let service: PlacementsService;
@@ -20,13 +20,13 @@ describe('PlacementsService', () => {
   let corners: { findOne: jest.Mock; assertWorksCorner: jest.Mock };
   let products: { findInCompany: jest.Mock };
 
-  const owner: AuthUser = {
+  const owner: AuthProfile = {
     id: 'owner-1',
     accountId: 'account-of-owner-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
   const CORNER = {
     id: 'corner-1',
@@ -112,7 +112,7 @@ describe('PlacementsService', () => {
         where: { id: 9 },
         data: {
           deletedAt: null,
-          deletedByUserId: null,
+          deletedByProfileId: null,
           stock: { update: { targetStockQuantity: 3 } },
         },
       });
@@ -164,7 +164,7 @@ describe('PlacementsService', () => {
       await service.remove(owner, 'corner-1', 9);
       expect(prisma.companyStoreProduct.update).toHaveBeenCalledWith({
         where: { id: 9 },
-        data: { deletedAt: expect.any(Date), deletedByUserId: 'owner-1' },
+        data: { deletedAt: expect.any(Date), deletedByProfileId: 'owner-1' },
       });
     });
   });

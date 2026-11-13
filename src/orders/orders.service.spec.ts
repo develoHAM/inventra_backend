@@ -1,7 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { OrdersService } from './orders.service';
-import { AuthUser } from '../auth/types/auth-user';
-import { UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import { ProfileStatus } from '../generated/prisma/enums';
 import { NotificationEvent } from '../notifications/notification-events';
 
 describe('OrdersService', () => {
@@ -12,13 +12,13 @@ describe('OrdersService', () => {
   let spreadsheet: { toBuffer: jest.Mock; parse: jest.Mock };
   let eventEmitter: { emit: jest.Mock };
 
-  const owner: AuthUser = {
+  const owner: AuthProfile = {
     id: 'owner-1',
     accountId: 'account-of-owner-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
   const cornerId = '11111111-1111-1111-1111-111111111111';
   const orderId = '22222222-2222-2222-2222-222222222222';
@@ -101,7 +101,7 @@ describe('OrdersService', () => {
       expect.objectContaining({
         companyStoreId: cornerId,
         title: 'Weekend restock',
-        createdByUserId: 'owner-1',
+        createdByProfileId: 'owner-1',
       }),
     );
     expect(arg.data.orderItems.create).toHaveLength(2);
@@ -121,7 +121,7 @@ describe('OrdersService', () => {
 
     expect(eventEmitter.emit).toHaveBeenCalledWith(
       NotificationEvent.ORDER_CREATED,
-      { orderId: orderId, cornerId: cornerId, createdByUserId: 'owner-1' },
+      { orderId: orderId, cornerId: cornerId, createdByProfileId: 'owner-1' },
     );
     expect(prisma.order.create.mock.invocationCallOrder[0]).toBeLessThan(
       eventEmitter.emit.mock.invocationCallOrder[0],
@@ -220,7 +220,7 @@ describe('OrdersService', () => {
 
     expect(prisma.order.update).toHaveBeenCalledWith({
       where: { id_companyStoreId: { id: orderId, companyStoreId: cornerId } },
-      data: { deletedAt: expect.any(Date), deletedByUserId: 'owner-1' },
+      data: { deletedAt: expect.any(Date), deletedByProfileId: 'owner-1' },
     });
   });
 
@@ -231,7 +231,7 @@ describe('OrdersService', () => {
       description: null,
       orderDate: new Date('2026-08-23T00:00:00.000Z'),
       createdAt: new Date('2026-08-20T00:00:00.000Z'),
-      createdByUser: { name: 'Owner One' },
+      createdByProfile: { name: 'Owner One' },
       companyStore: { name: 'Corner A' },
       orderItems: [
         {
@@ -267,7 +267,7 @@ describe('OrdersService', () => {
         title: 'Weekend restock',
         description: '',
         orderDate: '2026-08-23T00:00:00.000Z',
-        userName: 'Owner One',
+        profileName: 'Owner One',
         createdAt: '2026-08-20T00:00:00.000Z',
         companyStoreName: 'Corner A',
         productBarcode: 'BC-1',
@@ -332,7 +332,7 @@ describe('OrdersService', () => {
       'title',
       'description',
       'orderDate',
-      'userName',
+      'profileName',
       'createdAt',
       'companyStoreName',
       'productBarcode',
@@ -348,7 +348,7 @@ describe('OrdersService', () => {
       over.title ?? 'Weekend Restock',
       over.description ?? 'Aisle 3',
       over.orderDate ?? '2026-09-20T00:00:00.000Z',
-      '', // userName (ignored)
+      '', // profileName (ignored)
       '', // createdAt (ignored)
       '', // companyStoreName (ignored)
       barcode,

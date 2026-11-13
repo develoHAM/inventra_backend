@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { OwnershipService } from '../authorization/ownership.service';
-import { AuthUser } from '../auth/types/auth-user';
+import { AuthProfile } from '../auth/types/auth-profile';
 import { CategoriesService } from '../categories/categories.service';
 import { BrandsService } from '../brands/brands.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -59,7 +59,7 @@ export class ProductsService {
     };
   }
 
-  private async findOneRaw(caller: AuthUser, id: string) {
+  private async findOneRaw(caller: AuthProfile, id: string) {
     const product = await this.prisma.product.findFirst({
       where: {
         id: id,
@@ -72,7 +72,7 @@ export class ProductsService {
     return product;
   }
 
-  async create(caller: AuthUser, dto: CreateProductDto) {
+  async create(caller: AuthProfile, dto: CreateProductDto) {
     const { companyId: requested, ...data } = dto;
     const companyId = this.ownership.resolveTargetCompany(caller, requested);
 
@@ -88,19 +88,19 @@ export class ProductsService {
       data: {
         ...data,
         companyId: companyId,
-        createdByUserId: caller.id,
+        createdByProfileId: caller.id,
       },
     });
   }
 
-  async findAll(caller: AuthUser) {
+  async findAll(caller: AuthProfile) {
     const products = await this.prisma.product.findMany({
       where: { ...this.ownership.scopeToCompany(caller), deletedAt: null },
     });
     return Promise.all(products.map((p) => this.present(p)));
   }
 
-  async findOne(caller: AuthUser, id: string) {
+  async findOne(caller: AuthProfile, id: string) {
     return this.present(await this.findOneRaw(caller, id));
   }
 
@@ -110,7 +110,7 @@ export class ProductsService {
     });
   }
 
-  async update(caller: AuthUser, id: string, dto: UpdateProductDto) {
+  async update(caller: AuthProfile, id: string, dto: UpdateProductDto) {
     const product = await this.findOneRaw(caller, id);
 
     if (dto.brandId !== undefined) {
@@ -130,21 +130,25 @@ export class ProductsService {
     return this.prisma.product.update({ where: { id: id }, data: dto });
   }
 
-  async remove(caller: AuthUser, id: string) {
+  async remove(caller: AuthProfile, id: string) {
     const product = await this.findOneRaw(caller, id);
     if (
       caller.roleCode === 'MANAGER' &&
-      product.createdByUserId !== caller.id
+      product.createdByProfileId !== caller.id
     ) {
       throw new ForbiddenException('You can only delete products you created');
     }
     return this.prisma.product.update({
       where: { id: id },
-      data: { deletedAt: new Date(), deletedByUserId: caller.id },
+      data: { deletedAt: new Date(), deletedByProfileId: caller.id },
     });
   }
 
-  async uploadImage(caller: AuthUser, id: string, file: Express.Multer.File) {
+  async uploadImage(
+    caller: AuthProfile,
+    id: string,
+    file: Express.Multer.File,
+  ) {
     const product = await this.findOneRaw(caller, id);
     const key = this.imageKey(id, file.mimetype);
     await this.storage.putObject(key, file.buffer, file.mimetype);
@@ -156,14 +160,18 @@ export class ProductsService {
     return this.present(updated);
   }
 
-  async presignImageUpload(caller: AuthUser, id: string, dto: PresignImageDto) {
+  async presignImageUpload(
+    caller: AuthProfile,
+    id: string,
+    dto: PresignImageDto,
+  ) {
     await this.findOneRaw(caller, id);
     const key = this.imageKey(id, dto.contentType);
     const uploadUrl = await this.storage.presignPutUrl(key, dto.contentType);
     return { uploadUrl: uploadUrl, key: key };
   }
 
-  async confirmImage(caller: AuthUser, id: string, dto: ConfirmImageDto) {
+  async confirmImage(caller: AuthProfile, id: string, dto: ConfirmImageDto) {
     const product = await this.findOneRaw(caller, id);
     if (!dto.key.startsWith(`products/${id}/`))
       throw new BadRequestException('Key does not belong to this product');

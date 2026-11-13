@@ -4,8 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AuditsService } from './audits.service';
-import { AuthUser } from '../auth/types/auth-user';
-import { UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import { ProfileStatus } from '../generated/prisma/enums';
 import { NotificationEvent } from '../notifications/notification-events';
 
 describe('AuditsService', () => {
@@ -20,13 +20,13 @@ describe('AuditsService', () => {
   let spreadsheet: { toBuffer: jest.Mock; parse: jest.Mock };
   let eventEmitter: { emit: jest.Mock };
 
-  const owner: AuthUser = {
+  const owner: AuthProfile = {
     id: 'owner-1',
     accountId: 'account-of-owner-1',
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
   const cornerId = '11111111-1111-1111-1111-111111111111';
   const auditId = '22222222-2222-2222-2222-222222222222';
@@ -177,7 +177,7 @@ describe('AuditsService', () => {
     await service.remove(owner, cornerId, auditId);
     expect(prisma.inventoryAudit.update).toHaveBeenCalledWith({
       where: { id_companyStoreId: { id: auditId, companyStoreId: cornerId } },
-      data: { deletedAt: expect.any(Date), deletedByUserId: 'owner-1' },
+      data: { deletedAt: expect.any(Date), deletedByProfileId: 'owner-1' },
     });
   });
 
@@ -203,7 +203,7 @@ describe('AuditsService', () => {
     );
     expect(transaction.inventoryAudit.update).toHaveBeenCalledWith({
       where: { id_companyStoreId: { id: auditId, companyStoreId: cornerId } },
-      data: { appliedAt: expect.any(Date), appliedByUserId: 'owner-1' },
+      data: { appliedAt: expect.any(Date), appliedByProfileId: 'owner-1' },
       include: { inventoryAuditItems: true },
     });
   });
@@ -237,7 +237,7 @@ describe('AuditsService', () => {
 
     expect(eventEmitter.emit).toHaveBeenCalledWith(
       NotificationEvent.AUDIT_APPLIED,
-      { auditId: auditId, cornerId: cornerId, appliedByUserId: 'owner-1' },
+      { auditId: auditId, cornerId: cornerId, appliedByProfileId: 'owner-1' },
     );
     expect(prisma.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
       eventEmitter.emit.mock.invocationCallOrder[0],
@@ -271,7 +271,7 @@ describe('AuditsService', () => {
       auditedDate: new Date('2026-08-28T00:00:00.000Z'),
       createdAt: new Date('2026-08-25T00:00:00.000Z'),
       appliedAt: null as Date | null,
-      createdByUser: { name: 'Owner One' },
+      createdByProfile: { name: 'Owner One' },
       companyStore: { name: 'Corner A' },
       inventoryAuditItems: [
         {
@@ -308,7 +308,7 @@ describe('AuditsService', () => {
         title: 'Monthly count',
         description: '',
         auditedDate: '2026-08-28T00:00:00.000Z',
-        userName: 'Owner One',
+        profileName: 'Owner One',
         createdAt: '2026-08-25T00:00:00.000Z',
         appliedAt: '',
         companyStoreName: 'Corner A',
@@ -384,7 +384,7 @@ describe('AuditsService', () => {
       'title',
       'description',
       'auditedDate',
-      'userName',
+      'profileName',
       'createdAt',
       'appliedAt',
       'companyStoreName',
@@ -401,7 +401,7 @@ describe('AuditsService', () => {
       over.title ?? 'Monthly count',
       over.description ?? 'Back room',
       over.auditedDate ?? '2026-08-28T00:00:00.000Z',
-      '', // userName (ignored)
+      '', // profileName (ignored)
       '', // createdAt (ignored)
       '', // appliedAt (ignored)
       '', // companyStoreName (ignored)

@@ -17,7 +17,7 @@ describe('Phone verification (e2e)', () => {
   let http: any;
   let fakeVerifier: FakePhoneVerifier;
 
-  // users.phone is unique across the shared DB: suite 11's own block
+  // accounts.phone is unique across the shared DB: suite 11's own block
   const nextPhone = testPhones(11);
 
   // dashed on purpose: the API must normalize it everywhere
@@ -129,7 +129,7 @@ describe('Phone verification (e2e)', () => {
       })
       .expect(201);
 
-    const owner = await prisma.user.findFirst({
+    const owner = await prisma.profile.findFirst({
       where: {
         account: { loginMethods: { some: { email: 'owner@pv.test' } } },
       },
@@ -194,7 +194,7 @@ describe('Phone verification (e2e)', () => {
       phone: phone,
       phoneVerificationToken: token,
     }).expect(201);
-    expect(response.body.user.status).toBe('PENDING_APPROVAL');
+    expect(response.body.profile.status).toBe('PENDING_APPROVAL');
   });
 
   it('allows 10 checks per verification, then 429 (OCTOMO quota)', async () => {

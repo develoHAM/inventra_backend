@@ -30,7 +30,7 @@ describe('Auth & Authorization (e2e)', () => {
   let memberId: string;
   let memberAccess: string;
 
-  // users.phone is unique across the shared DB: suite 01's own block
+  // accounts.phone is unique across the shared DB: suite 01's own block
   const nextPhone = testPhones(1);
 
   const loginMember = () =>
@@ -80,14 +80,14 @@ describe('Auth & Authorization (e2e)', () => {
       })
       .expect(201);
 
-    expect(res.body.user.status).toBe('PENDING_APPROVAL');
+    expect(res.body.profile.status).toBe('PENDING_APPROVAL');
     expect(res.body.accessToken).toEqual(expect.any(String));
     ownerAccess = res.body.accessToken;
   });
 
   it('2. a PENDING owner is blocked from protected routes (403)', async () => {
     await request(http)
-      .patch('/users/00000000-0000-0000-0000-000000000000/approve')
+      .patch('/profiles/00000000-0000-0000-0000-000000000000/approve')
       .set('Authorization', `Bearer ${ownerAccess}`)
       .send({ roleId: 1 })
       .expect(403);
@@ -125,7 +125,7 @@ describe('Auth & Authorization (e2e)', () => {
       .send({ email: owner.ownerEmail, password: owner.ownerPassword })
       .expect(201);
 
-    expect(res.body.user.status).toBe('ACTIVE');
+    expect(res.body.profile.status).toBe('ACTIVE');
     ownerAccess = res.body.accessToken;
   });
 
@@ -146,8 +146,8 @@ describe('Auth & Authorization (e2e)', () => {
       })
       .expect(201);
 
-    expect(res.body.user.status).toBe('PENDING_APPROVAL');
-    expect(res.body.user.roleId).toBeNull();
+    expect(res.body.profile.status).toBe('PENDING_APPROVAL');
+    expect(res.body.profile.roleId).toBeNull();
   });
 
   it('7. an unknown join code is rejected (404) — but only for a verified phone', async () => {
@@ -171,14 +171,14 @@ describe('Auth & Authorization (e2e)', () => {
   });
 
   it('8. the owner approves the member with the STAFF role', async () => {
-    const memberUser = await prisma.user.findFirst({
+    const memberProfile = await prisma.profile.findFirst({
       where: { account: { loginMethods: { some: { email: member.email } } } },
     });
-    memberId = memberUser!.id;
+    memberId = memberProfile!.id;
     const staff = await prisma.role.findUnique({ where: { code: 'STAFF' } });
 
     await request(http)
-      .patch(`/users/${memberId}/approve`)
+      .patch(`/profiles/${memberId}/approve`)
       .set('Authorization', `Bearer ${ownerAccess}`)
       .send({ roleId: staff!.id, cornerId: null })
       .expect(200);
@@ -187,7 +187,7 @@ describe('Auth & Authorization (e2e)', () => {
   it('9. the member logs in as ACTIVE and reaches /auth/me', async () => {
     const res = await loginMember().expect(201);
     memberAccess = res.body.accessToken;
-    expect(res.body.user.status).toBe('ACTIVE');
+    expect(res.body.profile.status).toBe('ACTIVE');
 
     const me = await request(http)
       .get('/auth/me')

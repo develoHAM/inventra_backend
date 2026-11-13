@@ -11,8 +11,8 @@ import {
 } from '@nestjs/common';
 import { PlacementsService } from './placements.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import type { AuthUser } from '../auth/types/auth-user';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { AuthProfile } from '../auth/types/auth-profile';
 import { CreatePlacementDto } from './dto/create-placement.dto';
 import { UpdatePlacementDto } from './dto/update-placement.dto';
 
@@ -23,7 +23,7 @@ export class PlacementsController {
   @RequirePermissions('placements.read')
   @Get()
   findAll(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
   ) {
     return this.placements.findAll(caller, cornerId);
@@ -32,7 +32,7 @@ export class PlacementsController {
   @RequirePermissions('placements.read')
   @Get(':placementId')
   findOne(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('placementId', ParseIntPipe) placementId: number,
   ) {
@@ -42,7 +42,7 @@ export class PlacementsController {
   @RequirePermissions('placements.create')
   @Post()
   create(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Body() dto: CreatePlacementDto,
   ) {
@@ -52,7 +52,7 @@ export class PlacementsController {
   @RequirePermissions('placements.update')
   @Patch(':placementId')
   update(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('placementId', ParseIntPipe) placementId: number,
     @Body() dto: UpdatePlacementDto,
@@ -63,7 +63,7 @@ export class PlacementsController {
   @RequirePermissions('placements.delete')
   @Delete(':placementId')
   remove(
-    @CurrentUser() caller: AuthUser,
+    @CurrentProfile() caller: AuthProfile,
     @Param('cornerId', ParseUUIDPipe) cornerId: string,
     @Param('placementId', ParseIntPipe) placementId: number,
   ) {

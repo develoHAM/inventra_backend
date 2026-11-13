@@ -22,7 +22,7 @@ describe('Product Catalog (e2e)', () => {
   let productId: string;
 
   // register a company → ADMIN approves it → owner logs in
-  // users.phone is unique across the shared DB: suite 02's own block
+  // accounts.phone is unique across the shared DB: suite 02's own block
   const nextPhone = testPhones(2);
 
   const registerCompany = async (n: number) => {
@@ -79,12 +79,12 @@ describe('Product Catalog (e2e)', () => {
         phoneVerificationToken: token,
       })
       .expect(201);
-    const user = await prisma.user.findFirst({
+    const profile = await prisma.profile.findFirst({
       where: { account: { loginMethods: { some: { email: email } } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
-      .patch(`/users/${user!.id}/approve`)
+      .patch(`/profiles/${profile!.id}/approve`)
       .set('Authorization', `Bearer ${ownerToken}`)
       .send({ roleId: role!.id, cornerId: null })
       .expect(200);

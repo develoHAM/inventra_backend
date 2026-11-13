@@ -28,7 +28,7 @@ describe('Notifications (e2e)', () => {
   const ownerEmail = 'owner@ntf.test';
   const companyName = 'NTF Co';
 
-  // users.phone is unique across the shared DB: suite 10's own block
+  // accounts.phone is unique across the shared DB: suite 10's own block
   const nextPhone = testPhones(10);
 
   const auth = (token: string): [string, string] => [
@@ -152,7 +152,7 @@ describe('Notifications (e2e)', () => {
 
     let ownerAccess: string;
     let managerAccess: string;
-    let managerUserId: string;
+    let managerProfileId: string;
     let cornerId: string;
     let placementId: number;
 
@@ -258,15 +258,15 @@ describe('Notifications (e2e)', () => {
       );
       expect(requested[0].body).toContain('Manager 1b');
 
-      const member = await prisma.user.findFirst({
+      const member = await prisma.profile.findFirst({
         where: { account: { loginMethods: { some: { email: managerEmail } } } },
       });
-      managerUserId = member!.id;
+      managerProfileId = member!.id;
       const managerRole = await prisma.role.findUnique({
         where: { code: 'MANAGER' },
       });
       await request(http)
-        .patch(`/users/${managerUserId}/approve`)
+        .patch(`/profiles/${managerProfileId}/approve`)
         .set(...auth(ownerAccess))
         .send({ roleId: managerRole!.id, cornerId: null })
         .expect(200);
@@ -292,7 +292,7 @@ describe('Notifications (e2e)', () => {
           .expect(201)
       ).body.id;
       await request(http)
-        .put(`/users/${managerUserId}/branch`)
+        .put(`/profiles/${managerProfileId}/branch`)
         .set(...auth(ownerAccess))
         .send({ cornerId: cornerId })
         .expect(200);

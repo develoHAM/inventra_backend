@@ -1,6 +1,6 @@
 import { NotificationsService } from './notifications.service';
 import { NotificationEvent } from './notification-events';
-import { NotificationChannel, UserStatus } from '../generated/prisma/enums';
+import { NotificationChannel, ProfileStatus } from '../generated/prisma/enums';
 import {
   REDACTED_SEND_JOB_OPTIONS,
   SEND_JOB_OPTIONS,
@@ -11,8 +11,8 @@ describe('NotificationsService', () => {
   let service: NotificationsService;
   let prisma: {
     notification: { create: jest.Mock };
-    userLoginMethod: { findFirst: jest.Mock };
-    user: { findMany: jest.Mock; findUnique: jest.Mock };
+    accountLoginMethod: { findFirst: jest.Mock };
+    profile: { findMany: jest.Mock; findUnique: jest.Mock };
     companyStore: { findUnique: jest.Mock };
   };
   let queue: { add: jest.Mock };
@@ -23,8 +23,8 @@ describe('NotificationsService', () => {
       notification: {
         create: jest.fn().mockResolvedValue({ id: 'notification-1' }),
       },
-      userLoginMethod: { findFirst: jest.fn() },
-      user: {
+      accountLoginMethod: { findFirst: jest.fn() },
+      profile: {
         findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn().mockResolvedValue(null),
       },
@@ -46,7 +46,7 @@ describe('NotificationsService', () => {
       await service.dispatch({
         eventType: 'company.approved',
         channel: NotificationChannel.EMAIL,
-        recipientUserId: 'owner-1',
+        recipientProfileId: 'owner-1',
         recipientAddress: 'owner@example.com',
         subject: 'Approved',
         body: 'Your company was approved.',
@@ -56,7 +56,7 @@ describe('NotificationsService', () => {
         data: {
           eventType: 'company.approved',
           channel: NotificationChannel.EMAIL,
-          recipientUserId: 'owner-1',
+          recipientProfileId: 'owner-1',
           recipientAddress: 'owner@example.com',
           subject: 'Approved',
           body: 'Your company was approved.',
@@ -89,7 +89,7 @@ describe('NotificationsService', () => {
       });
     });
 
-    it('stores null for the optional recipientUserId and subject when omitted', async () => {
+    it('stores null for the optional recipientProfileId and subject when omitted', async () => {
       await service.dispatch({
         eventType: 'reservation.created',
         channel: NotificationChannel.SMS,
@@ -99,7 +99,7 @@ describe('NotificationsService', () => {
 
       expect(prisma.notification.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
-          recipientUserId: null,
+          recipientProfileId: null,
           subject: null,
         }),
       });
@@ -164,43 +164,43 @@ describe('NotificationsService', () => {
     });
   });
 
-  describe('findUserEmail', () => {
+  describe('findProfileEmail', () => {
     it("returns the user's contact email (where notifications go)", async () => {
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.profile.findUnique.mockResolvedValue({
         contactEmail: 'owner@example.com',
       });
 
-      const email = await service.findUserEmail('owner-1');
+      const email = await service.findProfileEmail('owner-1');
 
       expect(email).toBe('owner@example.com');
-      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      expect(prisma.profile.findUnique).toHaveBeenCalledWith({
         where: { id: 'owner-1' },
         select: { contactEmail: true },
       });
     });
 
     it('does not depend on a password login (a social-only user still has one)', async () => {
-      prisma.user.findUnique.mockResolvedValue({
+      prisma.profile.findUnique.mockResolvedValue({
         contactEmail: 'kakao-user@example.com',
       });
 
-      await service.findUserEmail('social-user');
+      await service.findProfileEmail('social-user');
 
-      expect(prisma.userLoginMethod.findFirst).not.toHaveBeenCalled();
+      expect(prisma.accountLoginMethod.findFirst).not.toHaveBeenCalled();
     });
 
     it('returns null when the user has no contact email, or does not exist', async () => {
-      prisma.user.findUnique.mockResolvedValueOnce({ contactEmail: null });
-      expect(await service.findUserEmail('no-email')).toBeNull();
+      prisma.profile.findUnique.mockResolvedValueOnce({ contactEmail: null });
+      expect(await service.findProfileEmail('no-email')).toBeNull();
 
-      prisma.user.findUnique.mockResolvedValueOnce(null);
-      expect(await service.findUserEmail('ghost')).toBeNull();
+      prisma.profile.findUnique.mockResolvedValueOnce(null);
+      expect(await service.findProfileEmail('ghost')).toBeNull();
     });
   });
 
   describe('recipient finders', () => {
     it('findPlatformAdminIds returns active, non-deleted ADMIN ids', async () => {
-      prisma.user.findMany.mockResolvedValue([
+      prisma.profile.findMany.mockResolvedValue([
         { id: 'admin-1' },
         { id: 'admin-2' },
       ]);
@@ -209,10 +209,10 @@ describe('NotificationsService', () => {
         'admin-1',
         'admin-2',
       ]);
-      expect(prisma.user.findMany).toHaveBeenCalledWith({
+      expect(prisma.profile.findMany).toHaveBeenCalledWith({
         where: {
           role: { code: 'ADMIN' },
-          status: UserStatus.ACTIVE,
+          status: ProfileStatus.ACTIVE,
           deletedAt: null,
         },
         select: { id: true },
@@ -220,16 +220,16 @@ describe('NotificationsService', () => {
     });
 
     it("findCompanyOwnerIds returns that company's active OWNER ids", async () => {
-      prisma.user.findMany.mockResolvedValue([{ id: 'owner-1' }]);
+      prisma.profile.findMany.mockResolvedValue([{ id: 'owner-1' }]);
 
       expect(await service.findCompanyOwnerIds('company-1')).toEqual([
         'owner-1',
       ]);
-      expect(prisma.user.findMany).toHaveBeenCalledWith({
+      expect(prisma.profile.findMany).toHaveBeenCalledWith({
         where: {
           companyId: 'company-1',
           role: { code: 'OWNER' },
-          status: UserStatus.ACTIVE,
+          status: ProfileStatus.ACTIVE,
           deletedAt: null,
         },
         select: { id: true },
@@ -240,7 +240,7 @@ describe('NotificationsService', () => {
       prisma.companyStore.findUnique.mockResolvedValue({
         companyId: 'company-1',
       });
-      prisma.user.findMany
+      prisma.profile.findMany
         .mockResolvedValueOnce([{ id: 'manager-1' }, { id: 'manager-2' }]) // the branch's managers
         .mockResolvedValueOnce([{ id: 'owner-1' }]); // the owners
 
@@ -253,11 +253,11 @@ describe('NotificationsService', () => {
         where: { id: 'corner-1' },
         select: { companyId: true },
       });
-      expect(prisma.user.findMany).toHaveBeenNthCalledWith(1, {
+      expect(prisma.profile.findMany).toHaveBeenNthCalledWith(1, {
         where: {
           companyStoreId: 'corner-1',
           role: { code: 'MANAGER' },
-          status: UserStatus.ACTIVE,
+          status: ProfileStatus.ACTIVE,
           deletedAt: null,
         },
         select: { id: true },
@@ -268,7 +268,7 @@ describe('NotificationsService', () => {
       prisma.companyStore.findUnique.mockResolvedValue({
         companyId: 'company-1',
       });
-      prisma.user.findMany
+      prisma.profile.findMany
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([{ id: 'owner-1' }]);
 
@@ -281,23 +281,23 @@ describe('NotificationsService', () => {
       prisma.companyStore.findUnique.mockResolvedValue(null);
 
       expect(await service.findCornerRecipientIds('ghost')).toEqual([]);
-      expect(prisma.user.findMany).not.toHaveBeenCalled();
+      expect(prisma.profile.findMany).not.toHaveBeenCalled();
     });
   });
 
-  describe('notifyUsers', () => {
+  describe('notifyProfiles', () => {
     const message = { subject: 'Hello', body: 'Body' };
 
     beforeEach(() => {
       // Every user has an email derived from their id, except 'no-email'.
       jest
-        .spyOn(service, 'findUserEmail')
-        .mockImplementation(async (userId: string) =>
-          userId === 'no-email' ? null : `${userId}@example.com`,
+        .spyOn(service, 'findProfileEmail')
+        .mockImplementation(async (profileId: string) =>
+          profileId === 'no-email' ? null : `${profileId}@example.com`,
         );
       jest.spyOn(service, 'dispatch').mockResolvedValue(undefined);
       // Each profile belongs to the account "account-of-<profile id>".
-      prisma.user.findMany.mockImplementation(
+      prisma.profile.findMany.mockImplementation(
         async (args: { where: { id: { in: string[] } } }) =>
           args.where.id.in.map((id) => ({
             id: id,
@@ -307,8 +307,8 @@ describe('NotificationsService', () => {
     });
 
     it('dispatches one EMAIL per user with the rendered message', async () => {
-      await service.notifyUsers({
-        userIds: ['manager-1', 'owner-1'],
+      await service.notifyProfiles({
+        profileIds: ['manager-1', 'owner-1'],
         eventType: 'order.created',
         message: message,
       });
@@ -316,7 +316,7 @@ describe('NotificationsService', () => {
       expect(service.dispatch).toHaveBeenCalledWith({
         eventType: 'order.created',
         channel: NotificationChannel.EMAIL,
-        recipientUserId: 'manager-1',
+        recipientProfileId: 'manager-1',
         recipientAddress: 'manager-1@example.com',
         subject: 'Hello',
         body: 'Body',
@@ -324,7 +324,7 @@ describe('NotificationsService', () => {
       expect(service.dispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           channel: NotificationChannel.EMAIL,
-          recipientUserId: 'owner-1',
+          recipientProfileId: 'owner-1',
         }),
       );
     });
@@ -335,13 +335,13 @@ describe('NotificationsService', () => {
         { accountId: 'account-of-owner-1', token: 'owner-laptop' },
       ]);
 
-      await service.notifyUsers({
-        userIds: ['owner-1'],
+      await service.notifyProfiles({
+        profileIds: ['owner-1'],
         eventType: 'order.created',
         message: message,
       });
 
-      expect(prisma.user.findMany).toHaveBeenCalledWith({
+      expect(prisma.profile.findMany).toHaveBeenCalledWith({
         where: { id: { in: ['owner-1'] } },
         select: { id: true, accountId: true },
       });
@@ -350,7 +350,7 @@ describe('NotificationsService', () => {
         expect(service.dispatch).toHaveBeenCalledWith({
           eventType: 'order.created',
           channel: NotificationChannel.PUSH,
-          recipientUserId: 'owner-1',
+          recipientProfileId: 'owner-1',
           recipientAddress: token,
           subject: 'Hello',
           body: 'Body',
@@ -365,8 +365,8 @@ describe('NotificationsService', () => {
         { accountId: 'account-of-owner-1', token: 'owner-phone' },
       ]);
 
-      await service.notifyUsers({
-        userIds: ['owner-1'],
+      await service.notifyProfiles({
+        profileIds: ['owner-1'],
         eventType: 'order.created',
         message: message,
         data: { cornerId: 'corner-1', orderId: 'order-1' },
@@ -391,8 +391,8 @@ describe('NotificationsService', () => {
     it('a user with no devices still gets the email', async () => {
       devices.findTokens.mockResolvedValue([]);
 
-      await service.notifyUsers({
-        userIds: ['owner-1'],
+      await service.notifyProfiles({
+        profileIds: ['owner-1'],
         eventType: 'order.created',
         message: message,
       });
@@ -408,8 +408,8 @@ describe('NotificationsService', () => {
         { accountId: 'account-of-no-email', token: 'their-phone' },
       ]);
 
-      await service.notifyUsers({
-        userIds: ['no-email'],
+      await service.notifyProfiles({
+        profileIds: ['no-email'],
         eventType: 'order.created',
         message: message,
       });
@@ -424,8 +424,8 @@ describe('NotificationsService', () => {
     });
 
     it('notifies a person only once even if listed twice (manager who is also the owner)', async () => {
-      await service.notifyUsers({
-        userIds: ['owner-1', 'owner-1'],
+      await service.notifyProfiles({
+        profileIds: ['owner-1', 'owner-1'],
         eventType: 'order.created',
         message: message,
       });
@@ -435,30 +435,30 @@ describe('NotificationsService', () => {
     });
 
     it('never notifies the actor, on any channel', async () => {
-      await service.notifyUsers({
-        userIds: ['manager-1', 'owner-1'],
-        excludeUserId: 'manager-1',
+      await service.notifyProfiles({
+        profileIds: ['manager-1', 'owner-1'],
+        excludeProfileId: 'manager-1',
         eventType: 'order.created',
         message: message,
       });
 
       expect(service.dispatch).toHaveBeenCalledTimes(1);
       expect(service.dispatch).toHaveBeenCalledWith(
-        expect.objectContaining({ recipientUserId: 'owner-1' }),
+        expect.objectContaining({ recipientProfileId: 'owner-1' }),
       );
       expect(devices.findTokens).toHaveBeenCalledWith(['account-of-owner-1']);
     });
 
     it('does nothing — not even a device lookup — for an empty recipient list', async () => {
-      await service.notifyUsers({
-        userIds: ['manager-1'],
-        excludeUserId: 'manager-1', // the only recipient was the actor
+      await service.notifyProfiles({
+        profileIds: ['manager-1'],
+        excludeProfileId: 'manager-1', // the only recipient was the actor
         eventType: 'order.created',
         message: message,
       });
 
       expect(service.dispatch).not.toHaveBeenCalled();
-      expect(prisma.user.findMany).not.toHaveBeenCalled();
+      expect(prisma.profile.findMany).not.toHaveBeenCalled();
       expect(devices.findTokens).not.toHaveBeenCalled();
     });
 
@@ -468,8 +468,8 @@ describe('NotificationsService', () => {
         { accountId: 'account-of-manager-1', token: 'manager-phone' },
       ]);
 
-      await service.notifyUsers({
-        userIds: ['owner-1', 'manager-1'],
+      await service.notifyProfiles({
+        profileIds: ['owner-1', 'manager-1'],
         eventType: 'order.created',
         message: message,
       });
@@ -477,7 +477,7 @@ describe('NotificationsService', () => {
       const pushes = (service.dispatch as jest.Mock).mock.calls
         .map((call) => call[0])
         .filter((call) => call.channel === NotificationChannel.PUSH)
-        .map((call) => [call.recipientUserId, call.recipientAddress]);
+        .map((call) => [call.recipientProfileId, call.recipientAddress]);
       expect(pushes).toEqual([
         ['owner-1', 'owner-phone'],
         ['manager-1', 'manager-phone'],
@@ -490,7 +490,7 @@ describe('NotificationsService', () => {
 
     beforeEach(() => {
       jest.spyOn(service, 'dispatch').mockResolvedValue(undefined);
-      prisma.userLoginMethod.findFirst.mockResolvedValue({
+      prisma.accountLoginMethod.findFirst.mockResolvedValue({
         email: 'owner@example.com',
       });
       devices.findTokens.mockResolvedValue([
@@ -506,7 +506,7 @@ describe('NotificationsService', () => {
         message: message,
       });
 
-      expect(prisma.userLoginMethod.findFirst).toHaveBeenCalledWith({
+      expect(prisma.accountLoginMethod.findFirst).toHaveBeenCalledWith({
         where: { accountId: 'account-1', method: 'local' },
         select: { email: true },
       });
@@ -540,7 +540,7 @@ describe('NotificationsService', () => {
     });
 
     it('an account with no password login gets the push only', async () => {
-      prisma.userLoginMethod.findFirst.mockResolvedValue(null);
+      prisma.accountLoginMethod.findFirst.mockResolvedValue(null);
 
       await service.notifyAccount({
         accountId: 'account-1',

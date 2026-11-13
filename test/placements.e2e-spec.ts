@@ -26,8 +26,8 @@ describe('Product Placement (e2e)', () => {
   let cornerId: string;
   let placementId: number;
 
-  let managerUserId: string;
-  let staffUserId: string;
+  let managerProfileId: string;
+  let staffProfileId: string;
 
   const auth = (token: string): [string, string] => [
     'Authorization',
@@ -35,7 +35,7 @@ describe('Product Placement (e2e)', () => {
   ];
 
   // register a company → ADMIN approves it → owner logs in
-  // users.phone is unique across the shared DB: suite 04's own block
+  // accounts.phone is unique across the shared DB: suite 04's own block
   const nextPhone = testPhones(4);
 
   const registerCompany = async (n: number) => {
@@ -91,12 +91,12 @@ describe('Product Placement (e2e)', () => {
         phoneVerificationToken: token,
       })
       .expect(201);
-    const user = await prisma.user.findFirst({
+    const profile = await prisma.profile.findFirst({
       where: { account: { loginMethods: { some: { email: email } } } },
     });
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
-      .patch(`/users/${user!.id}/approve`)
+      .patch(`/profiles/${profile!.id}/approve`)
       .set(...auth(ownerToken))
       .send({ roleId: role!.id, cornerId: null })
       .expect(200);
@@ -106,7 +106,7 @@ describe('Product Placement (e2e)', () => {
       .expect(201);
     return {
       access: login.body.accessToken as string,
-      userId: user!.id as string,
+      profileId: profile!.id as string,
     };
   };
 
@@ -144,7 +144,7 @@ describe('Product Placement (e2e)', () => {
       'MANAGER',
       'manager',
     );
-    managerUserId = mgr.userId;
+    managerProfileId = mgr.profileId;
     const stf = await registerMember(
       c1.joinCode,
       ownerAccess,
@@ -152,7 +152,7 @@ describe('Product Placement (e2e)', () => {
       'staff',
     );
     staffAccess = stf.access;
-    staffUserId = stf.userId;
+    staffProfileId = stf.profileId;
     const other = await registerMember(
       c1.joinCode,
       ownerAccess,
@@ -219,12 +219,12 @@ describe('Product Placement (e2e)', () => {
         .expect(201)
     ).body.id;
     await request(http)
-      .put(`/users/${managerUserId}/branch`)
+      .put(`/profiles/${managerProfileId}/branch`)
       .set(...auth(ownerAccess))
       .send({ cornerId: cornerId })
       .expect(200);
     await request(http)
-      .put(`/users/${staffUserId}/branch`)
+      .put(`/profiles/${staffProfileId}/branch`)
       .set(...auth(ownerAccess))
       .send({ cornerId: cornerId })
       .expect(200);

@@ -2,8 +2,8 @@ import { Body, Controller, Get, Post } from '@nestjs/common';
 import { Public } from './decorators/public.decorator';
 import { RegisterDto } from './dto/register.dto';
 import { AuthService } from './auth.service';
-import { CurrentUser } from './decorators/current-user.decorator';
-import type { AuthUser } from './types/auth-user';
+import { CurrentProfile } from './decorators/current-profile.decorator';
+import type { AuthProfile } from './types/auth-profile';
 import { RegisterMemberDto } from './dto/register-member.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
@@ -20,8 +20,8 @@ export class AuthController {
   }
 
   @Get('me')
-  me(@CurrentUser() user: AuthUser) {
-    return user;
+  me(@CurrentProfile() profile: AuthProfile) {
+    return profile;
   }
 
   @Public()
@@ -43,7 +43,7 @@ export class AuthController {
   }
 
   @Post('logout')
-  logout(@CurrentUser() user: AuthUser, @Body() dto: LogoutDto) {
-    return this.authService.logout(user.accountId, dto);
+  logout(@CurrentProfile() profile: AuthProfile, @Body() dto: LogoutDto) {
+    return this.authService.logout(profile.accountId, dto);
   }
 }

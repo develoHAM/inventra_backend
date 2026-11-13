@@ -4,27 +4,27 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { OwnershipService } from './ownership.service';
-import { AuthUser } from '../auth/types/auth-user';
-import { UserStatus } from '../generated/prisma/enums';
+import { AuthProfile } from '../auth/types/auth-profile';
+import { ProfileStatus } from '../generated/prisma/enums';
 
 describe('OwnershipService', () => {
   let service: OwnershipService;
 
-  const member: AuthUser = {
+  const member: AuthProfile = {
     id: 'u1',
     accountId: 'account-of-u1',
     companyId: 'company-1',
     roleId: 3,
     roleCode: 'MANAGER',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
-  const admin: AuthUser = {
+  const admin: AuthProfile = {
     id: 'admin',
     accountId: 'account-of-admin',
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',
-    status: UserStatus.ACTIVE,
+    status: ProfileStatus.ACTIVE,
   };
 
   beforeEach(() => {
