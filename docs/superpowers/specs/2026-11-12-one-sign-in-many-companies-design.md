@@ -9,6 +9,8 @@
 
 Nothing here may assume piece 3, but nothing here may block it (see "Built for piece 3").
 
+> **Naming (since Task 1b, 2026-11-13).** An **Account** (`accounts`) is the sign-in; a **Profile** (`profiles`, model `Profile`) is the person in one company. The old `users` table *is* today's `profiles` (renamed, same rows and ids), `user_login_methods` is `account_login_methods`, every `*_user_id` that points at a profile is `*_profile_id`, `AuthUser` is `AuthProfile`, and the `/users/…` routes are `/profiles/…` (login methods: `/accounts/me/login-methods`). "Why" below describes the model before this piece, in its own names; the rest uses today's.
+
 ---
 
 ## Why
@@ -86,26 +88,26 @@ Calls marked *(my call)* are mine and can be rejected.
 - `id` (uuid), `phone` (unique among non-deleted accounts; **nullable**, because the seeded platform admin has none), `last_profile_id` (nullable: which company to open at sign-in), `created_at`, `updated_at`, `deleted_at` (soft-delete convention; piece 3 uses it).
 - Owns: login methods, sessions (refresh tokens), devices.
 
-**Kept: `users`, now the company profile** *(my call: keep the table and its ids)*
+**Kept: `users`, now the company profile — renamed `profiles` in Task 1b** *(my call: keep the table and its ids)*
 - Gains `account_id` (FK → `accounts`, required after migration).
 - Loses `phone` (moved to `accounts`).
-- Keeps everything company-shaped: `name`, `profile_image_url`, `contact_email`, `biography`, `status`, `company_id`, `role_id`, `company_store_id`, per-user permission overrides, and every "recorded by" relation (orders, audits, transactions, reservations, history, soft-delete actors…). **Keeping `users` as the profile means no company-side code or foreign key changes.**
+- Keeps everything company-shaped: `name`, `profile_image_url`, `contact_email`, `biography`, `status`, `company_id`, `role_id`, `company_store_id`, per-profile permission overrides (`profile_permissions`), and every "recorded by" relation (orders, audits, transactions, reservations, history, soft-delete actors…). **Keeping `users` as the profile means no company-side code or foreign key changes.**
 - **At most one current profile per company:** a partial unique index on `(account_id, company_id) WHERE deleted_at IS NULL AND status <> 'DEACTIVATED'` *(my call)*. Only a left or closed profile (piece 3: DEACTIVATED) frees the slot, so rejoining after leaving creates a fresh one. `SUSPENDED` and `REJECTED` keep holding it, so a suspension can't be dodged by rejoining and a rejected request can't simply be resent; whoever later builds suspension or rejection decides how those end (a follow-up migration if the predicate must change). Nothing sets those two statuses today. Write the predicate with `raw()` exactly as Postgres normalizes it (STATUS.md gotcha), or `migrate dev` will drift forever.
 - The platform admin's profile has `company_id = NULL`. NULLs are distinct in a Postgres unique index, so the rule above doesn't touch it.
 
 **Moved to the account**
-- `user_login_methods.user_id` → `account_id`. The identity and local-email unique rules stay; `(user_id, method)` becomes `(account_id, method)`.
+- `user_login_methods.user_id` → `account_id` (the table is `account_login_methods` since Task 1b). The identity and local-email unique rules stay; `(user_id, method)` becomes `(account_id, method)`.
 - `refresh_tokens.user_id` → `account_id`.
 - `device_tokens.user_id` → `account_id`.
 
-**Unchanged:** `phone_verifications`, `email_verifications`, `social_signup_tickets`, `social_nonces` (keyed by phone/email, not by user); `notifications.recipient_user_id` (a notification is about a company, so it stays on the profile).
+**Unchanged:** `phone_verifications`, `email_verifications`, `social_signup_tickets`, `social_nonces` (keyed by phone/email, not by user); `notifications.recipient_profile_id` (a notification is about a company, so it stays on the profile).
 
 ### Tokens, the guard and switching
 
 - **Terms used below.** *The open profile* is the profile a token names, whatever its status the guard accepts (`ACTIVE` or `PENDING_APPROVAL`). A profile *with status ACTIVE* is spelled out as such.
 - **Every access token names the account, and the open profile when there is one** *(my call)*. A brand-new account with no company yet gets a token with no profile.
-- **`AuthUser.id` stays the profile id**, so every existing service (`caller.id`, `caller.companyId`, `caller.roleCode`, `caller.companyStoreId`) keeps working untouched. `AuthUser` gains `accountId`.
-- **The guard** (`JwtAuthGuard`, which already reloads the user on every request) loads the profile named by the token, checks that it belongs to the token's account, that neither is deleted, and that the profile's status is in `CAN_AUTHENTICATE`.
+- **`AuthProfile.id` stays the profile id**, so every existing service (`caller.id`, `caller.companyId`, `caller.roleCode`, `caller.companyStoreId`) keeps working untouched. `AuthProfile` carries `accountId`.
+- **The guard** (`JwtAuthGuard`, which already reloads the profile on every request) loads the profile named by the token, checks that it belongs to the token's account, that neither is deleted, and that the profile's status is in `CAN_AUTHENTICATE`.
 - **Two kinds of route** *(my call)*:
   - **Company routes** (everything that exists today except sign-in) require an open profile. A profile-less token gets 403 there. As today, `PermissionsGuard` still refuses any profile whose status isn't `ACTIVE` on routes with `@RequirePermissions`, so a waiting profile can use only the unpermissioned ones: its own name, contact email and photo (so the "you've been approved" email can reach it) and `GET /auth/me`.
   - **Account routes** (my companies, join, create, switch, login methods, devices, sign-out, `GET /auth/me`) work with or without a profile.
@@ -128,10 +130,10 @@ Calls marked *(my call)* are mine and can be rejected.
 | `POST /me/companies` | the account | `{ companyName, taxId, ownerName }` → a company plus a `PENDING_APPROVAL` **OWNER** profile, `COMPANY_REGISTERED` emitted; the admin approves with `PATCH /companies/:id/approve` (unchanged). **409 while this account already has a company waiting for approval** (a `PENDING_APPROVAL` OWNER profile; the user's decision). Race-safe *(my call)*: lock the account row by writing it, then count, so two creates at once give one 201 and one 409 |
 | `POST /auth/switch` | the account | See above |
 | `GET /auth/me` | the account | The account (phone, login methods summary) plus the open profile, if any |
-| `PATCH /users/me` | the open profile (waiting ones too) | Change this company's `name` *(my call: needed because names now differ per company)* |
-| `PUT /users/me/contact-email` | the open profile (waiting ones too) | Set this company's contact email, **proven by an emailed code** (the existing `/auth/email/start|confirm` flow) *(my call)* |
-| `POST /users/me/avatar…` | the open profile (waiting ones too) | Unchanged path (no permission needed, as today); the photo is now this company's |
-| `/users/me/login-methods…`, `POST /auth/find-id`, `POST /auth/reset-password`, `/devices` | the account | Unchanged paths; now act on the account |
+| `PATCH /profiles/me` | the open profile (waiting ones too) | Change this company's `name` *(my call: needed because names now differ per company)* |
+| `PUT /profiles/me/contact-email` | the open profile (waiting ones too) | Set this company's contact email, **proven by an emailed code** (the existing `/auth/email/start|confirm` flow) *(my call)* |
+| `POST /profiles/me/avatar…` | the open profile (waiting ones too) | Was `/users/me/avatar…` (renamed in Task 1b); no permission needed, as today; the photo is now this company's |
+| `/accounts/me/login-methods…` (was `/users/me/login-methods…`, renamed in Task 1b), `POST /auth/find-id`, `POST /auth/reset-password`, `/devices` | the account | Now act on the account |
 | `POST /auth/register`, `POST /auth/register/member` | — | **Removed** *(my call: there's no production; the two-step flow replaces them, and the e2e helpers move to it)* |
 
 Everything else (members, corners, orders, history…) is unchanged and runs as the open profile.
@@ -148,7 +150,7 @@ Everything else (members, corners, orders, history…) is unchanged and runs as 
 
 - Every company-side read is per profile, as today, so a company only ever sees its own profiles.
 - An approver sees the pending profile in their company only, never the person's other companies.
-- **The phone is the one shared field.** It belongs to the account, and the member list (`MEMBER_SELECT.phone`) shows it, so every company sees the same number.
+- **The phone is the one shared field.** It belongs to the account, and the member list (`PROFILE_SELECT.phone`) shows it, so every company sees the same number.
 
 ### Migration (existing data)
 

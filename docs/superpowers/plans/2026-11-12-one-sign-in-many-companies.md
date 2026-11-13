@@ -11,8 +11,8 @@
 **Goal:** One sign-in per person with a separate profile per company: switch companies without a password, get every company's notifications, and join or create companies from an existing sign-in.
 
 **Architecture:**
-- A new `accounts` table holds the phone, login methods, sessions (refresh tokens) and devices. `users` stays as the per-company profile, so every company-side relation and service keeps working.
-- Access tokens name the account and, when one is open, the profile. `AuthUser.id` stays the profile id. A new `@AccountRoute()` marks the routes that work without a profile.
+- A new `accounts` table holds the phone, login methods, sessions (refresh tokens) and devices. `users` stays as the per-company profile, so every company-side relation and service keeps working. **Task 1b renamed it:** the profile is `Profile` (`profiles`), the sign-in stays `Account`.
+- Access tokens name the account and, when one is open, the profile. `AuthProfile.id` stays the profile id. A new `@AccountRoute()` marks the routes that work without a profile.
 - A new `src/accounts/` module owns account lookups, the company list, joining and creating. `AuthModule` imports it, never the reverse.
 
 **Tech Stack:** NestJS 11 · Prisma 7 (pg adapter, `partialIndexes` preview) · PostgreSQL · `@nestjs/jwt` · `@nestjs/event-emitter` + the BullMQ notification queue · class-validator · Jest + supertest.
@@ -24,7 +24,7 @@
 **Accounts and profiles**
 - An account's `phone` is unique among non-deleted accounts and nullable (the seeded admin has none). Every real signup requires a verified phone.
 - **Openable** profile = not deleted, status `ACTIVE` or `PENDING_APPROVAL` (the existing `CAN_AUTHENTICATE`). Only openable profiles are listed, opened or switched to.
-- At most one profile per account per company that isn't `DEACTIVATED`: partial unique index `UQ_users_account_company` on `(account_id, company_id) WHERE deleted_at IS NULL AND status <> 'DEACTIVATED'`.
+- At most one profile per account per company that isn't `DEACTIVATED`: partial unique index `UQ_profiles_account_company` on `(account_id, company_id) WHERE deleted_at IS NULL AND status <> 'DEACTIVATED'`.
 - Name, photo and contact email live on the profile; phone, login methods, sessions and devices on the account.
 - The platform admin (an account with an `ADMIN` profile) can't join or create companies.
 
@@ -57,7 +57,7 @@
 - **Migrated accounts reuse their user's id** (`accounts.id = users.id` for every existing row), so the data step is plain copies. New accounts get fresh uuids.
 - **Join-attempt limit:** at most **5 unknown invite codes per account per rolling hour** → 429. Failed attempts are rows in a new `company_join_attempts` table (counted like `phone_verifications`). A correct code doesn't count. A burst of concurrent wrong codes may overshoot the limit by a few, which is acceptable for a guessing brake.
 - **Switching is `POST /auth/switch { refreshToken, profileId }`** and rotates the session, so the new refresh token remembers the new profile.
-- **Auth responses rename `user` to `profile`** (the user's decision): the open profile (`{ id, status, companyId, roleId } | null`), plus `companies: CompanyProfileView[]`. Every e2e read of `body.user` moves to `body.profile` in Task 2.
+- **Auth responses rename `user` to `profile`** (the user's decision): the open profile (`{ id, status, companyId, roleId } | null`), plus `companies: CompanyProfileView[]`. The `user` → `profile` key rename (and every e2e `body.user` → `body.profile`) already happened in Task 1b; Task 2 adds `companies`.
 - **Pushes carry `profileId`** (the app switches by it) and, for a profile in a company, `companyId`. The push title becomes `${companyName} · ${subject}`. Email subjects are unchanged.
 - **Signup takes no contact email.** Social signup credentials carry only `signupToken`; contact emails are set per profile (Task 5). Migrated users keep theirs.
 
@@ -80,18 +80,20 @@
 | `src/accounts/accounts.{module,service}.ts` | `createAccount`, `findProfileToOpen`, `listCompanies`, `isPlatformAdmin` |
 | `src/accounts/account-companies.service.ts`, `accounts.controller.ts`, `dto/{join-company,create-company}.dto.ts` | `GET /me/companies`, `POST /me/companies/join`, `POST /me/companies` |
 | `src/accounts/company-profile-view.ts` | `CompanyProfileView`, `OpenProfileSummary` |
-| `src/auth/{auth.service,auth.controller,token.service}.ts`, `guards/jwt-auth.guard.ts`, `decorators/{account-route,current-account}.decorator.ts`, `types/{auth-user,auth-account}.ts`, `dto/{signup,switch-profile}.dto.ts` | sessions, signup, switch, `GET /auth/me` |
+| `src/auth/{auth.service,auth.controller,token.service}.ts`, `guards/jwt-auth.guard.ts`, `decorators/{account-route,current-account}.decorator.ts`, `types/{auth-profile,auth-account}.ts`, `dto/{signup,switch-profile}.dto.ts` | sessions, signup, switch, `GET /auth/me` |
 | `src/auth/account-recovery.service.ts`, `src/phone-verification/phone-verification.service.ts` | phone lookups on the account |
 | `src/social-auth/social-auth.service.ts`, `login-methods/login-methods.{service,controller}.ts` | identities and login methods on the account |
 | `src/devices/devices.{service,controller}.ts` | devices on the account |
 | `src/notifications/{notifications.service,notifications.listener,notification-events}.ts` | push via account devices, `notifyAccount`, per-recipient push data and title |
-| `src/members/member-view.ts`, `members.service.ts` | the member list's phone comes from the account |
-| `src/users/{users.controller,users.service,users.module}.ts`, `dto/{update-profile,set-contact-email}.dto.ts` | `PATCH /users/me`, `PUT /users/me/contact-email` |
+| `src/profiles/profile-view.ts`, `profiles.service.ts` | the member list's phone comes from the account |
+| `src/profiles/{my-profile.controller,my-profile.service,profiles.module}.ts`, `dto/{update-profile,set-contact-email}.dto.ts` | `PATCH /profiles/me`, `PUT /profiles/me/contact-email` |
 | `test/helpers/accounts.ts` (new), all 16 e2e suites, `test/accounts.e2e-spec.ts` (new, `testPhones(17)`) | shared signup helpers; the part-timer story |
 
 ---
 
-### Task 1: The sign-in moves off `users` (behaviour unchanged)
+### Task 1: The sign-in moves off `users` (behaviour unchanged) — ✅ done (`5b24f87`)
+
+> Written in the names of its time (`User` = the profile). Task 1b renamed them.
 
 Every existing endpoint keeps its request and response. `register` and `register/member` now create an account plus one profile.
 
@@ -205,14 +207,17 @@ Every existing endpoint keeps its request and response. `register` and `register
 - [ ] **Step 9 (human):** Run `npm run test:e2e`. Expected: all green. Record the `Tests:` line as reported.
 - [ ] **Step 10:** Commit: `refactor(accounts)!: the sign-in (phone, login methods, sessions, devices) moves to accounts`.
 
+### Task 1b: Names — the company profile is a Profile — ✅ done (`7c05860`)
+
+Added mid-track (the user's decision): **Account** = the sign-in, **Profile** = the person in one company; no model is called "User". `User→Profile` (`profiles`), `UserPermission→ProfilePermission`, `UserStatus→ProfileStatus`, `UserLoginMethod→AccountLoginMethod` (`account_login_methods`), `*_user_id` → `*_profile_id`; `AuthUser→AuthProfile`, `@CurrentUser→@CurrentProfile`, `request.user→request.profile`, `notifyUsers→notifyProfiles`, `findUserEmail→findProfileEmail`; `src/members` + the avatar service → `src/profiles` (`ProfilesService`, `ProfilePhotosService`), companies + join code → `src/companies`; routes `/users/…` → `/profiles/…`, login methods → `/accounts/me/login-methods`; permissions `users.*` → `profiles.*`; auth responses' `user` key → `profile`. Migration `20261113120851_profiles`: hand-written RENAMEs + the permission-code UPDATE. 1083 unit + 227 e2e green.
+
 ### Task 2: Tokens name the account and the open profile; switching
 
 **Files:**
 - Create:
   - `src/auth/decorators/account-route.decorator.ts`, `src/auth/decorators/current-account.decorator.ts`
   - `src/auth/types/auth-account.ts`, `src/auth/dto/switch-profile.dto.ts`
-  - `src/accounts/company-profile-view.ts`
-- Modify: `src/auth/{token.service,auth.service,auth.controller}.ts`, `src/auth/guards/jwt-auth.guard.ts`, `src/social-auth/social-auth.service.ts`, `src/accounts/accounts.service.ts`; tag the account-level routes (`/auth/logout`, `/auth/me`, `/auth/switch`, `/devices`, `/users/me/login-methods`) with `@AccountRoute()`
+- Modify: `src/auth/{token.service,auth.service,auth.controller}.ts`, `src/auth/guards/jwt-auth.guard.ts`, `src/social-auth/social-auth.service.ts`, `src/accounts/{accounts.service,company-profile-view}.ts`; tag the account-level routes (`/auth/logout`, `/auth/me`, `/auth/switch`, `/devices`, `/accounts/me/login-methods`) with `@AccountRoute()`
 - Test: the specs of each; `test/auth.e2e-spec.ts`
 
 **Interfaces:**
@@ -220,10 +225,10 @@ Every existing endpoint keeps its request and response. `register` and `register
 - **Produces:**
   - `TokenService.signAccess(session: { accountId: string; profileId: string | null }): Promise<string>` and `verifyAccess(token): Promise<{ accountId: string; profileId: string | null }>`.
   - `signRefresh(accountId: string)` and `verifyRefresh(token): Promise<{ accountId: string; jti: string }>`.
-  - `type AuthAccount = { accountId: string; profileId: string | null }`, set on `request.account` for every authenticated request. `request.user` (`AuthUser`) is set only when a profile is open.
+  - `type AuthAccount = { accountId: string; profileId: string | null }`, set on `request.account` for every authenticated request. `request.profile` (`AuthProfile`) is set only when a profile is open.
   - `@AccountRoute()` (metadata key `ACCOUNT_ROUTE_KEY`) and `@CurrentAccount()` (returns `AuthAccount`).
-  - `OpenProfileSummary = { id: string; status: UserStatus; companyId: string | null; roleId: number | null }`.
-  - `CompanyProfileView = { profileId: string; status: UserStatus; name: string; profileImageUrl: string | null; role: { code: string; name: string } | null; company: { id: string; name: string } | null }`. The photo is presigned, like `MemberView`.
+  - `OpenProfileSummary = { id: string; status: ProfileStatus; companyId: string | null; roleId: number | null }` (exists since Task 1, `OPEN_PROFILE_SELECT`).
+  - `CompanyProfileView = { profileId: string; status: ProfileStatus; name: string; profileImageUrl: string | null; role: { code: string; name: string } | null; company: { id: string; name: string } | null }`. The photo is presigned, like `ProfileView`.
   - `SessionResponse = { accessToken: string; refreshToken: string; profile: OpenProfileSummary | null; companies: CompanyProfileView[] }`, returned by `login`, `refresh`, social `LOGGED_IN` and `switchProfile`.
   - `AccountsService.listCompanies(accountId: string): Promise<CompanyProfileView[]>`. Openable profiles only, oldest first.
   - `AuthService.switchProfile(account: AuthAccount, dto: { refreshToken: string; profileId: string }): Promise<SessionResponse>`.
@@ -233,10 +238,10 @@ Every existing endpoint keeps its request and response. `register` and `register
     - `signAccess({ accountId: 'a', profileId: 'p' })` signs `{ sub: 'a', pid: 'p', type: 'access' }`; a `null` profile omits `pid`.
     - `verifyAccess` returns `profileId: null` when `pid` is absent.
   - **Guard:**
-    - A profile token sets `request.user` (`id` = profile, `accountId`) and `request.account`.
+    - A profile token sets `request.profile` (`id` = profile, `accountId`) and `request.account`.
     - **Review Focus 1:** a `pid` whose profile belongs to another account → 401.
     - A deleted account → 401, and a non-openable profile → 401.
-    - **Review Focus 2:** a profile-less token on an unmarked route → 403 `Choose a company first`; on an `@AccountRoute()` it passes with `request.user` undefined.
+    - **Review Focus 2:** a profile-less token on an unmarked route → 403 `Choose a company first`; on an `@AccountRoute()` it passes with `request.profile` undefined.
     - `@Public()` routes are unchanged.
   - **Login and social login:**
     - The response is a `SessionResponse` with `companies` from `listCompanies`.
@@ -250,7 +255,7 @@ Every existing endpoint keeps its request and response. `register` and `register
     - A refresh token of another account → 401.
     - Success revokes the old refresh row, writes a new one with the new `profileId`, sets `accounts.lastProfileId`, and returns the new session.
     - A revoked refresh token triggers reuse detection.
-  - **`GET /auth/me`** returns `{ accountId, phone, profile: AuthUser | null }`.
+  - **`GET /auth/me`** returns `{ accountId, phone, profile: AuthProfile | null }`.
   - **`listCompanies`:** only openable profiles, with role and company, the photo presigned.
   - **E2e:**
     - `POST /auth/login` returns `companies` with one entry.
@@ -259,7 +264,7 @@ Every existing endpoint keeps its request and response. `register` and `register
 - [ ] **Step 2:** Run `npm test`. Expected: FAIL.
 - [ ] **Step 3 (user):** Code to the interfaces.
   - Add `POST /auth/switch` (`@AccountRoute()`, body `SwitchProfileDto { refreshToken: string; profileId: uuid }`).
-  - `GET /auth/me`, `POST /auth/logout`, `/devices` and `/users/me/login-methods` become `@AccountRoute()` and read **`@CurrentAccount()`**, not `@CurrentUser()`. `request.user` is absent when no profile is open.
+  - `GET /auth/me`, `POST /auth/logout`, `/devices` and `/accounts/me/login-methods` become `@AccountRoute()` and read **`@CurrentAccount()`**, not `@CurrentProfile()`. `request.profile` is absent when no profile is open.
 - [ ] **Step 4:** Run `npm test`, `npm run build`, `npm run lint`. Expected: PASS.
 - [ ] **Step 5 (human):** Run `npm run test:e2e`. Expected: all green.
 - [ ] **Step 6:** Commit: `feat(auth): tokens name the account and the open profile; switch companies`.
@@ -286,7 +291,7 @@ Every existing endpoint keeps its request and response. `register` and `register
   - DTO spec: social credentials with `contactEmail` are refused as non-whitelisted.
   - **E2e:**
     - Sign up with a password → `GET /auth/me` shows `profile: null`.
-    - `GET /users` → 403 `Choose a company first`.
+    - `GET /profiles` → 403 `Choose a company first`.
     - Logging in with that password → `profile: null`, `companies: []`.
     - The same phone signing up again → 409.
 - [ ] **Step 2:** Run `npm test`. Expected: FAIL.
@@ -304,7 +309,7 @@ Every existing endpoint keeps its request and response. `register` and `register
 - Test: `account-companies.service.spec.ts`, the DTO specs, `accounts.controller.spec.ts`, `test/accounts.e2e-spec.ts` (new, `testPhones(17)`)
 
 **Interfaces:**
-- **Consumes:** `AuthAccount`, `@AccountRoute()`, `CompanyProfileView`, `generateUniqueJoinCode` (`src/users/join-code.ts`), the `MEMBER_JOIN_REQUESTED` and `COMPANY_REGISTERED` events.
+- **Consumes:** `AuthAccount`, `@AccountRoute()`, `CompanyProfileView`, `generateUniqueJoinCode` (`src/companies/join-code.ts`), the `MEMBER_JOIN_REQUESTED` and `COMPANY_REGISTERED` events.
 - **Produces:**
   - Prisma `CompanyJoinAttempt { id; accountId; createdAt }` (`company_join_attempts`, index `[accountId, createdAt]`).
   - `JoinCompanyDto { joinCode (the existing join-code rules); name (string, not empty) }` and `CreateCompanyDto { companyName; taxId; ownerName }` (today's `RegisterDto` field rules).
@@ -319,8 +324,8 @@ Every existing endpoint keeps its request and response. `register` and `register
     - The admin → 403.
     - With ≥ 5 attempts in the window → 429, and no company lookup happens.
     - An unknown or deleted company's code inserts an attempt row → 404 `Invalid join code`.
-    - Otherwise `user.createManyAndReturn({ data: [{ accountId, companyId, name, status: PENDING_APPROVAL, roleId: null }], skipDuplicates: true })`. `[]` → 409 `You already belong to or are waiting for this company`.
-    - `MEMBER_JOIN_REQUESTED { companyId, memberUserId }` is emitted after the write.
+    - Otherwise `profile.createManyAndReturn({ data: [{ accountId, companyId, name, status: PENDING_APPROVAL, roleId: null }], skipDuplicates: true })`. `[]` → 409 `You already belong to or are waiting for this company`.
+    - `MEMBER_JOIN_REQUESTED { companyId, memberProfileId }` is emitted after the write.
     - A correct code records no attempt.
   - **`create`:**
     - The admin → 403.
@@ -349,17 +354,18 @@ Every existing endpoint keeps its request and response. `register` and `register
 ### Task 5: Each company's name and contact email
 
 **Files:**
-- Create: `src/users/dto/{update-profile,set-contact-email}.dto.ts`
-- Modify: `src/users/{users.controller,users.service,users.module}.ts`
-- Test: `users.service.spec`, the DTO specs, `test/accounts.e2e-spec.ts`
+- Create: `src/profiles/{my-profile.controller,my-profile.service}.ts`, `src/profiles/dto/{update-profile,set-contact-email}.dto.ts`
+- Modify: `src/profiles/profiles.module.ts`
+- Test: `my-profile.service.spec.ts`, the DTO specs, `test/accounts.e2e-spec.ts`
 
 **Interfaces:**
 - **Consumes:** `EmailVerificationService.consume(transaction, { token, email })`, `normalizeEmail`.
 - **Produces:**
   - `UpdateProfileDto { name: string (not empty, ≤ 100) }`, `SetContactEmailDto { email (normalized); emailVerificationToken }`.
   - `type ProfileSummary = { id: string; name: string; contactEmail: string | null }`.
-  - `UsersService.updateMyProfile(caller: AuthUser, dto): Promise<ProfileSummary>` (`PATCH /users/me`).
-  - `UsersService.setMyContactEmail(caller: AuthUser, dto): Promise<ProfileSummary>` (`PUT /users/me/contact-email`).
+  - `MyProfileService.updateMyProfile(caller: AuthProfile, dto): Promise<ProfileSummary>` (`PATCH /profiles/me`).
+  - `MyProfileService.setMyContactEmail(caller: AuthProfile, dto): Promise<ProfileSummary>` (`PUT /profiles/me/contact-email`).
+  - `MyProfileController` (`@Controller('profiles/me')`); the photo routes stay on `ProfilePhotosController` (`/profiles/me/avatar…`).
   - Neither route has a permission decorator, so a waiting profile can use both.
 
 - [ ] **Step 1 (Claude):** Write the tests.
@@ -370,10 +376,10 @@ Every existing endpoint keeps its request and response. `register` and `register
     - After approval, the `member.approved` email arrives at that address (Mailpit).
     - The account's other profile keeps its own name and email.
 - [ ] **Step 2:** Run `npm test`. Expected: FAIL.
-- [ ] **Step 3 (user):** Code to the interfaces. `UsersModule` imports `EmailVerificationModule`.
+- [ ] **Step 3 (user):** Code to the interfaces. `ProfilesModule` imports `EmailVerificationModule`.
 - [ ] **Step 4:** Run `npm test`, `npm run build`, `npm run lint`. Expected: PASS.
 - [ ] **Step 5 (human):** Run `npm run test:e2e`. Expected: all green.
-- [ ] **Step 6:** Commit: `feat(users): each company's name and contact email`.
+- [ ] **Step 6:** Commit: `feat(profiles): each company's name and contact email`.
 
 ### Task 6: Notifications from every company
 
@@ -383,7 +389,7 @@ Every existing endpoint keeps its request and response. `register` and `register
 
 **Interfaces:**
 - **Consumes:** Task 1's account-based `findTokens`.
-- **Produces:** `notifyUsers` push rows for each recipient profile × each device of its account. The push data is `{ ...input.data, profileId: <recipient profile id>, ...(profile has a company ? { companyId: <its id> } : {}) }`, and the push subject is `${company.name} · ${message.subject}` when the profile has a company (otherwise unchanged). Email rows are unchanged.
+- **Produces:** `notifyProfiles` push rows for each recipient profile × each device of its account. The push data is `{ ...input.data, profileId: <recipient profile id>, ...(profile has a company ? { companyId: <its id> } : {}) }`, and the push subject is `${company.name} · ${message.subject}` when the profile has a company (otherwise unchanged). Email rows are unchanged.
 
 - [ ] **Step 1 (Claude):** Write the tests.
   - Two recipients in one company whose accounts have one and two devices → three push rows, each with its recipient's `profileId` and the company's `companyId`, and the subject prefixed with the company name.
