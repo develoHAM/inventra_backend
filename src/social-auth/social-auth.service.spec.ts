@@ -15,7 +15,7 @@ describe('SocialAuthService', () => {
   let nonces: { issue: jest.Mock; consume: jest.Mock };
   let verifiers: Record<string, { verify: jest.Mock; disconnect: jest.Mock }>;
   let tickets: { create: jest.Mock };
-  let auth: { issueSessionFor: jest.Mock };
+  let auth: { startSession: jest.Mock };
   let accounts: { findProfileToOpen: jest.Mock };
 
   const encryptionKey = Buffer.alloc(32, 7).toString('base64');
@@ -57,6 +57,17 @@ describe('SocialAuthService', () => {
     roleId: 2,
     ...changes,
   });
+  /** The account's company list, as AuthService.startSession returns it. */
+  const companies = [
+    {
+      profileId: 'profile-1',
+      status: ProfileStatus.ACTIVE,
+      name: '김사장',
+      profileImageUrl: null,
+      role: { code: 'OWNER', name: 'Owner' },
+      company: { id: 'company-1', name: '카페 A' },
+    },
+  ];
   const kakaoBody = {
     provider: 'kakao' as const,
     credential: { idToken: 'kakao-id-token' },
@@ -97,10 +108,17 @@ describe('SocialAuthService', () => {
       }),
     };
     auth = {
-      issueSessionFor: jest.fn().mockResolvedValue({
-        accessToken: 'our-access',
-        refreshToken: 'our-refresh',
-      }),
+      // the shared "sign in to this account" step: our tokens + the company list
+      startSession: jest
+        .fn()
+        .mockImplementation((_accountId: string, profile: unknown) =>
+          Promise.resolve({
+            accessToken: 'our-access',
+            refreshToken: 'our-refresh',
+            profile: profile,
+            companies: companies,
+          }),
+        ),
     };
     accounts = {
       findProfileToOpen: jest.fn().mockResolvedValue(openProfile()),
@@ -110,7 +128,7 @@ describe('SocialAuthService', () => {
     service = new SocialAuthService(
       prisma as any,
       nonces as any,
-      verifiers as any,
+      verifiers,
       tickets as any,
       auth as any,
       accounts as any,
@@ -250,7 +268,7 @@ describe('SocialAuthService', () => {
     it('issues no session', async () => {
       await service.signIn(kakaoBody);
 
-      expect(auth.issueSessionFor).not.toHaveBeenCalled();
+      expect(auth.startSession).not.toHaveBeenCalled();
     });
   });
 
@@ -259,7 +277,7 @@ describe('SocialAuthService', () => {
       prisma.accountLoginMethod.findUnique.mockResolvedValue(knownLogin());
     });
 
-    it('issues OUR tokens, in the same shape as password login', async () => {
+    it('issues OUR session, in the same shape as password login (a SessionResponse)', async () => {
       await expect(service.signIn(kakaoBody)).resolves.toEqual({
         status: 'LOGGED_IN',
         accessToken: 'our-access',
@@ -270,10 +288,11 @@ describe('SocialAuthService', () => {
           companyId: 'company-1',
           roleId: 2,
         },
+        companies: companies,
       });
-      expect(auth.issueSessionFor).toHaveBeenCalledWith(
+      expect(auth.startSession).toHaveBeenCalledWith(
         'account-1',
-        'profile-1',
+        openProfile(),
       );
       expect(tickets.create).not.toHaveBeenCalled();
     });
@@ -334,18 +353,20 @@ describe('SocialAuthService', () => {
         new UnauthorizedException('Account cannot sign in'),
       );
       expect(accounts.findProfileToOpen).not.toHaveBeenCalled();
-      expect(auth.issueSessionFor).not.toHaveBeenCalled();
+      expect(auth.startSession).not.toHaveBeenCalled();
       expect(prisma.accountLoginMethod.update).not.toHaveBeenCalled();
     });
 
-    it('no profile can be opened (suspended, rejected, left…) → 401, no session, nothing updated', async () => {
+    it('no profile can be opened (no company yet, or every one left…) → signs in with profile null', async () => {
       accounts.findProfileToOpen.mockResolvedValue(null);
 
-      await expect(service.signIn(kakaoBody)).rejects.toThrow(
-        new UnauthorizedException('Account cannot sign in'),
-      );
-      expect(auth.issueSessionFor).not.toHaveBeenCalled();
-      expect(prisma.accountLoginMethod.update).not.toHaveBeenCalled();
+      await expect(service.signIn(kakaoBody)).resolves.toMatchObject({
+        status: 'LOGGED_IN',
+        profile: null,
+      });
+      expect(auth.startSession).toHaveBeenCalledWith('account-1', null);
+      // a real sign-in: the login method is still stamped
+      expect(prisma.accountLoginMethod.update).toHaveBeenCalled();
     });
   });
 });

@@ -3,22 +3,17 @@ import { HTTP_CODE_METADATA } from '@nestjs/common/constants';
 import { DevicesController } from './devices.controller';
 import { REQUIRE_PERMISSIONS_KEY } from '../authorization/decorators/require-permissions.decorator';
 import { IS_PUBLIC_KEY } from '../auth/decorators/public.decorator';
-import { AuthProfile } from '../auth/types/auth-profile';
-import { DevicePlatform, ProfileStatus } from '../generated/prisma/enums';
+import { ACCOUNT_ROUTE_KEY } from '../auth/decorators/account-route.decorator';
+import type { AuthAccount } from '../auth/types/auth-account';
+import { DevicePlatform } from '../generated/prisma/enums';
 
 describe('DevicesController', () => {
   let controller: DevicesController;
   let devices: { register: jest.Mock; unregister: jest.Mock };
 
-  // a PENDING user may register a device: they should get the approval push
-  const caller: AuthProfile = {
-    id: 'profile-1',
-    accountId: 'account-1',
-    companyId: 'company-1',
-    roleId: null,
-    roleCode: null,
-    status: ProfileStatus.PENDING_APPROVAL,
-  };
+  // a device belongs to the sign-in: it works with no company open, so a
+  // brand-new account still gets the "you've been approved" push
+  const caller: AuthAccount = { accountId: 'account-1', profileId: null };
 
   const metadata = (key: string, method: keyof DevicesController) =>
     Reflect.getMetadata(key, DevicesController.prototype[method]);
@@ -38,6 +33,12 @@ describe('DevicesController', () => {
       expect(metadata(IS_PUBLIC_KEY, method)).toBeUndefined();
     },
   );
+
+  it('the whole controller is an @AccountRoute(): no company needs to be open', () => {
+    expect(Reflect.getMetadata(ACCOUNT_ROUTE_KEY, DevicesController)).toBe(
+      true,
+    );
+  });
 
   it.each(['register', 'unregister'] as const)('%s answers 204', (method) => {
     expect(metadata(HTTP_CODE_METADATA, method)).toBe(HttpStatus.NO_CONTENT);

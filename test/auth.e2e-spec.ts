@@ -194,8 +194,15 @@ describe('Auth & Authorization (e2e)', () => {
       .set('Authorization', `Bearer ${memberAccess}`)
       .expect(200);
 
-    expect(me.body.id).toBe(memberId);
-    expect(me.body.status).toBe('ACTIVE');
+    // the sign-in, and the company profile it has open
+    const memberProfile = await prisma.profile.findUniqueOrThrow({
+      where: { id: memberId },
+      select: { accountId: true },
+    });
+    expect(me.body.accountId).toBe(memberProfile.accountId);
+    expect(me.body.phone).toEqual(expect.any(String));
+    expect(me.body.profile.id).toBe(memberId);
+    expect(me.body.profile.status).toBe('ACTIVE');
   });
 
   it('10. refresh rotates the token; replaying the old one is caught as reuse (401)', async () => {
@@ -238,5 +245,92 @@ describe('Auth & Authorization (e2e)', () => {
       .patch(`/companies/${companyId}/approve`)
       .set('Authorization', `Bearer ${body.accessToken}`)
       .expect(403);
+  });
+
+  describe('one sign-in, many companies', () => {
+    const switchTo = (
+      session: { accessToken: string; refreshToken: string },
+      profileId: string,
+    ) =>
+      request(http)
+        .post('/auth/switch')
+        .set('Authorization', `Bearer ${session.accessToken}`)
+        .send({ refreshToken: session.refreshToken, profileId: profileId });
+
+    it('13. login answers the company dropdown: one company, the open one', async () => {
+      const { body } = await loginMember().expect(201);
+
+      expect(body.profile.id).toBe(memberId);
+      expect(body.companies).toEqual([
+        {
+          profileId: memberId,
+          status: 'ACTIVE',
+          name: member.name,
+          profileImageUrl: null,
+          role: { code: 'STAFF', name: expect.any(String) },
+          company: { id: companyId, name: owner.companyName },
+        },
+      ]);
+    });
+
+    it('14. switching (here to the same company) rotates the session: new tokens, the old refresh token refused', async () => {
+      const { body: session } = await loginMember().expect(201);
+
+      const switched = await switchTo(session, memberId).expect(201);
+
+      expect(switched.body).toEqual({
+        accessToken: expect.any(String),
+        refreshToken: expect.any(String),
+        profile: expect.objectContaining({ id: memberId }),
+        companies: [expect.objectContaining({ profileId: memberId })],
+      });
+      expect(switched.body.refreshToken).not.toBe(session.refreshToken);
+
+      // the new access token has the profile open
+      const me = await request(http)
+        .get('/auth/me')
+        .set('Authorization', `Bearer ${switched.body.accessToken}`)
+        .expect(200);
+      expect(me.body.profile.id).toBe(memberId);
+
+      // the choice is remembered for the next sign-in
+      const account = await prisma.account.findUniqueOrThrow({
+        where: { id: me.body.accountId },
+        select: { lastProfileId: true },
+      });
+      expect(account.lastProfileId).toBe(memberId);
+
+      // the old refresh token was spent by the switch
+      await request(http)
+        .post('/auth/refresh')
+        .send({ refreshToken: session.refreshToken })
+        .expect(401);
+    });
+
+    it("15. switching to another account's profile → 404, and the session is untouched", async () => {
+      const ownerProfile = await prisma.profile.findFirstOrThrow({
+        where: {
+          account: { loginMethods: { some: { email: owner.ownerEmail } } },
+        },
+        select: { id: true },
+      });
+      const { body: session } = await loginMember().expect(201);
+
+      const refused = await switchTo(session, ownerProfile.id).expect(404);
+      expect(refused.body.message).toBe('Company profile not found');
+
+      // nothing was revoked: the same refresh token still works
+      await request(http)
+        .post('/auth/refresh')
+        .send({ refreshToken: session.refreshToken })
+        .expect(201);
+    });
+
+    it('16. switch needs a sign-in (401 without a token)', async () => {
+      await request(http)
+        .post('/auth/switch')
+        .send({ refreshToken: 'whatever', profileId: memberId })
+        .expect(401);
+    });
   });
 });

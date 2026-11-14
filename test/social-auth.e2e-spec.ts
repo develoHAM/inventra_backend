@@ -239,9 +239,11 @@ describe('Social login (e2e)', () => {
           passwordHash: null,
         }),
       ]);
-      joinCode = (await prisma.company.findFirstOrThrow({
-        where: { createdByProfileId: ownerProfileId },
-      }))!.joinCode;
+      joinCode = (
+        await prisma.company.findFirstOrThrow({
+          where: { createdByProfileId: ownerProfileId },
+        })
+      ).joinCode;
     });
 
     it('the same ticket cannot be spent twice → 400', async () => {
@@ -273,10 +275,11 @@ describe('Social login (e2e)', () => {
         accessToken: expect.any(String),
         refreshToken: expect.any(String),
         profile: expect.objectContaining({ id: ownerProfileId }),
+        companies: [expect.objectContaining({ profileId: ownerProfileId })],
       });
       ownerAccess = response.body.accessToken;
       const me = await authed(ownerAccess).get('/auth/me').expect(200);
-      expect(me.body.id).toBe(ownerProfileId);
+      expect(me.body.profile.id).toBe(ownerProfileId);
     });
 
     it('a nonce works once: replaying it → 401', async () => {

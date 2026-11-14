@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { JwtModule } from '@nestjs/jwt';
+import { JwtModule, JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { TokenService } from './token.service';
 
@@ -15,6 +15,7 @@ const mockConfig = {
 
 describe('TokenService', () => {
   let tokenService: TokenService;
+  let jwt: JwtService; // to read a token's payload without verifying it
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -26,36 +27,79 @@ describe('TokenService', () => {
     }).compile();
 
     tokenService = moduleRef.get(TokenService);
+    jwt = moduleRef.get(JwtService);
   });
 
-  it('signs an access token that verifies', async () => {
-    const token = await tokenService.signAccess('profile-123');
-    const payload = await tokenService.verifyAccess(token);
-    expect(payload.sub).toBe('profile-123');
+  describe('access tokens name the account and, when one is open, the profile', () => {
+    it('signs { sub: accountId, pid: profileId, type: access }', async () => {
+      const token = await tokenService.signAccess({
+        accountId: 'account-1',
+        profileId: 'profile-1',
+      });
+
+      expect(jwt.decode(token)).toMatchObject({
+        sub: 'account-1',
+        pid: 'profile-1',
+        type: 'access',
+      });
+    });
+
+    it('verifies back to { accountId, profileId }', async () => {
+      const token = await tokenService.signAccess({
+        accountId: 'account-1',
+        profileId: 'profile-1',
+      });
+
+      await expect(tokenService.verifyAccess(token)).resolves.toEqual({
+        accountId: 'account-1',
+        profileId: 'profile-1',
+      });
+    });
+
+    it('no profile open → the token carries no pid at all, and verifies to profileId null', async () => {
+      const token = await tokenService.signAccess({
+        accountId: 'account-1',
+        profileId: null,
+      });
+
+      expect(jwt.decode(token)).not.toHaveProperty('pid');
+      await expect(tokenService.verifyAccess(token)).resolves.toEqual({
+        accountId: 'account-1',
+        profileId: null,
+      });
+    });
   });
 
   it('rejects a refresh token when verified as an access token', async () => {
     // NOTE: signRefresh returns an object — destructure the token string out of it
-    const { token } = await tokenService.signRefresh('profile-123');
+    const { token } = await tokenService.signRefresh('account-1');
     // signed with the REFRESH secret → access verification (different secret) fails
     await expect(tokenService.verifyAccess(token)).rejects.toThrow();
   });
 
-  it('verifyRefresh returns sub and jti', async () => {
-    const { token } = await tokenService.signRefresh('profile-123');
+  it('a refresh token names only the account (the session row remembers the profile)', async () => {
+    const { token } = await tokenService.signRefresh('account-1');
+
+    const payload = jwt.decode<Record<string, unknown>>(token);
+    expect(payload).toMatchObject({ sub: 'account-1', type: 'refresh' });
+    expect(payload).not.toHaveProperty('pid');
+  });
+
+  it('verifyRefresh returns accountId and jti', async () => {
+    const { token } = await tokenService.signRefresh('account-1');
     const payload = await tokenService.verifyRefresh(token);
-    expect(payload.sub).toBe('profile-123');
+    expect(payload.accountId).toBe('account-1');
     expect(payload).toHaveProperty('jti');
   });
 
   it('returns a jti that matches the jti embedded in the token', async () => {
-    const { token, jti } = await tokenService.signRefresh('profile-123');
+    const { token, jti } = await tokenService.signRefresh('account-1');
     const payload = await tokenService.verifyRefresh(token);
     expect(payload.jti).toBe(jti);
   });
 
   it('returns an expiresAt Date in the future', async () => {
-    const { expiresAt } = await tokenService.signRefresh('profile-123');
+    const { expiresAt } = await tokenService.signRefresh('account-1');
     expect(expiresAt).toBeInstanceOf(Date);
     expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
   });

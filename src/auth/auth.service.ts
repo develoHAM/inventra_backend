@@ -37,6 +37,11 @@ import type { SpentSignupTicket } from '../social-auth/signup-tickets/signup-tic
 import { EmailVerificationService } from '../email-verification/email-verification.service';
 import { normalizeEmail } from '../common/email';
 import { AccountsService } from '../accounts/accounts.service';
+import type { OpenProfileSummary } from '../accounts/company-profile-view';
+import type { SessionResponse } from './types/session-response';
+import type { AuthAccount } from './types/auth-account';
+import type { AuthProfile } from './types/auth-profile';
+import { SwitchProfileDto } from './dto/switch-profile.dto';
 
 /** What a signup creates for its credentials, decided inside the transaction. */
 interface SignupLogin {
@@ -59,13 +64,16 @@ export class AuthService {
   ) {}
 
   /**
-   * Our access + refresh tokens: a session of the account, with this
-   * company profile open. Every way of signing in ends here.
+   * Our access + refresh tokens: a new session of the account, with this
+   * company profile open (null = none). The refresh row remembers which.
    */
-  async issueSessionFor(accountId: string, profileId: string) {
-    const accessToken = await this.tokenService.signAccess(profileId);
+  private async issueSessionFor(accountId: string, profileId: string | null) {
+    const accessToken = await this.tokenService.signAccess({
+      accountId: accountId,
+      profileId: profileId,
+    });
     const { token: refreshToken, expiresAt } =
-      await this.tokenService.signRefresh(profileId);
+      await this.tokenService.signRefresh(accountId);
 
     await this.prisma.refreshToken.create({
       data: {
@@ -77,6 +85,25 @@ export class AuthService {
     });
 
     return { accessToken: accessToken, refreshToken: refreshToken };
+  }
+
+  /**
+   * Every way of signing in ends here (password and social login, refresh,
+   * switch): a new session with this profile open (or none), plus the
+   * company dropdown. The caller has already decided WHICH profile.
+   */
+  async startSession(
+    accountId: string,
+    profile: OpenProfileSummary | null,
+  ): Promise<SessionResponse> {
+    const tokens = await this.issueSessionFor(accountId, profile?.id ?? null);
+    const companies = await this.accounts.listCompanies(accountId);
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      profile: profile,
+      companies: companies,
+    };
   }
 
   /** null = no live account has this phone yet (a fast pre-check; the insert decides). */
@@ -402,7 +429,7 @@ export class AuthService {
     };
   }
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto): Promise<SessionResponse> {
     const { email, password } = dto;
 
     const loginMethod = await this.prisma.accountLoginMethod.findFirst({
@@ -426,32 +453,35 @@ export class AuthService {
       throw new UnauthorizedException('Account cannot sign in');
 
     // Which company opens: the last one used, if it can still be opened.
+    // None at all (no company yet, or every one left) still signs in: the
+    // app shows join-or-create.
     const profile = await this.accounts.findProfileToOpen(
       account.id,
       account.lastProfileId,
     );
-    if (!profile) throw new UnauthorizedException('Account cannot sign in');
-
-    const tokens = await this.issueSessionFor(account.id, profile.id);
-
-    return {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      profile: profile, // { id, status, companyId, roleId } of the open profile
-    };
+    return this.startSession(account.id, profile);
   }
 
-  async refresh(dto: RefreshDto) {
-    let payload;
+  /**
+   * The live session behind a refresh token, with its account. 401 for a
+   * bad, unknown or deleted-account token. A token that was ALREADY revoked
+   * means someone kept a copy (rotation hands out a new one each time): we
+   * can't tell the thief from the owner, so every session of the account
+   * ends.
+   */
+  private async findLiveSession(refreshToken: string) {
     try {
-      payload = await this.tokenService.verifyRefresh(dto.refreshToken);
-    } catch (error) {
+      await this.tokenService.verifyRefresh(refreshToken);
+    } catch {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
-    const tokenHash = this.tokenService.hashToken(dto.refreshToken);
+    const tokenHash = this.tokenService.hashToken(refreshToken);
     const stored = await this.prisma.refreshToken.findUnique({
       where: { tokenHash: tokenHash },
+      include: {
+        account: { select: { deletedAt: true, lastProfileId: true } },
+      },
     });
     if (!stored) throw new UnauthorizedException('Invalid refresh token');
 
@@ -463,23 +493,82 @@ export class AuthService {
       });
       throw new UnauthorizedException('Refresh token reuse detected');
     }
-    // Until profile-less sessions exist (switching, signup), every session
-    // has a profile open.
-    if (stored.profileId === null)
+    if (stored.account.deletedAt) {
       throw new UnauthorizedException('Invalid refresh token');
+    }
+    return stored;
+  }
 
+  /** Rotation: a refresh token works once; the next session gets a new one. */
+  private async revokeSession(tokenHash: string) {
     await this.prisma.refreshToken.update({
       where: { tokenHash: tokenHash },
       data: { revokedAt: new Date() },
     });
-    const tokens = await this.issueSessionFor(
-      stored.accountId,
-      stored.profileId,
+  }
+
+  async refresh(dto: RefreshDto): Promise<SessionResponse> {
+    const session = await this.findLiveSession(dto.refreshToken);
+
+    // Keep the session's company while it can still be opened. If it can't
+    // (left, suspended, deleted) — or none was open — choose the way sign-in
+    // does. Never a token for a profile that stopped being openable.
+    const kept =
+      session.profileId === null
+        ? null
+        : await this.accounts.findOpenableProfile(
+            session.accountId,
+            session.profileId,
+          );
+    const profile =
+      kept ??
+      (await this.accounts.findProfileToOpen(
+        session.accountId,
+        session.account.lastProfileId,
+      ));
+
+    await this.revokeSession(session.tokenHash);
+    return this.startSession(session.accountId, profile);
+  }
+
+  /**
+   * Open another of the caller's companies, without a password. Rotates the
+   * session (so a later refresh stays in the new company) and remembers the
+   * choice for the next sign-in.
+   */
+  async switchProfile(
+    account: AuthAccount,
+    dto: SwitchProfileDto,
+  ): Promise<SessionResponse> {
+    const session = await this.findLiveSession(dto.refreshToken);
+    if (session.accountId !== account.accountId) {
+      throw new UnauthorizedException('Invalid refresh token'); // not the caller's session
+    }
+
+    const profile = await this.accounts.findOpenableProfile(
+      account.accountId,
+      dto.profileId,
     );
-    return {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-    };
+    // checked BEFORE anything is revoked: a wrong id leaves the session as it was
+    if (!profile) throw new NotFoundException('Company profile not found');
+
+    await this.revokeSession(session.tokenHash);
+    // Only switching writes this: a refresh that had to fall back must not
+    // overwrite the company the person last CHOSE.
+    await this.prisma.account.update({
+      where: { id: account.accountId },
+      data: { lastProfileId: profile.id },
+    });
+    return this.startSession(account.accountId, profile);
+  }
+
+  /** GET /auth/me: the sign-in, and the company profile open (null = none). */
+  async me(account: AuthAccount, profile: AuthProfile | null) {
+    const { phone } = await this.prisma.account.findUniqueOrThrow({
+      where: { id: account.accountId },
+      select: { phone: true },
+    });
+    return { accountId: account.accountId, phone: phone, profile: profile };
   }
 
   async logout(accountId: string, dto: LogoutDto) {

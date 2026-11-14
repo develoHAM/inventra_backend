@@ -9,6 +9,14 @@ enum TokenType {
   REFRESH = 'refresh',
 }
 
+/** The claims we sign (absent = a token we didn't make; verify rejects it). */
+type TokenClaims = {
+  sub?: string;
+  pid?: string;
+  type?: TokenType;
+  jti?: string;
+};
+
 @Injectable()
 export class TokenService {
   constructor(
@@ -16,9 +24,14 @@ export class TokenService {
     private readonly config: ConfigService<Env, true>,
   ) {}
 
-  async signAccess(profileId: string) {
+  /**
+   * `sub` = the account (the person); `pid` = the company profile the
+   * session has open. No profile open → no `pid` claim at all.
+   */
+  async signAccess(session: { accountId: string; profileId: string | null }) {
     const payload = {
-      sub: profileId,
+      sub: session.accountId,
+      ...(session.profileId !== null ? { pid: session.profileId } : {}),
       type: TokenType.ACCESS,
     };
 
@@ -30,11 +43,12 @@ export class TokenService {
     return this.jwt.signAsync(payload, signOptions);
   }
 
-  async signRefresh(profileId: string) {
+  /** Names only the account: the session's row remembers which profile is open. */
+  async signRefresh(accountId: string) {
     const jti = randomUUID();
 
     const payload = {
-      sub: profileId,
+      sub: accountId,
       type: TokenType.REFRESH,
       jti: jti,
     };
@@ -46,12 +60,14 @@ export class TokenService {
 
     const token = await this.jwt.signAsync(payload, signOptions);
 
-    const { exp } = this.jwt.decode(token) as { exp: number }; // exp is seconds since epoch
+    const { exp } = this.jwt.decode(token); // exp is seconds since epoch
     return { token: token, jti: jti, expiresAt: new Date(exp * 1000) };
   }
 
-  async verifyAccess(token: string) {
-    const { sub, type } = await this.jwt.verifyAsync(token, {
+  async verifyAccess(
+    token: string,
+  ): Promise<{ accountId: string; profileId: string | null }> {
+    const { sub, pid, type } = await this.jwt.verifyAsync<TokenClaims>(token, {
       secret: this.config.get('JWT_ACCESS_SECRET'),
     });
 
@@ -59,11 +75,13 @@ export class TokenService {
 
     if (type !== TokenType.ACCESS) throw new Error('Wrong JWT type');
 
-    return { sub: sub };
+    return { accountId: sub, profileId: pid ?? null };
   }
 
-  async verifyRefresh(token: string) {
-    const { sub, type, jti } = await this.jwt.verifyAsync(token, {
+  async verifyRefresh(
+    token: string,
+  ): Promise<{ accountId: string; jti: string }> {
+    const { sub, type, jti } = await this.jwt.verifyAsync<TokenClaims>(token, {
       secret: this.config.get('JWT_REFRESH_SECRET'),
     });
 
@@ -71,7 +89,7 @@ export class TokenService {
 
     if (type !== TokenType.REFRESH) throw new Error('Wrong JWT type');
 
-    return { sub: sub, jti: jti };
+    return { accountId: sub, jti: jti };
   }
 
   hashToken(token: string) {

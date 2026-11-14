@@ -28,19 +28,27 @@
 | Notify | **Notifications** (email · SMS · push) + **account security** (OCTOMO phone verification · find ID · password reset) | ✅ complete (Slices 1a–4) |
 | Social | **Social login** (Kakao · Google · Facebook · Apple, native app-to-app) + **login methods** (link · add a password · unlink) | ✅ complete (Tasks 1–14) |
 | Members | **Roles & branches** (membership piece 1 of 3: promote/demote, move between branches, one branch per manager, change history, notifications) | ✅ complete (Tasks 1–8) |
-| Members | **One sign-in, many companies** (membership piece 2 of 3: a profile per company, switching, join/create from inside the app) | 🔨 Tasks 1, 1b done; Task 2 next |
+| Members | **One sign-in, many companies** (membership piece 2 of 3: a profile per company, switching, join/create from inside the app) | 🔨 Tasks 1, 1b, 2 done; Task 3 next |
 
-## Where we are right now — One sign-in, many companies (membership piece 2): Tasks 1 + 1b done
+## Where we are right now — One sign-in, many companies (membership piece 2): Tasks 1, 1b, 2 done
 
 Spec `docs/superpowers/specs/2026-11-12-one-sign-in-many-companies-design.md`, plan `docs/superpowers/plans/2026-11-12-one-sign-in-many-companies.md` (7 tasks, native execution: per task teach → reference code → user applies or asks Claude to → Claude tests → human runs migrate + e2e). Ledger `.superpowers/sdd/2026-11-12-one-sign-in-many-companies/progress.md` (git-ignored).
 
 - **Vocabulary:** **Account** = the sign-in (`accounts`: phone, login methods, sessions, devices). **Profile** = the person in one company (`profiles`: name, photo, contact email, role, branch, status). No model is called "User".
 - **Task 1** (`5b24f87`): the sign-in moved off the company profile onto `accounts` — phone, login methods, sessions (a refresh token also remembers the profile it has open) and devices. Behaviour unchanged. Migration `20261112162955_accounts` (hand-ordered expand → copy → contract; every migrated account reuses its profile's id).
 - **Task 1b**: names only — the company profile is a Profile. `User→Profile`, `UserPermission→ProfilePermission`, `UserStatus→ProfileStatus`, `UserLoginMethod→AccountLoginMethod` (`account_login_methods`); every `*_user_id` → `*_profile_id` (`*ByUser→*ByProfile`, `recipientProfileId`); `AuthUser→AuthProfile` (`{ id, accountId, … }`), `@CurrentUser→@CurrentProfile`, `request.user→request.profile`; `notifyUsers→notifyProfiles`, `findUserEmail→findProfileEmail`. Modules: `src/accounts` = the sign-in (unchanged), `src/profiles` = members + photos (`ProfilesService`, `ProfilePhotosService`), `src/companies` = companies + join code. **Routes** `/users`, `/users/:id/{approve,branch,role,history}`, `/users/me/avatar*` → `/profiles/…`; `/users/me/login-methods` → `/accounts/me/login-methods`. **Permissions** `users.*` → `profiles.*`. Auth responses' `user` key → `profile`. Photo keys `profiles/<id>/…`. Migration `20261113120851_profiles`: hand-written RENAMEs only (3 tables, enum, 19 columns, 3 primary keys, 25 foreign keys, 3 indexes) + the permission-code UPDATE — no row moves. Kept: "member" as the business word; end-user error copy.
-- **1083 unit tests green (76 suites) + 227 e2e green (16 suites)** — both **measured** 2026-11-13 after Task 1b (`Tests: 227 passed`, on a database rebuilt from all 28 migrations).
+- **Task 2**: tokens name the account and the open profile; switching.
+  - Access token `{ sub: accountId, pid?: profileId, type }` (no `pid` = no company open); refresh token `{ sub: accountId, jti, type }` — the `refresh_tokens` row remembers the open profile.
+  - `JwtAuthGuard` sets `request.account` (`AuthAccount { accountId, profileId | null }`) on every signed-in request and `request.profile` (`AuthProfile`) only when a company is open. One query either way: the profile **with its account's `deletedAt`**, or the account alone. 401: bad token, deleted account, a `pid` whose profile isn't the token's account's (Review Focus 1), deleted or non-openable profile. 403 `Choose a company first`: no company open on a route not marked `@AccountRoute()` (Review Focus 2).
+  - `@AccountRoute()` (`ACCOUNT_ROUTE_KEY`, like `@Public()`) + `@CurrentAccount()`: `GET /auth/me` (→ `{ accountId, phone, profile | null }`), `POST /auth/logout`, `POST /auth/switch`, `/devices`, `/accounts/me/login-methods` (the last two on the class).
+  - `SessionResponse { accessToken, refreshToken, profile | null, companies: CompanyProfileView[] }` from password login, social `LOGGED_IN`, refresh and switch, all through `AuthService.startSession(accountId, profile)`. **An account with no openable profile now signs in with `profile: null`** (deleted account still 401). Signup (`register`, `register/member`) keeps its old response until Task 3.
+  - Refresh (Review Focus 3): keeps the session's profile while `AccountsService.findOpenableProfile` finds it, else `findProfileToOpen(accountId, lastProfileId)`; a deleted account → 401. `POST /auth/switch { refreshToken, profileId }`: the session must be the caller's (401), the target openable and theirs (404 `Company profile not found`, nothing revoked), then rotate + write `accounts.last_profile_id` (only switching writes it).
+  - `AccountsService.listCompanies(accountId)`: openable profiles oldest first, role + company, photo presigned (`AccountsService` now injects the global `StorageService`).
+  - No e2e for the 403 yet: no API path makes a profile-less session until Task 3.
+- **1142 unit tests green (79 suites) + 231 e2e green (16 suites)** — both **measured** 2026-11-14 after Task 2 (`Tests: 231 passed`, on a database rebuilt from all 28 migrations).
 - The sections below are history: they use the names of their time (`users.*` permissions, `/users/:id/...` routes, `src/members`, `src/users`).
 
-**Next:** Task 2 — tokens name the account + the open profile, `POST /auth/switch`, `SessionResponse { accessToken, refreshToken, profile, companies }`.
+**Next:** Task 3 — signup creates only the sign-in (`POST /auth/signup`: an account with no profile; the app lands on join-or-create).
 
 ## Prior — Roles & branches complete (membership piece 1, Tasks 1–8)
 

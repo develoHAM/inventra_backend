@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageModule } from '../storage/storage.module';
+import { StorageService } from '../storage/storage.service';
 import { SocialAuthController } from './social-auth.controller';
 import { SocialAuthModule, buildSocialVerifiers } from './social-auth.module';
 import { SocialAuthService } from './social-auth.service';
@@ -178,10 +180,13 @@ describe('SocialAuthModule wiring', () => {
         }),
         EventEmitterModule.forRoot(),
         PrismaModule,
+        StorageModule, // global in the app; AccountsService presigns photos
         SocialAuthModule,
       ],
     })
       .overrideProvider(PrismaService)
+      .useValue({})
+      .overrideProvider(StorageService)
       .useValue({})
       .overrideModule(NotificationsModule)
       .useModule(StubNotificationsModule)

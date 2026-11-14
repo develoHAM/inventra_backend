@@ -211,7 +211,9 @@ Every existing endpoint keeps its request and response. `register` and `register
 
 Added mid-track (the user's decision): **Account** = the sign-in, **Profile** = the person in one company; no model is called "User". `User→Profile` (`profiles`), `UserPermission→ProfilePermission`, `UserStatus→ProfileStatus`, `UserLoginMethod→AccountLoginMethod` (`account_login_methods`), `*_user_id` → `*_profile_id`; `AuthUser→AuthProfile`, `@CurrentUser→@CurrentProfile`, `request.user→request.profile`, `notifyUsers→notifyProfiles`, `findUserEmail→findProfileEmail`; `src/members` + the avatar service → `src/profiles` (`ProfilesService`, `ProfilePhotosService`), companies + join code → `src/companies`; routes `/users/…` → `/profiles/…`, login methods → `/accounts/me/login-methods`; permissions `users.*` → `profiles.*`; auth responses' `user` key → `profile`. Migration `20261113120851_profiles`: hand-written RENAMEs + the permission-code UPDATE. 1083 unit + 227 e2e green.
 
-### Task 2: Tokens name the account and the open profile; switching
+### Task 2: Tokens name the account and the open profile; switching — ✅ done
+
+> As built: `AuthService.startSession(accountId, profile)` is the one place a `SessionResponse` is made (`issueSessionFor` became private); `AccountsService.findOpenableProfile(accountId, profileId)` (row or null) serves refresh and switch; refresh also refuses a deleted account; signup keeps its old response until Task 3; `/auth/switch` answers 201 like `/auth/login` and `/auth/refresh`. 1142 unit + 231 e2e green.
 
 **Files:**
 - Create:
@@ -277,7 +279,7 @@ Added mid-track (the user's decision): **Account** = the sign-in, **Profile** = 
 - Test: `auth.service.spec`, `src/auth/dto/signup.dto.spec.ts`, `test/auth.e2e-spec.ts`
 
 **Interfaces:**
-- **Consumes:** `createAccount`, `issueSessionFor(accountId, null)`, `SessionResponse`.
+- **Consumes:** `createAccount`, `AuthService.startSession(accountId, null)` (Task 2; returns the `SessionResponse`).
 - **Produces:**
   - `SignupDto { phone; phoneVerificationToken; credentials: PasswordCredentialsDto | SocialSignupCredentialsDto }`. `SocialSignupCredentialsDto` is `{ type: 'social'; signupToken }` with no contact-email fields. The phone rules are those of today's `RegisterMemberDto`.
   - `AuthService.signup(dto: SignupDto): Promise<SessionResponse>` behind `POST /auth/signup` (`@Public()`).
@@ -286,7 +288,7 @@ Added mid-track (the user's decision): **Account** = the sign-in, **Profile** = 
   - `signup` order:
     1. Inside one transaction: spend the `SIGNUP` phone token, then `createAccount(phone)` (`null` → 409 `Phone already registered`).
     2. The first login method on the account: a password login, or a spent signup ticket. A duplicate email or identity → 409, with the whole signup rolled back.
-    3. `issueSessionFor(accountId, null)`.
+    3. `startSession(accountId, null)`.
   - The response is `{ …tokens, profile: null, companies: [] }`.
   - DTO spec: social credentials with `contactEmail` are refused as non-whitelisted.
   - **E2e:**

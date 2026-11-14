@@ -1,17 +1,30 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { ACCOUNT_ROUTE_KEY } from '../decorators/account-route.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TokenService } from '../token.service';
-import { ProfileStatus } from '../../generated/prisma/enums';
 import { CAN_AUTHENTICATE } from '../auth.constants';
 import { AuthProfile } from '../types/auth-profile';
+import { AuthAccount } from '../types/auth-account';
 
+/**
+ * Every request, unless @Public(): who is it (the account), and which
+ * company profile is open (if any)? The token says; the database confirms,
+ * fresh each time, so a deleted account or a suspended profile is shut out
+ * on its very next request.
+ *
+ * - 401: no usable sign-in (bad token, deleted account, a profile that is
+ *   not this account's or can't be opened).
+ * - 403 "Choose a company first": signed in, no company open, and the route
+ *   is a company route (not marked @AccountRoute()).
+ */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   constructor(
@@ -21,12 +34,7 @@ export class JwtAuthGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
-
-    if (isPublic) {
+    if (this.isMarked(context, IS_PUBLIC_KEY)) {
       return true;
     }
 
@@ -39,16 +47,34 @@ export class JwtAuthGuard implements CanActivate {
 
     if (tokenType !== 'Bearer' || !token) throw new UnauthorizedException();
 
-    let tokenPayload;
+    let session: AuthAccount;
     try {
-      tokenPayload = await this.tokenService.verifyAccess(token);
+      session = await this.tokenService.verifyAccess(token);
     } catch {
       throw new UnauthorizedException();
     }
 
+    if (session.profileId === null) {
+      // Signed in, no company open: only the account has to be alive…
+      const account = await this.prisma.account.findUnique({
+        where: { id: session.accountId },
+        select: { deletedAt: true },
+      });
+      if (!account || account.deletedAt) throw new UnauthorizedException();
+
+      // …and the route must not need a company.
+      if (!this.isMarked(context, ACCOUNT_ROUTE_KEY)) {
+        throw new ForbiddenException('Choose a company first');
+      }
+
+      request.account = session;
+      return true;
+    }
+
+    // A company open: the profile, with its account's deletedAt, in one query.
     const profile = await this.prisma.profile.findUnique({
       where: {
-        id: tokenPayload.sub,
+        id: session.profileId,
       },
       select: {
         id: true,
@@ -63,11 +89,21 @@ export class JwtAuthGuard implements CanActivate {
             code: true,
           },
         },
+        account: {
+          select: {
+            deletedAt: true,
+          },
+        },
       },
     });
 
     if (
       !profile ||
+      // The pair must match. Our signature proves WE issued the token, not
+      // that the code which issued it was right: never act as a profile of
+      // another account, whatever the token says.
+      profile.accountId !== session.accountId ||
+      profile.account.deletedAt ||
       profile.deletedAt ||
       !CAN_AUTHENTICATE.includes(profile.status)
     )
@@ -83,8 +119,19 @@ export class JwtAuthGuard implements CanActivate {
       status: profile.status,
     };
 
+    request.account = session;
     request.profile = authenticatedProfile;
 
     return true;
+  }
+
+  /** Is this route (its handler, else its controller class) marked with `key`? */
+  private isMarked(context: ExecutionContext, key: string): boolean {
+    return (
+      this.reflector.getAllAndOverride<boolean>(key, [
+        context.getHandler(),
+        context.getClass(),
+      ]) === true
+    );
   }
 }

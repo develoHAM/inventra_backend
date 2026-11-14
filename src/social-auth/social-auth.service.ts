@@ -11,7 +11,7 @@ import { SocialNonceService } from './social-nonce.service';
 import { SignupTicketService } from './signup-tickets/signup-ticket.service';
 import type { SignupProfile } from './signup-tickets/signup-ticket.service';
 import type { SocialSignInDto } from './dto/social-sign-in.dto';
-import type { ProfileStatus } from '../generated/prisma/enums';
+import type { SessionResponse } from '../auth/types/session-response';
 import type {
   SocialIdentity,
   SocialIdentityVerifier,
@@ -19,17 +19,7 @@ import type {
 } from './verifiers/social-identity-verifier';
 
 export type SocialSignInResult =
-  | {
-      status: 'LOGGED_IN';
-      accessToken: string;
-      refreshToken: string;
-      profile: {
-        id: string;
-        status: ProfileStatus;
-        companyId: string | null;
-        roleId: number | null;
-      };
-    }
+  | ({ status: 'LOGGED_IN' } & SessionResponse)
   | {
       status: 'SIGNUP_REQUIRED';
       signupToken: string;
@@ -112,7 +102,7 @@ export class SocialAuthService {
     }
 
     // Known: the same rules as password login — open the last-used company,
-    // if it can still be opened.
+    // if it can still be opened; none openable still signs in.
     const account = login.account;
     if (account.deletedAt) {
       throw new UnauthorizedException('Account cannot sign in');
@@ -121,7 +111,6 @@ export class SocialAuthService {
       account.id,
       account.lastProfileId,
     );
-    if (!profile) throw new UnauthorizedException('Account cannot sign in');
 
     await this.prisma.accountLoginMethod.update({
       where: { id: login.id },
@@ -139,12 +128,7 @@ export class SocialAuthService {
       },
     });
 
-    const tokens = await this.auth.issueSessionFor(account.id, profile.id);
-    return {
-      status: 'LOGGED_IN',
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      profile: profile, // { id, status, companyId, roleId } of the open profile
-    };
+    const session = await this.auth.startSession(account.id, profile);
+    return { status: 'LOGGED_IN', ...session };
   }
 }

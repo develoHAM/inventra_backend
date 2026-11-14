@@ -7,13 +7,16 @@ import {
   Param,
   Post,
 } from '@nestjs/common';
-import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
-import type { AuthProfile } from '../auth/types/auth-profile';
+import { CurrentAccount } from '../auth/decorators/current-account.decorator';
+import { AccountRoute } from '../auth/decorators/account-route.decorator';
+import type { AuthAccount } from '../auth/types/auth-account';
 import { DevicesService } from './devices.service';
 import { RegisterDeviceDto } from './dto/register-device.dto';
 
 // Self-service: logged in, no permission needed — pending users too, so
-// the "you've been approved" push can reach them.
+// the "you've been approved" push can reach them. A device belongs to the
+// sign-in (it shows every company's pushes), so no company needs to be open.
+@AccountRoute()
 @Controller('devices')
 export class DevicesController {
   constructor(private readonly devices: DevicesService) {}
@@ -21,7 +24,7 @@ export class DevicesController {
   @Post()
   @HttpCode(HttpStatus.NO_CONTENT)
   register(
-    @CurrentProfile() caller: AuthProfile,
+    @CurrentAccount() caller: AuthAccount,
     @Body() dto: RegisterDeviceDto,
   ) {
     return this.devices.register(caller.accountId, {
@@ -33,7 +36,7 @@ export class DevicesController {
   @Delete(':token')
   @HttpCode(HttpStatus.NO_CONTENT)
   unregister(
-    @CurrentProfile() caller: AuthProfile,
+    @CurrentAccount() caller: AuthAccount,
     @Param('token') token: string,
   ) {
     return this.devices.unregister(caller.accountId, token);

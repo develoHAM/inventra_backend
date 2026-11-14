@@ -11,7 +11,8 @@ import { LoginMethodsController } from './login-methods.controller';
 import { LinkPasswordDto } from './dto/link-password.dto';
 import { IS_PUBLIC_KEY } from '../../auth/decorators/public.decorator';
 import { REQUIRE_PERMISSIONS_KEY } from '../../authorization/decorators/require-permissions.decorator';
-import type { AuthProfile } from '../../auth/types/auth-profile';
+import { ACCOUNT_ROUTE_KEY } from '../../auth/decorators/account-route.decorator';
+import type { AuthAccount } from '../../auth/types/auth-account';
 
 describe('LoginMethodsController', () => {
   let controller: LoginMethodsController;
@@ -22,7 +23,7 @@ describe('LoginMethodsController', () => {
     unlink: jest.Mock;
   };
 
-  const caller = { id: 'profile-1', accountId: 'account-1' } as AuthProfile;
+  const caller: AuthAccount = { accountId: 'account-1', profileId: null };
   const metadata = (key: string, method: keyof LoginMethodsController) =>
     Reflect.getMetadata(key, LoginMethodsController.prototype[method]);
 
@@ -34,6 +35,12 @@ describe('LoginMethodsController', () => {
       unlink: jest.fn().mockResolvedValue(undefined),
     };
     controller = new LoginMethodsController(loginMethods as any);
+  });
+
+  it('the whole controller is an @AccountRoute(): login methods belong to the sign-in, no company needed', () => {
+    expect(Reflect.getMetadata(ACCOUNT_ROUTE_KEY, LoginMethodsController)).toBe(
+      true,
+    );
   });
 
   it('lives under /accounts/me/login-methods', () => {
