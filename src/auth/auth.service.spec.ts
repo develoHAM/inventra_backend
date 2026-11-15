@@ -824,6 +824,213 @@ describe('AuthService', () => {
     });
   });
 
+  describe('signup (the sign-in only: an account and its first login method)', () => {
+    const passwordSignup = {
+      phone: '01055556666',
+      phoneVerificationToken: 'signup-phone-token',
+      credentials: {
+        type: 'password',
+        email: 'sam@acme.com',
+        password: 'password123',
+      },
+    };
+    const socialSignup = {
+      phone: '01055556666',
+      phoneVerificationToken: 'signup-phone-token',
+      credentials: { type: 'social', signupToken: 'raw-signup-token' },
+    };
+
+    beforeEach(() => {
+      accounts.listCompanies.mockResolvedValue([]); // a brand-new account belongs nowhere
+    });
+
+    it('answers a session with no company open: profile null, companies []', async () => {
+      const result = await service.signup(passwordSignup as any);
+
+      expect(tokenService.signAccess).toHaveBeenCalledWith({
+        accountId: 'account-1',
+        profileId: null,
+      });
+      expect(prisma.refreshToken.create).toHaveBeenCalledWith({
+        data: {
+          accountId: 'account-1',
+          profileId: null,
+          tokenHash: 'hashed-refresh',
+          expiresAt: expect.any(Date),
+        },
+      });
+      expect(accounts.listCompanies).toHaveBeenCalledWith('account-1');
+      expect(result).toEqual({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        profile: null,
+        companies: [],
+      });
+    });
+
+    it('creates the account with the verified phone and its password login — and no profile, no company', async () => {
+      await service.signup(passwordSignup as any);
+
+      expect(accounts.createAccount).toHaveBeenCalledWith(tx, '01055556666');
+      expect(tx.accountLoginMethod.createMany).toHaveBeenCalledWith({
+        data: [
+          {
+            method: 'local',
+            email: 'sam@acme.com',
+            passwordHash: 'hashed-pw',
+            accountId: 'account-1',
+          },
+        ],
+        skipDuplicates: true,
+      });
+      expect(tx.profile.create).not.toHaveBeenCalled();
+      expect(tx.company.create).not.toHaveBeenCalled();
+    });
+
+    it('spends the SIGNUP phone token inside the transaction, before the account is created', async () => {
+      await service.signup(passwordSignup as any);
+
+      expect(phoneVerification.consume).toHaveBeenCalledWith(tx, {
+        token: 'signup-phone-token',
+        phone: '01055556666',
+        purpose: PhoneVerificationPurpose.SIGNUP,
+      });
+      expect(
+        phoneVerification.consume.mock.invocationCallOrder[0],
+      ).toBeLessThan(accounts.createAccount.mock.invocationCallOrder[0]);
+    });
+
+    it('starts the session only AFTER the transaction commits (the account must be visible to it)', async () => {
+      prisma.$transaction.mockImplementation(async (callback: any) => {
+        const result = await callback(tx);
+        // still inside the transaction: no session row yet
+        expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+        return result;
+      });
+
+      await service.signup(passwordSignup as any);
+
+      expect(prisma.refreshToken.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('emits nothing: no company is involved', async () => {
+      await service.signup(passwordSignup as any);
+
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+
+    it('hashes the password BEFORE the transaction (argon2 is slow)', async () => {
+      await service.signup(passwordSignup as any);
+
+      expect(passwordService.hash).toHaveBeenCalledWith('password123');
+      expect(passwordService.hash.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.$transaction.mock.invocationCallOrder[0],
+      );
+    });
+
+    describe('a social signup', () => {
+      it('spends the ticket inside the transaction and links the provider identity', async () => {
+        await service.signup(socialSignup as any);
+
+        expect(signupTickets.consume).toHaveBeenCalledWith(
+          tx,
+          'raw-signup-token',
+        );
+        expect(tx.accountLoginMethod.createMany).toHaveBeenCalledWith({
+          data: [
+            {
+              method: 'kakao',
+              providerUserId: '4012345678',
+              email: 'owner@kakao.com',
+              emailVerified: true,
+              refreshToken: null,
+              accountId: 'account-1',
+            },
+          ],
+          skipDuplicates: true,
+        });
+      });
+
+      it('no password: no email-taken check, no hashing', async () => {
+        await service.signup(socialSignup as any);
+
+        expect(prisma.accountLoginMethod.findFirst).not.toHaveBeenCalled();
+        expect(passwordService.hash).not.toHaveBeenCalled();
+      });
+
+      it('no contact email is asked for or spent (it belongs to a company profile)', async () => {
+        await service.signup(socialSignup as any);
+
+        expect(emailVerification.consume).not.toHaveBeenCalled();
+      });
+
+      it('an invalid ticket → its error passes through: no account, no session', async () => {
+        signupTickets.consume.mockRejectedValue(
+          new BadRequestException('Invalid or expired signup token'),
+        );
+
+        await expect(service.signup(socialSignup as any)).rejects.toThrow(
+          new BadRequestException('Invalid or expired signup token'),
+        );
+        expect(accounts.createAccount).not.toHaveBeenCalled();
+        expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+      });
+
+      it('the identity got registered meanwhile (count 0) → 409, no session', async () => {
+        tx.accountLoginMethod.createMany.mockResolvedValue({ count: 0 });
+
+        await expect(service.signup(socialSignup as any)).rejects.toThrow(
+          new ConflictException('This account is already registered'),
+        );
+        expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('409s', () => {
+      it('an email a password login already has → 409 before anything is spent', async () => {
+        prisma.accountLoginMethod.findFirst.mockResolvedValue({ id: 'lm-1' });
+
+        await expect(service.signup(passwordSignup as any)).rejects.toThrow(
+          new ConflictException('Email already registered'),
+        );
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(phoneVerification.consume).not.toHaveBeenCalled();
+      });
+
+      it('a phone a live account already has → 409 before anything is spent', async () => {
+        prisma.account.findFirst.mockResolvedValue({ id: 'account-9' });
+
+        await expect(service.signup(passwordSignup as any)).rejects.toThrow(
+          new ConflictException('Phone already registered'),
+        );
+        expect(prisma.account.findFirst).toHaveBeenCalledWith({
+          where: { phone: '01055556666', deletedAt: null },
+          select: { id: true },
+        });
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('the phone got taken meanwhile (createAccount → null) → 409 thrown inside: no login method, no session', async () => {
+        accounts.createAccount.mockResolvedValue(null);
+
+        await expect(service.signup(passwordSignup as any)).rejects.toThrow(
+          new ConflictException('Phone already registered'),
+        );
+        expect(tx.accountLoginMethod.createMany).not.toHaveBeenCalled();
+        expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+      });
+
+      it('the email got taken meanwhile (count 0) → 409 Email already registered, no session', async () => {
+        tx.accountLoginMethod.createMany.mockResolvedValue({ count: 0 });
+
+        await expect(service.signup(passwordSignup as any)).rejects.toThrow(
+          new ConflictException('Email already registered'),
+        );
+        expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+      });
+    });
+  });
+
   describe('login', () => {
     const loginDto = { email: 'jane@acme.com', password: 'password123' };
 

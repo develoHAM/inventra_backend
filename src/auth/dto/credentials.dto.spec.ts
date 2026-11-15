@@ -67,7 +67,29 @@ describe.each([
 
     expect(messages).toEqual([]);
     expect(instance.credentials).toBeInstanceOf(PasswordCredentialsDto);
-    // keepDiscriminatorProperty: the service branches on it
+    // the tag stays on the built object: the service branches on it
+    expect(instance.credentials.type).toBe('password');
+  });
+
+  it('the tag is case-insensitive: "Social" builds a SocialCredentialsDto, stored as "social"', async () => {
+    const { instance, messages } = await check(dtoClass, {
+      ...base,
+      credentials: { type: 'Social', signupToken: 'signup-token' },
+    });
+
+    expect(messages).toEqual([]);
+    expect(instance.credentials).toBeInstanceOf(SocialCredentialsDto);
+    expect(instance.credentials.type).toBe('social');
+  });
+
+  it('"PASSWORD" builds a PasswordCredentialsDto, stored as "password"', async () => {
+    const { instance, messages } = await check(dtoClass, {
+      ...base,
+      credentials: { ...password, type: 'PASSWORD' },
+    });
+
+    expect(messages).toEqual([]);
+    expect(instance.credentials).toBeInstanceOf(PasswordCredentialsDto);
     expect(instance.credentials.type).toBe('password');
   });
 
@@ -101,6 +123,10 @@ describe.each([
       { type: 'naver', email: 'a@b.com', password: 'password123' },
     ],
     ['a missing type', { email: 'a@b.com', password: 'password123' }],
+    [
+      'a type that is not a string',
+      { type: 42, email: 'a@b.com', password: 'password123' },
+    ],
   ])(
     'rejects %s (falls back to the password class, whose tag check fails)',
     async (_label, credentials) => {

@@ -271,7 +271,9 @@ Added mid-track (the user's decision): **Account** = the sign-in, **Profile** = 
 - [ ] **Step 5 (human):** Run `npm run test:e2e`. Expected: all green.
 - [ ] **Step 6:** Commit: `feat(auth): tokens name the account and the open profile; switch companies`.
 
-### Task 3: Signup creates only the sign-in
+### Task 3: Signup creates only the sign-in — ✅ done
+
+> As built: the proofs are spent before `createAccount` (phone token, then the social ticket via `spendLoginProof`), all in one transaction, so any 409 rolls them back; fast 409 pre-checks (login email, phone) run before anything is spent. The `type` tag is case-insensitive on all three signups: `@CredentialsType()` / `@SignupCredentialsType()` are `@Type` type functions built by `credentialsTypeFor` (the `discriminator` option matches exactly on raw JSON), and `@LowercaseTag()` stores the tag lowercase. E2e 17–23 (incl. the Task 2 403 and an `@AccountRoute()` with no profile). 1183 unit + 238 e2e green.
 
 **Files:**
 - Create: `src/auth/dto/signup.dto.ts`

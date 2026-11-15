@@ -10,6 +10,7 @@ import type { AuthProfile } from './types/auth-profile';
 describe('AuthController', () => {
   let controller: AuthController;
   let authService: {
+    signup: jest.Mock;
     me: jest.Mock;
     logout: jest.Mock;
     switchProfile: jest.Mock;
@@ -32,6 +33,7 @@ describe('AuthController', () => {
 
   beforeEach(() => {
     authService = {
+      signup: jest.fn().mockResolvedValue({}),
       me: jest.fn().mockResolvedValue({}),
       logout: jest.fn().mockResolvedValue(undefined),
       switchProfile: jest.fn().mockResolvedValue({}),
@@ -39,12 +41,15 @@ describe('AuthController', () => {
     controller = new AuthController(authService as any);
   });
 
-  it.each(['register', 'registerMember', 'login', 'refresh'] as const)(
-    '%s is public (no token yet)',
-    (method) => {
-      expect(metadata(IS_PUBLIC_KEY, method)).toBe(true);
-    },
-  );
+  it.each([
+    'signup',
+    'register',
+    'registerMember',
+    'login',
+    'refresh',
+  ] as const)('%s is public (no token yet)', (method) => {
+    expect(metadata(IS_PUBLIC_KEY, method)).toBe(true);
+  });
 
   it.each(['me', 'logout', 'switchProfile'] as const)(
     '%s is an @AccountRoute(): works with no company open, still needs a sign-in',
@@ -53,6 +58,24 @@ describe('AuthController', () => {
       expect(metadata(IS_PUBLIC_KEY, method)).toBeUndefined();
     },
   );
+
+  it('signup is POST /auth/signup and passes the body through', async () => {
+    expect(metadata(METHOD_METADATA, 'signup')).toBe(RequestMethod.POST);
+    expect(metadata(PATH_METADATA, 'signup')).toBe('signup');
+
+    const dto = {
+      phone: '01012345678',
+      phoneVerificationToken: 'phone-token',
+      credentials: {
+        type: 'password' as const,
+        email: 'sam@acme.com',
+        password: 'password123',
+      },
+    };
+    await controller.signup(dto);
+
+    expect(authService.signup).toHaveBeenCalledWith(dto);
+  });
 
   it('switchProfile is POST /auth/switch', () => {
     expect(metadata(METHOD_METADATA, 'switchProfile')).toBe(RequestMethod.POST);

@@ -29,9 +29,11 @@ import { DevicesService } from '../devices/devices.service';
 import { LogoutDto } from './dto/logout.dto';
 import { Prisma } from '../generated/prisma/client';
 import type {
+  AccountSignupCredentials,
   SignupCredentials,
   SocialCredentialsDto,
 } from './dto/credentials.dto';
+import { SignupDto } from './dto/signup.dto';
 import { SignupTicketService } from '../social-auth/signup-tickets/signup-ticket.service';
 import type { SpentSignupTicket } from '../social-auth/signup-tickets/signup-ticket.service';
 import { EmailVerificationService } from '../email-verification/email-verification.service';
@@ -43,10 +45,16 @@ import type { AuthAccount } from './types/auth-account';
 import type { AuthProfile } from './types/auth-profile';
 import { SwitchProfileDto } from './dto/switch-profile.dto';
 
-/** What a signup creates for its credentials, decided inside the transaction. */
+/** A login method about to be created: the account doesn't exist yet. */
+type NewLoginMethod = Omit<
+  Prisma.AccountLoginMethodCreateManyInput,
+  'accountId'
+>;
+
+/** What register / register/member create for their credentials (until Task 7). */
 interface SignupLogin {
-  contactEmail: string; // where notifications go
-  loginMethod: Omit<Prisma.AccountLoginMethodCreateManyInput, 'accountId'>; // the account doesn't exist yet
+  contactEmail: string; // where the new profile's notifications go
+  loginMethod: NewLoginMethod;
 }
 
 @Injectable()
@@ -116,7 +124,7 @@ export class AuthService {
 
   /** Password signups only: the login email must not be any login method's email. */
   private async isLoginEmailTaken(
-    credentials: SignupCredentials,
+    credentials: AccountSignupCredentials,
   ): Promise<boolean> {
     if (credentials.type !== 'password') return false;
     const existing = await this.prisma.accountLoginMethod.findFirst({
@@ -127,7 +135,7 @@ export class AuthService {
 
   /** Hashed BEFORE the transaction (argon2 is slow); social signups have no password. */
   private passwordHashFor(
-    credentials: SignupCredentials,
+    credentials: AccountSignupCredentials,
   ): Promise<string | null> {
     return credentials.type === 'password'
       ? this.passwordService.hash(credentials.password)
@@ -164,14 +172,43 @@ export class AuthService {
         ticket,
         credentials,
       ),
-      loginMethod: {
-        method: ticket.provider,
-        providerUserId: ticket.providerUserId,
-        email: ticket.email,
-        emailVerified: ticket.emailVerified,
-        refreshToken: ticket.providerRefreshToken, // already encrypted
-      },
+      loginMethod: this.loginMethodFromTicket(ticket),
     };
+  }
+
+  /** The login method a spent social signup ticket becomes. */
+  private loginMethodFromTicket(ticket: SpentSignupTicket): NewLoginMethod {
+    return {
+      method: ticket.provider,
+      providerUserId: ticket.providerUserId,
+      email: ticket.email,
+      emailVerified: ticket.emailVerified,
+      refreshToken: ticket.providerRefreshToken, // already encrypted
+    };
+  }
+
+  /**
+   * Inside the signup transaction: spend whatever proves the credentials
+   * (a social signup ticket; a password has nothing to spend) and return
+   * the login method to create. No contact email: signup makes no profile.
+   */
+  private async spendLoginProof(
+    transaction: Prisma.TransactionClient,
+    credentials: AccountSignupCredentials,
+    passwordHash: string | null,
+  ): Promise<NewLoginMethod> {
+    if (credentials.type === 'password') {
+      return {
+        method: 'local',
+        email: credentials.email,
+        passwordHash: passwordHash!, // hashed by passwordHashFor for password credentials
+      };
+    }
+    const ticket = await this.signupTickets.consume(
+      transaction,
+      credentials.signupToken,
+    );
+    return this.loginMethodFromTicket(ticket);
   }
 
   /**
@@ -225,6 +262,54 @@ export class AuthService {
           : 'This account is already registered',
       );
     }
+  }
+
+  /**
+   * POST /auth/signup: the sign-in only — an account (the verified phone)
+   * and its first login method. No profile, no company, no event: the app
+   * lands on join-or-create. Every failure inside the transaction THROWS,
+   * so the whole signup rolls back and the phone token and ticket stay
+   * unspent (nothing secret to probe here, unlike a join code).
+   */
+  async signup(dto: SignupDto): Promise<SessionResponse> {
+    const { phone, phoneVerificationToken, credentials } = dto;
+
+    // Fast 409s before anything is spent; the inserts below decide races.
+    const [emailTaken, phoneTaken] = await Promise.all([
+      this.isLoginEmailTaken(credentials),
+      this.findPhoneOwner(phone),
+    ]);
+    if (emailTaken) throw new ConflictException('Email already registered');
+    if (phoneTaken) throw new ConflictException('Phone already registered');
+
+    const passwordHash = await this.passwordHashFor(credentials); // outside: argon2 is slow
+
+    const accountId = await this.prisma.$transaction(async (transaction) => {
+      // Spend the proofs first: if anything below fails, they roll back too.
+      await this.phoneVerification.consume(transaction, {
+        token: phoneVerificationToken,
+        phone: phone,
+        purpose: PhoneVerificationPurpose.SIGNUP,
+      });
+      const loginMethod = await this.spendLoginProof(
+        transaction,
+        credentials,
+        passwordHash,
+      );
+
+      const newAccountId = await this.accounts.createAccount(
+        transaction,
+        phone,
+      );
+      if (newAccountId === null) {
+        throw new ConflictException('Phone already registered'); // taken meanwhile
+      }
+      await this.addFirstLoginMethod(transaction, newAccountId, loginMethod);
+      return newAccountId;
+    });
+
+    // After the commit: only now can the session's own insert see the account.
+    return this.startSession(accountId, null);
   }
 
   async register(dto: RegisterDto): Promise<{

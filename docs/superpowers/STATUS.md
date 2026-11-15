@@ -28,9 +28,9 @@
 | Notify | **Notifications** (email · SMS · push) + **account security** (OCTOMO phone verification · find ID · password reset) | ✅ complete (Slices 1a–4) |
 | Social | **Social login** (Kakao · Google · Facebook · Apple, native app-to-app) + **login methods** (link · add a password · unlink) | ✅ complete (Tasks 1–14) |
 | Members | **Roles & branches** (membership piece 1 of 3: promote/demote, move between branches, one branch per manager, change history, notifications) | ✅ complete (Tasks 1–8) |
-| Members | **One sign-in, many companies** (membership piece 2 of 3: a profile per company, switching, join/create from inside the app) | 🔨 Tasks 1, 1b, 2 done; Task 3 next |
+| Members | **One sign-in, many companies** (membership piece 2 of 3: a profile per company, switching, join/create from inside the app) | 🔨 Tasks 1, 1b, 2, 3 done; Task 4 next |
 
-## Where we are right now — One sign-in, many companies (membership piece 2): Tasks 1, 1b, 2 done
+## Where we are right now — One sign-in, many companies (membership piece 2): Tasks 1, 1b, 2, 3 done
 
 Spec `docs/superpowers/specs/2026-11-12-one-sign-in-many-companies-design.md`, plan `docs/superpowers/plans/2026-11-12-one-sign-in-many-companies.md` (7 tasks, native execution: per task teach → reference code → user applies or asks Claude to → Claude tests → human runs migrate + e2e). Ledger `.superpowers/sdd/2026-11-12-one-sign-in-many-companies/progress.md` (git-ignored).
 
@@ -44,11 +44,17 @@ Spec `docs/superpowers/specs/2026-11-12-one-sign-in-many-companies-design.md`, p
   - `SessionResponse { accessToken, refreshToken, profile | null, companies: CompanyProfileView[] }` from password login, social `LOGGED_IN`, refresh and switch, all through `AuthService.startSession(accountId, profile)`. **An account with no openable profile now signs in with `profile: null`** (deleted account still 401). Signup (`register`, `register/member`) keeps its old response until Task 3.
   - Refresh (Review Focus 3): keeps the session's profile while `AccountsService.findOpenableProfile` finds it, else `findProfileToOpen(accountId, lastProfileId)`; a deleted account → 401. `POST /auth/switch { refreshToken, profileId }`: the session must be the caller's (401), the target openable and theirs (404 `Company profile not found`, nothing revoked), then rotate + write `accounts.last_profile_id` (only switching writes it).
   - `AccountsService.listCompanies(accountId)`: openable profiles oldest first, role + company, photo presigned (`AccountsService` now injects the global `StorageService`).
-  - No e2e for the 403 yet: no API path makes a profile-less session until Task 3.
-- **1142 unit tests green (79 suites) + 231 e2e green (16 suites)** — both **measured** 2026-11-14 after Task 2 (`Tests: 231 passed`, on a database rebuilt from all 28 migrations).
+  - The 403 got its e2e in Task 3 (the first API path to a profile-less session).
+- **Task 3**: signup creates only the sign-in.
+  - `POST /auth/signup` (`@Public()`, `SignupDto { phone, phoneVerificationToken, credentials }`): an account plus its first login method, **no profile, no company** → `SessionResponse` with `profile: null, companies: []` (via `startSession(accountId, null)`, after the commit).
+  - Credentials: `PasswordCredentialsDto` or the new `SocialSignupCredentialsDto { type: 'social', signupToken }`. A contact email belongs to a profile, so `contactEmail` / `emailVerificationToken` on signup are refused as non-whitelisted (400). `register` / `register/member` keep `SocialCredentialsDto` (with the contact-email pair) until Task 7.
+  - The `type` tag is case-insensitive on all three signups (`'Social'`, `'PASSWORD'`): `@CredentialsType()` / `@SignupCredentialsType()` (made by `credentialsTypeFor` in `credentials.dto.ts`) are `@Type` **type functions** that lowercase a copy to pick the class (the `discriminator` option matches exactly on the raw JSON, so it can't), and `@LowercaseTag()` stores the tag lowercase for `@Equals`.
+  - `AuthService.signup` order: fast 409s (login email, phone) → hash outside → one transaction: spend the `SIGNUP` phone token, spend the login proof (`spendLoginProof`: a password has nothing to spend; a social ticket is consumed), `createAccount` (`null` → 409 `Phone already registered`), `addFirstLoginMethod` (duplicate → 409) — any throw rolls every spend back. `loginMethodFromTicket` is shared with `register`.
+  - E2e `test/auth.e2e-spec.ts` 17–23: password signup → session with no company; `/auth/me` profile null; `GET /profiles` → 403 `Choose a company first` (Review Focus 2); an `@AccountRoute()` still works (`POST /devices` 204); login → `profile: null, companies: []`; same phone again → 409; social credentials with `contactEmail` → 400.
+- **1183 unit tests green (80 suites) + 238 e2e green (16 suites)** — both **measured** 2026-11-15 after Task 3 (`Tests: 238 passed, 238 total`, on a database rebuilt from all 28 migrations).
 - The sections below are history: they use the names of their time (`users.*` permissions, `/users/:id/...` routes, `src/members`, `src/users`).
 
-**Next:** Task 3 — signup creates only the sign-in (`POST /auth/signup`: an account with no profile; the app lands on join-or-create).
+**Next:** Task 4 — join or create a company from a sign-in (`POST /me/companies/join { joinCode, name }`, `POST /me/companies { companyName, taxId, ownerName }`, `GET /me/companies`; join attempts rate-limited by a new `company_join_attempts` table — a migration the human runs).
 
 ## Prior — Roles & branches complete (membership piece 1, Tasks 1–8)
 

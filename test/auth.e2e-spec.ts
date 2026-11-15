@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { testPhones, verifiedPhone } from './helpers/phone';
+import { testPhones, verifiedPhone, verifiedPhoneToken } from './helpers/phone';
 
 describe('Auth & Authorization (e2e)', () => {
   let app: INestApplication;
@@ -331,6 +331,125 @@ describe('Auth & Authorization (e2e)', () => {
         .post('/auth/switch')
         .send({ refreshToken: 'whatever', profileId: memberId })
         .expect(401);
+    });
+  });
+
+  describe('signup creates only the sign-in', () => {
+    const newcomer = { email: 'newcomer@e2e.test', password: 'password123' };
+    let newcomerPhone: string;
+    let spareTokenForSamePhone: string;
+    let newcomerAccess: string;
+
+    beforeAll(async () => {
+      // two SIGNUP tokens for one phone, both taken before it is registered
+      // (afterwards the phone check itself refuses a taken phone)
+      newcomerPhone = nextPhone();
+      spareTokenForSamePhone = await verifiedPhoneToken(app, newcomerPhone);
+    });
+
+    it('17. a password signup answers a session with no company open', async () => {
+      const token = await verifiedPhoneToken(app, newcomerPhone);
+
+      const res = await request(http)
+        .post('/auth/signup')
+        .send({
+          phone: newcomerPhone,
+          phoneVerificationToken: token,
+          // any case: stored as 'password'
+          credentials: { type: 'Password', ...newcomer },
+        })
+        .expect(201);
+
+      expect(res.body).toEqual({
+        accessToken: expect.any(String),
+        refreshToken: expect.any(String),
+        profile: null,
+        companies: [],
+      });
+      newcomerAccess = res.body.accessToken;
+    });
+
+    it('18. /auth/me shows the account with no profile', async () => {
+      const me = await request(http)
+        .get('/auth/me')
+        .set('Authorization', `Bearer ${newcomerAccess}`)
+        .expect(200);
+
+      expect(me.body).toEqual({
+        accountId: expect.any(String),
+        phone: newcomerPhone,
+        profile: null,
+      });
+      // nothing company-shaped was created for it
+      const profiles = await prisma.profile.count({
+        where: { accountId: me.body.accountId },
+      });
+      expect(profiles).toBe(0);
+    });
+
+    it('19. a company route answers 403 Choose a company first (Review Focus 2)', async () => {
+      const res = await request(http)
+        .get('/profiles')
+        .set('Authorization', `Bearer ${newcomerAccess}`)
+        .expect(403);
+
+      expect(res.body.message).toBe('Choose a company first');
+    });
+
+    it('20. an account route still works: the phone can register for pushes', async () => {
+      await request(http)
+        .post('/devices')
+        .set('Authorization', `Bearer ${newcomerAccess}`)
+        .send({ token: 'signup-e2e-device', platform: 'WEB' })
+        .expect(204);
+    });
+
+    it('21. logging in with that password → profile null, companies []', async () => {
+      const res = await request(http)
+        .post('/auth/login')
+        .send(newcomer)
+        .expect(201);
+
+      expect(res.body.profile).toBeNull();
+      expect(res.body.companies).toEqual([]);
+    });
+
+    it('22. the same phone signing up again → 409 Phone already registered', async () => {
+      const res = await request(http)
+        .post('/auth/signup')
+        .send({
+          phone: newcomerPhone,
+          phoneVerificationToken: spareTokenForSamePhone,
+          credentials: {
+            type: 'password',
+            email: 'someone-else@e2e.test',
+            password: 'password123',
+          },
+        })
+        .expect(409);
+
+      expect(res.body.message).toBe('Phone already registered');
+    });
+
+    it('23. social credentials with a contact email are refused (400)', async () => {
+      const { phone, token } = await verifiedPhone(app, nextPhone);
+
+      const res = await request(http)
+        .post('/auth/signup')
+        .send({
+          phone: phone,
+          phoneVerificationToken: token,
+          credentials: {
+            type: 'social',
+            signupToken: 'whatever',
+            contactEmail: 'me@e2e.test',
+          },
+        })
+        .expect(400);
+
+      expect(res.body.message).toContain(
+        'credentials.property contactEmail should not exist',
+      );
     });
   });
 });
