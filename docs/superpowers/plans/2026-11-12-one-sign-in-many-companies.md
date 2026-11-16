@@ -304,7 +304,9 @@ Added mid-track (the user's decision): **Account** = the sign-in, **Profile** = 
 - [ ] **Step 5 (human):** Run `npm run test:e2e`. Expected: all green.
 - [ ] **Step 6:** Commit: `feat(auth): signup creates only the sign-in`.
 
-### Task 4: Join or create a company from a sign-in
+### Task 4: Join or create a company from a sign-in — ✅ done
+
+> As built: `AccountsService.toCompanyProfileView` became public so join and create answer with the dropdown's own mapper (`createManyAndReturn` / `update` select `COMPANY_PROFILE_SELECT`); the OWNER role and the join code are read before create's transaction; the DTO text fields carry `@MaxLength` = their columns; `accounts.module.spec.ts` checks the wiring. **E2e deviation:** "the sixth → 429; the right code still works" contradicts the unit rule (≥ 5 → no lookup), so the e2e checks a right code *before* the block (201, not counted), *after* it (429), and another account (201). Migration `20261115135455_company_join_attempts`. 1251 unit + 257 e2e green.
 
 **Files:**
 - Modify: `prisma/schema.prisma` (`CompanyJoinAttempt`); migration `company_join_attempts`

@@ -78,6 +78,7 @@ model Account {
   loginMethods  AccountLoginMethod[]
   refreshTokens RefreshToken[]
   deviceTokens  DeviceToken[]
+  companyJoinAttempts CompanyJoinAttempt[]
 
   // one live account per phone; a deleted account frees its number
   @@unique([phone], map: "UQ_accounts_phone", where: raw("(deleted_at IS NULL)"))
@@ -283,6 +284,20 @@ model PhoneVerification {
 
   @@index([phone, createdAt], map: "IDX_phone_verifications_phone_created")
   @@map("phone_verifications")
+}
+
+/// One WRONG invite code tried at POST /me/companies/join. Counted per
+/// account over a rolling hour to brake guessing; a right code leaves no row.
+model CompanyJoinAttempt {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId String   @map("account_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  account Account @relation(fields: [accountId], references: [id])
+
+  // the brake's count: this account's rows since an hour ago
+  @@index([accountId, createdAt], map: "IDX_company_join_attempts_account_created")
+  @@map("company_join_attempts")
 }
 
 model Store {

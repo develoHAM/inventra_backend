@@ -235,4 +235,51 @@ describe('AccountsService', () => {
       await expect(service.listCompanies('account-1')).resolves.toEqual([]);
     });
   });
+
+  describe('toCompanyProfileView (public: join and create answer with it too)', () => {
+    it('turns one selected row into a dropdown entry, presigning the photo', async () => {
+      await expect(
+        service.toCompanyProfileView({
+          id: 'profile-1',
+          status: ProfileStatus.PENDING_APPROVAL,
+          name: 'Sam',
+          profileImageUrl: 'profiles/profile-1/photo.png',
+          role: null,
+          company: { id: 'company-1', name: 'Acme' },
+        }),
+      ).resolves.toEqual({
+        profileId: 'profile-1',
+        status: ProfileStatus.PENDING_APPROVAL,
+        name: 'Sam',
+        profileImageUrl: 'https://signed/profiles/profile-1/photo.png',
+        role: null,
+        company: { id: 'company-1', name: 'Acme' },
+      });
+    });
+  });
+
+  describe('isPlatformAdmin', () => {
+    it('asks for a live ADMIN profile of this account', async () => {
+      await service.isPlatformAdmin('account-1');
+
+      expect(prisma.profile.findFirst).toHaveBeenCalledWith({
+        where: {
+          accountId: 'account-1',
+          deletedAt: null,
+          role: { code: 'ADMIN' },
+        },
+        select: { id: true },
+      });
+    });
+
+    it('found → true', async () => {
+      prisma.profile.findFirst.mockResolvedValue({ id: 'admin-profile' });
+
+      await expect(service.isPlatformAdmin('account-1')).resolves.toBe(true);
+    });
+
+    it('none (an ordinary account) → false', async () => {
+      await expect(service.isPlatformAdmin('account-1')).resolves.toBe(false);
+    });
+  });
 });

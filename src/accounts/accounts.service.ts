@@ -101,7 +101,24 @@ export class AccountsService {
     return Promise.all(rows.map((row) => this.toCompanyProfileView(row)));
   }
 
-  private async toCompanyProfileView(
+  /**
+   * Is this the platform admin's account (a live ADMIN profile)? The admin
+   * runs the platform, so it never joins or creates companies.
+   */
+  async isPlatformAdmin(accountId: string): Promise<boolean> {
+    const adminProfile = await this.prisma.profile.findFirst({
+      where: {
+        accountId: accountId,
+        deletedAt: null,
+        role: { code: 'ADMIN' },
+      },
+      select: { id: true },
+    });
+    return adminProfile !== null;
+  }
+
+  /** One dropdown entry from a COMPANY_PROFILE_SELECT row (join and create answer with it too). */
+  async toCompanyProfileView(
     row: CompanyProfileRow,
   ): Promise<CompanyProfileView> {
     return {
