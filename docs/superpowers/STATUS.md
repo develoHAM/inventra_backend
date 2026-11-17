@@ -28,9 +28,9 @@
 | Notify | **Notifications** (email · SMS · push) + **account security** (OCTOMO phone verification · find ID · password reset) | ✅ complete (Slices 1a–4) |
 | Social | **Social login** (Kakao · Google · Facebook · Apple, native app-to-app) + **login methods** (link · add a password · unlink) | ✅ complete (Tasks 1–14) |
 | Members | **Roles & branches** (membership piece 1 of 3: promote/demote, move between branches, one branch per manager, change history, notifications) | ✅ complete (Tasks 1–8) |
-| Members | **One sign-in, many companies** (membership piece 2 of 3: a profile per company, switching, join/create from inside the app) | 🔨 Tasks 1, 1b, 2, 3, 4 done; Task 5 next |
+| Members | **One sign-in, many companies** (membership piece 2 of 3: a profile per company, switching, join/create from inside the app) | 🔨 Tasks 1, 1b, 2, 3, 4, 5 done; Task 6 next |
 
-## Where we are right now — One sign-in, many companies (membership piece 2): Tasks 1, 1b, 2, 3, 4 done
+## Where we are right now — One sign-in, many companies (membership piece 2): Tasks 1, 1b, 2, 3, 4, 5 done
 
 Spec `docs/superpowers/specs/2026-11-12-one-sign-in-many-companies-design.md`, plan `docs/superpowers/plans/2026-11-12-one-sign-in-many-companies.md` (7 tasks, native execution: per task teach → reference code → user applies or asks Claude to → Claude tests → human runs migrate + e2e). Ledger `.superpowers/sdd/2026-11-12-one-sign-in-many-companies/progress.md` (git-ignored).
 
@@ -57,10 +57,15 @@ Spec `docs/superpowers/specs/2026-11-12-one-sign-in-many-companies-design.md`, p
   - **Create:** OWNER role + a free join code read first; then one transaction: lock the account row (`updateMany`), THEN count its live waiting OWNER profiles (≥ 1 → 409 `You already have a company waiting for approval`), the OWNER profile (`companyId: null`), the company via `createManyAndReturn({ skipDuplicates })` (`[]` → 409 `Tax ID already registered`, rolling the profile back), then the profile's `companyId`. `COMPANY_REGISTERED` after commit. Approval unchanged (`PATCH /companies/:id/approve`).
   - DTOs `JoinCompanyDto` (signup's join-code rules) and `CreateCompanyDto`, each text field `@MaxLength` = its column (a long value is a 400, not a 500).
   - E2e `test/accounts.e2e-spec.ts` (suite 17, 19 tests): create → listed → second create 409 → approval → 201; taken tax ID rolls back; two creates at once → 201 + 409; join (dashed code) → listed → again 409; two joins at once → 201 + 409; switch into it; the brake (4 wrong → right code still 201 and uncounted → 5th wrong 404 → 429 → even a right code 429 → another account unaffected); the admin 403.
-- **1251 unit tests green (85 suites) + 257 e2e green (17 suites)** — both **measured** 2026-11-16 after Task 4 (`Tests: 257 passed, 257 total`, on a database rebuilt from all 29 migrations).
+- **Task 5**: each company's name and contact email.
+  - `MyProfileController` (`@Controller('profiles/me')`): `PATCH /profiles/me { name }` and `PUT /profiles/me/contact-email { email, emailVerificationToken }`, both 200 → `ProfileSummary { id, name, contactEmail }` (`PROFILE_SUMMARY_SELECT`). "Me" = `request.profile` (`@CurrentProfile()`), so `where: { id: caller.id }` — no id from the client. Not an `@AccountRoute()` (a company must be open → 403 `Choose a company first` without one) and no `@RequirePermissions`, so a `PENDING_APPROVAL` profile can set its email before approval (otherwise `member.approved` has nowhere to go).
+  - `MyProfileService.setMyContactEmail`: one transaction — `EmailVerificationService.consume(transaction, { token, email })` (bound to that address, single use; bad/used → 400 `Invalid or expired email verification`, nothing written), then the update. Email via `normalizeEmail`. `ProfilesModule` imports `EmailVerificationModule`.
+  - **Route order:** `MyProfileController` is registered FIRST in `ProfilesModule.controllers` (Express matches in registration order and `:id` matches `me`); the controller spec checks the order from the module metadata.
+  - E2e `test/accounts.e2e-spec.ts` 20–25: no company open → 403; a waiting profile renames itself and sets a code-proven email (typed mixed-case, stored lowercase); the same proof twice → 400; approval's `member.approved` email lands at that address (Mailpit); the account's other profile keeps its own name and no email.
+- **1283 unit tests green (89 suites) + 263 e2e green (17 suites)** — both **measured** 2026-11-18 after Task 5 (`Tests: 263 passed, 263 total`, on a database rebuilt from all 29 migrations).
 - The sections below are history: they use the names of their time (`users.*` permissions, `/users/:id/...` routes, `src/members`, `src/users`).
 
-**Next:** Task 5 — each company's name and contact email (`PATCH /profiles/me { name }`, `PUT /profiles/me/contact-email { email, emailVerificationToken }` proven by the existing email-code flow; no permission needed, so a waiting profile can use both).
+**Next:** Task 6 — notifications from every company (`notifyProfiles` pushes to each recipient profile's account devices with `profileId` and, when it has one, `companyId` in the data, so the app can switch to the right company; push title `${companyName} · ${subject}`; email rows unchanged).
 
 ## Prior — Roles & branches complete (membership piece 1, Tasks 1–8)
 

@@ -357,7 +357,9 @@ Added mid-track (the user's decision): **Account** = the sign-in, **Profile** = 
 - [ ] **Step 7 (human):** Run `npm run test:e2e`. Expected: all green.
 - [ ] **Step 8:** Commit: `feat(accounts): join or create a company from a sign-in`.
 
-### Task 5: Each company's name and contact email
+### Task 5: Each company's name and contact email — ✅ done
+
+> As built: `PROFILE_SUMMARY_SELECT` + `ProfileSummary` live in `my-profile.service.ts`; `MyProfileController` is registered first in `ProfilesModule.controllers` so `/profiles/me` always beats a `/profiles/:id` route (spec reads the module metadata); `UpdateProfileDto` is name-only (contactEmail, roleId, status refused). E2e 20–25 added to `test/accounts.e2e-spec.ts` (also: no company open → 403; the same proof twice → 400). 1283 unit + 263 e2e green.
 
 **Files:**
 - Create: `src/profiles/{my-profile.controller,my-profile.service}.ts`, `src/profiles/dto/{update-profile,set-contact-email}.dto.ts`

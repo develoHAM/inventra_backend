@@ -3,12 +3,15 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { notificationTemplates } from '../src/notifications/notification-templates';
 import { testPhones, verifiedPhone } from './helpers/phone';
 
 /**
  * GET /me/companies, POST /me/companies/join and POST /me/companies: an
  * account made by POST /auth/signup (no company yet) joins or creates
- * companies, then opens one with POST /auth/switch.
+ * companies, then opens one with POST /auth/switch. Then (Task 5) each
+ * company profile gets its own name and a code-proven contact email.
+ * Requires Postgres, Redis and Mailpit running.
  */
 describe('Join or create a company from a sign-in (e2e)', () => {
   let app: INestApplication;
@@ -70,7 +73,7 @@ describe('Join or create a company from a sign-in (e2e)', () => {
         .get('/me/companies')
         .set(...auth(accessToken))
         .expect(200)
-    ).body as Array<{ profileId: string; status: string }>;
+    ).body as Array<{ profileId: string; status: string; name: string }>;
 
   // no endpoint for a pending owner shows the code: read it from the DB
   const joinCodeOf = async (companyId: string) =>
@@ -79,6 +82,9 @@ describe('Join or create a company from a sign-in (e2e)', () => {
 
   let companyOneId: string;
   let companyTwoId: string;
+  // company one's creator; Task 5 has them approve a member
+  let owner: { accessToken: string; refreshToken: string };
+  let ownerProfileId: string;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -112,8 +118,6 @@ describe('Join or create a company from a sign-in (e2e)', () => {
   });
 
   describe('creating a company', () => {
-    let owner: { accessToken: string; refreshToken: string };
-
     beforeAll(async () => {
       owner = await signUp('owner@accounts.e2e.test');
     });
@@ -135,6 +139,7 @@ describe('Join or create a company from a sign-in (e2e)', () => {
         company: { id: expect.any(String), name: 'Accounts Co One' },
       });
       companyOneId = res.body.company.id;
+      ownerProfileId = res.body.profileId;
     });
 
     it('3. GET /me/companies lists it', async () => {
@@ -388,6 +393,182 @@ describe('Join or create a company from a sign-in (e2e)', () => {
           'The platform admin cannot join or create companies',
         );
       }
+    });
+  });
+
+  describe("each company's name and contact email (Task 5)", () => {
+    const mailpitApi = `http://localhost:${process.env.MAILPIT_UI_PORT ?? 8025}/api/v1`;
+    const contactEmail = 'lee.contact@accounts.e2e.test';
+    let lee: { accessToken: string; refreshToken: string };
+    let leeInCompanyOne: string; // profile ids
+    let leeInCompanyTwo: string;
+    let leeAccess: string; // with company one's profile open
+    let proof: string;
+
+    // Delivery is asynchronous, so poll instead of asserting once.
+    const waitFor = async <T>(
+      probe: () => Promise<T | null>,
+      timeoutMs = 10_000,
+    ): Promise<T> => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const value = await probe();
+        if (value) return value;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      throw new Error(`waitFor timed out after ${timeoutMs}ms`);
+    };
+
+    /** Every message Mailpit holds for `address`, newest first. */
+    const inbox = async (address: string) =>
+      (
+        (await (
+          await fetch(
+            `${mailpitApi}/search?query=${encodeURIComponent(`to:${address}`)}`,
+          )
+        ).json()) as { messages: { ID: string; Subject: string }[] }
+      ).messages;
+
+    /** POST /auth/email/start → the code from Mailpit → POST /auth/email/confirm. */
+    const emailProofFor = async (address: string): Promise<string> => {
+      await request(http)
+        .post('/auth/email/start')
+        .send({ email: address })
+        .expect(200);
+      const messageId = await waitFor(
+        async () => (await inbox(address))[0]?.ID ?? null,
+      );
+      const message = (await (
+        await fetch(`${mailpitApi}/message/${messageId}`)
+      ).json()) as { Text: string };
+      const code = message.Text.match(/\[(\d{6})\]/)?.[1];
+      if (!code) throw new Error(`no code in the email to ${address}`);
+      const confirmed = await request(http)
+        .post('/auth/email/confirm')
+        .send({ email: address, code: code })
+        .expect(200);
+      return confirmed.body.emailVerificationToken as string;
+    };
+
+    beforeAll(async () => {
+      // an earlier run must not make the Mailpit checks pass
+      await fetch(
+        `${mailpitApi}/search?query=${encodeURIComponent(`to:${contactEmail}`)}`,
+        { method: 'DELETE' },
+      );
+
+      // Lee waits to join both companies, then opens company one's profile
+      lee = await signUp('lee@accounts.e2e.test');
+      leeInCompanyOne = (
+        await join(lee.accessToken, await joinCodeOf(companyOneId), 'Lee')
+      ).body.profileId;
+      leeInCompanyTwo = (
+        await join(lee.accessToken, await joinCodeOf(companyTwoId), 'Lee')
+      ).body.profileId;
+      leeAccess = (
+        await request(http)
+          .post('/auth/switch')
+          .set(...auth(lee.accessToken))
+          .send({ refreshToken: lee.refreshToken, profileId: leeInCompanyOne })
+          .expect(201)
+      ).body.accessToken;
+    });
+
+    it('20. with no company open, /profiles/me → 403 Choose a company first', async () => {
+      const res = await request(http)
+        .patch('/profiles/me')
+        .set(...auth(lee.accessToken)) // signup's token: no profile in it
+        .send({ name: 'Lee Ji-eun' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.message).toBe('Choose a company first');
+    });
+
+    it('21. a WAITING profile renames itself in this company → 200', async () => {
+      const res = await request(http)
+        .patch('/profiles/me')
+        .set(...auth(leeAccess))
+        .send({ name: 'Lee Ji-eun' })
+        .expect(200);
+
+      expect(res.body).toEqual({
+        id: leeInCompanyOne,
+        name: 'Lee Ji-eun',
+        contactEmail: null,
+      });
+    });
+
+    it('22. …and sets a code-proven contact email → 200, stored lowercase', async () => {
+      proof = await emailProofFor(contactEmail);
+
+      const res = await request(http)
+        .put('/profiles/me/contact-email')
+        .set(...auth(leeAccess))
+        .send({
+          email: ' Lee.Contact@Accounts.E2E.test ',
+          emailVerificationToken: proof,
+        })
+        .expect(200);
+
+      expect(res.body).toEqual({
+        id: leeInCompanyOne,
+        name: 'Lee Ji-eun',
+        contactEmail: contactEmail,
+      });
+    });
+
+    it('23. the same proof twice → 400, nothing changes', async () => {
+      const res = await request(http)
+        .put('/profiles/me/contact-email')
+        .set(...auth(leeAccess))
+        .send({ email: contactEmail, emailVerificationToken: proof });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toBe('Invalid or expired email verification');
+    });
+
+    it('24. once approved, the "member approved" email arrives at that address', async () => {
+      const ownerAccess = (
+        await request(http)
+          .post('/auth/switch')
+          .set(...auth(owner.accessToken))
+          .send({ refreshToken: owner.refreshToken, profileId: ownerProfileId })
+          .expect(201)
+      ).body.accessToken;
+      const staff = await prisma.role.findUniqueOrThrow({
+        where: { code: 'STAFF' },
+      });
+
+      await request(http)
+        .patch(`/profiles/${leeInCompanyOne}/approve`)
+        .set(...auth(ownerAccess))
+        .send({ roleId: staff.id, cornerId: null })
+        .expect(200);
+
+      const expected = notificationTemplates.memberApproved('Accounts Co One');
+      const messages = await waitFor(async () => {
+        const found = await inbox(contactEmail);
+        return found.some((message) => message.Subject === expected.subject)
+          ? found
+          : null;
+      });
+      expect(messages.map((message) => message.Subject)).toContain(
+        expected.subject,
+      );
+    });
+
+    it("25. the account's other profile keeps its own name and no contact email", async () => {
+      const companies = await myCompanies(lee.accessToken);
+
+      expect(
+        companies.find((entry) => entry.profileId === leeInCompanyTwo),
+      ).toMatchObject({ name: 'Lee' });
+      await expect(
+        prisma.profile.findUniqueOrThrow({
+          where: { id: leeInCompanyTwo },
+          select: { name: true, contactEmail: true },
+        }),
+      ).resolves.toEqual({ name: 'Lee', contactEmail: null });
     });
   });
 });
