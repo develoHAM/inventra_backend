@@ -4,7 +4,14 @@ import { jest } from '@jest/globals';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { testPhones, verifiedPhone } from './helpers/phone';
+import { testPhones } from './helpers/phone';
+import {
+  createCompany,
+  joinCompany,
+  setContactEmail,
+  signUp,
+  switchTo,
+} from './helpers/accounts';
 import {
   NotificationChannel,
   NotificationStatus,
@@ -92,29 +99,25 @@ describe('Notifications (e2e)', () => {
   });
 
   it('approving a company emails its owner (row SENT, message in Mailpit)', async () => {
-    const taxId = '770-00-00001';
-    const { phone, token } = await verifiedPhone(app, nextPhone);
-    await request(http)
-      .post('/auth/register')
-      .send({
-        companyName: companyName,
-        taxId: taxId,
-        ownerName: 'Owner',
-        credentials: {
-          type: 'password',
-          email: ownerEmail,
-          password: 'password123',
-        },
-        ownerPhone: phone,
-        ownerPhoneVerificationToken: token,
-      })
-      .expect(201);
-    const company = await prisma.company.findUnique({
-      where: { taxId: taxId },
+    // the owner signs up, creates the company and, while it waits, proves
+    // the address its notifications should go to
+    const session = await signUp(app, nextPhone, {
+      email: ownerEmail,
+      password: 'password123',
     });
+    const created = await createCompany(app, session, {
+      companyName: companyName,
+      taxId: '770-00-00001',
+      ownerName: 'Owner',
+    });
+    await setContactEmail(
+      app,
+      await switchTo(app, session, created.profileId),
+      ownerEmail,
+    );
 
     await request(http)
-      .patch(`/companies/${company!.id}/approve`)
+      .patch(`/companies/${created.companyId}/approve`)
       .set(...auth(adminAccess))
       .expect(200);
 
@@ -141,9 +144,16 @@ describe('Notifications (e2e)', () => {
       const body = (await response.json()) as {
         messages: { Subject: string }[];
       };
-      return body.messages.length > 0 ? body : null;
+      // the code email that proved the address is in this inbox too
+      return body.messages.some(
+        (message) => message.Subject === expected.subject,
+      )
+        ? body
+        : null;
     });
-    expect(search.messages[0].Subject).toBe(expected.subject);
+    expect(search.messages.map((message) => message.Subject)).toContain(
+      expected.subject,
+    );
   });
 
   describe('Slice 1b events', () => {
@@ -200,22 +210,21 @@ describe('Notifications (e2e)', () => {
       });
 
     it('company.registered emails the platform admin', async () => {
-      const { phone, token } = await verifiedPhone(app, nextPhone);
-      await request(http)
-        .post('/auth/register')
-        .send({
-          companyName: companyName,
-          taxId: taxId,
-          ownerName: 'Owner 1b',
-          credentials: {
-            type: 'password',
-            email: ownerEmail1b,
-            password: password,
-          },
-          ownerPhone: phone,
-          ownerPhoneVerificationToken: token,
-        })
-        .expect(201);
+      const session = await signUp(app, nextPhone, {
+        email: ownerEmail1b,
+        password: password,
+      });
+      const created = await createCompany(app, session, {
+        companyName: companyName,
+        taxId: taxId,
+        ownerName: 'Owner 1b',
+      });
+      // where the owner's notifications go, proven while the company waits
+      await setContactEmail(
+        app,
+        await switchTo(app, session, created.profileId),
+        ownerEmail1b,
+      );
 
       const rows = await sentTo(
         NotificationEvent.COMPANY_REGISTERED,
@@ -225,11 +234,8 @@ describe('Notifications (e2e)', () => {
       expect(rows).toHaveLength(1);
 
       // approve it so the owner can act in the next steps
-      const company = await prisma.company.findUnique({
-        where: { taxId: taxId },
-      });
       await request(http)
-        .patch(`/companies/${company!.id}/approve`)
+        .patch(`/companies/${created.companyId}/approve`)
         .set(...auth(adminAccess))
         .expect(200);
       ownerAccess = await login(ownerEmail1b);
@@ -239,21 +245,13 @@ describe('Notifications (e2e)', () => {
       const company = await prisma.company.findUnique({
         where: { taxId: taxId },
       });
-      const { phone, token } = await verifiedPhone(app, nextPhone);
-      await request(http)
-        .post('/auth/register/member')
-        .send({
-          joinCode: company!.joinCode,
-          credentials: {
-            type: 'password',
-            email: managerEmail,
-            password: password,
-          },
-          name: 'Manager 1b',
-          phone: phone,
-          phoneVerificationToken: token,
-        })
-        .expect(201);
+      const session = await signUp(app, nextPhone, {
+        email: managerEmail,
+        password: password,
+      });
+      managerProfileId = (
+        await joinCompany(app, session, company!.joinCode, 'Manager 1b')
+      ).profileId;
 
       const requested = await sentTo(
         NotificationEvent.MEMBER_JOIN_REQUESTED,
@@ -261,10 +259,12 @@ describe('Notifications (e2e)', () => {
       );
       expect(requested[0].body).toContain('Manager 1b');
 
-      const member = await prisma.profile.findFirst({
-        where: { account: { loginMethods: { some: { email: managerEmail } } } },
-      });
-      managerProfileId = member!.id;
+      // while waiting, the manager proves where the approval should go
+      await setContactEmail(
+        app,
+        await switchTo(app, session, managerProfileId),
+        managerEmail,
+      );
       const managerRole = await prisma.role.findUnique({
         where: { code: 'MANAGER' },
       });

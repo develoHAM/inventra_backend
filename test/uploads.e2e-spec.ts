@@ -2,12 +2,11 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/prisma/prisma.service';
-import { testPhones, verifiedPhone } from './helpers/phone';
+import { testPhones } from './helpers/phone';
+import { suiteAccounts } from './helpers/accounts';
 
 describe('File Uploads (e2e)', () => {
   let app: INestApplication;
-  let prisma: PrismaService;
   let http: any;
 
   let adminAccess: string;
@@ -39,7 +38,6 @@ describe('File Uploads (e2e)', () => {
       }),
     );
     await app.init();
-    prisma = app.get(PrismaService);
     http = app.getHttpServer();
 
     adminAccess = (
@@ -52,35 +50,14 @@ describe('File Uploads (e2e)', () => {
         .expect(201)
     ).body.accessToken;
 
-    const taxId = '110-00-00001';
-    const email = 'owner1@upl.test';
-    const password = 'password123';
-    // accounts.phone is unique across the shared DB: suite 09's own block
-    const { phone, token } = await verifiedPhone(app, testPhones(9));
-    await request(http)
-      .post('/auth/register')
-      .send({
-        companyName: 'UPL Co',
-        taxId: taxId,
-        ownerName: 'Owner',
-        credentials: { type: 'password', email: email, password: password },
-        ownerPhone: phone,
-        ownerPhoneVerificationToken: token,
-      })
-      .expect(201);
-    const company = await prisma.company.findUnique({
-      where: { taxId: taxId },
+    const accounts = suiteAccounts(app, {
+      // accounts.phone is unique across the shared DB: suite 09's own block
+      nextPhone: testPhones(9),
+      emailDomain: 'upl.test', // owner1@upl.test
+      taxIdOf: () => '110-00-00001',
+      companyNameOf: () => 'UPL Co',
     });
-    await request(http)
-      .patch(`/companies/${company!.id}/approve`)
-      .set(...auth(adminAccess))
-      .expect(200);
-    ownerAccess = (
-      await request(http)
-        .post('/auth/login')
-        .send({ email: email, password: password })
-        .expect(201)
-    ).body.accessToken;
+    ownerAccess = (await accounts.registerOwner(adminAccess, 1)).access;
 
     const categoryId = (
       await request(http)

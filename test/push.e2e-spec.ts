@@ -11,7 +11,14 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { NotificationEvent } from '../src/notifications/notification-events';
 import { notificationTemplates } from '../src/notifications/notification-templates';
 import { FakePushSender } from '../src/notifications/channels/fake-push.sender';
-import { testPhones, verifiedPhone } from './helpers/phone';
+import { testPhones } from './helpers/phone';
+import {
+  createCompany,
+  joinCompany,
+  setContactEmail,
+  signUp,
+  switchTo,
+} from './helpers/accounts';
 
 // Delivery is asynchronous (event → queue → worker): allow polling.
 jest.setTimeout(30_000);
@@ -61,22 +68,20 @@ describe('Push notifications (e2e)', () => {
     return device?.account.profiles[0]?.id ?? null;
   };
 
+  /** A fresh sign-in joins the company and opens its (waiting) profile. */
   const signUpMember = async (email: string) => {
-    const { phone, token } = await verifiedPhone(app, nextPhone);
-    const response = await request(http)
-      .post('/auth/register/member')
-      .send({
-        joinCode: joinCode,
-        credentials: { type: 'password', email: email, password: password },
-        name: email.split('@')[0],
-        phone: phone,
-        phoneVerificationToken: token,
-      })
-      .expect(201);
-    return {
-      access: response.body.accessToken as string,
-      profileId: response.body.profile.id as string,
-    };
+    const session = await signUp(app, nextPhone, {
+      email: email,
+      password: password,
+    });
+    const joined = await joinCompany(
+      app,
+      session,
+      joinCode,
+      email.split('@')[0],
+    );
+    const opened = await switchTo(app, session, joined.profileId);
+    return { access: opened.accessToken, profileId: joined.profileId };
   };
 
   /** Wait until a notification row matching `where` reaches `status`. */
@@ -125,25 +130,21 @@ describe('Push notifications (e2e)', () => {
     adminAccess = adminLogin.body.accessToken;
     adminId = adminLogin.body.profile.id;
 
-    // a pending owner, logged in straight after signup
-    const { phone, token } = await verifiedPhone(app, nextPhone);
-    const registered = await request(http)
-      .post('/auth/register')
-      .send({
-        companyName: companyName,
-        taxId: taxId,
-        ownerName: 'Push Owner',
-        credentials: {
-          type: 'password',
-          email: ownerEmail,
-          password: password,
-        },
-        ownerPhone: phone,
-        ownerPhoneVerificationToken: token,
-      })
-      .expect(201);
-    ownerAccess = registered.body.accessToken;
-    ownerId = registered.body.profile.id;
+    // a pending owner, with the waiting company open, who has proven the
+    // address its notifications go to (as the app asks while it waits)
+    const session = await signUp(app, nextPhone, {
+      email: ownerEmail,
+      password: password,
+    });
+    const created = await createCompany(app, session, {
+      companyName: companyName,
+      taxId: taxId,
+      ownerName: 'Push Owner',
+    });
+    const opened = await switchTo(app, session, created.profileId);
+    await setContactEmail(app, opened, ownerEmail);
+    ownerAccess = opened.accessToken;
+    ownerId = created.profileId;
   });
 
   afterAll(async () => {

@@ -1,9 +1,15 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { jest } from '@jest/globals';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { testPhones, verifiedPhone } from './helpers/phone';
+import { testPhones } from './helpers/phone';
+import { suiteAccounts } from './helpers/accounts';
+
+// Members get a contact email proven through Mailpit (a code email, queued
+// and delivered asynchronously), so Jest's 5 s default is too tight.
+jest.setTimeout(30_000);
 
 /**
  * Members: who is in which branch, in which role. One story, shared state,
@@ -13,6 +19,7 @@ describe('Members (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let http: any;
+  let accounts: ReturnType<typeof suiteAccounts>;
 
   let adminAccess: string;
   let ownerAccess: string;
@@ -38,104 +45,11 @@ describe('Members (e2e)', () => {
   // accounts.phone is unique across the shared DB: suite 16's own block
   const nextPhone = testPhones(16);
 
-  // register a company → ADMIN approves it → owner logs in
-  const registerCompany = async (n: number) => {
-    const taxId = `7${n}6-00-0000${n}`;
-    const email = `owner${n}@mbr.test`;
-    const password = 'password123';
-    const { phone, token } = await verifiedPhone(app, nextPhone);
-    await request(http)
-      .post('/auth/register')
-      .send({
-        companyName: `Members Co ${n}`,
-        taxId: taxId,
-        ownerName: `Owner ${n}`,
-        credentials: { type: 'password', email: email, password: password },
-        ownerPhone: phone,
-        ownerPhoneVerificationToken: token,
-      })
-      .expect(201);
-    const company = await prisma.company.findUnique({
-      where: { taxId: taxId },
-    });
-    await request(http)
-      .patch(`/companies/${company!.id}/approve`)
-      .set('Authorization', `Bearer ${adminAccess}`)
-      .expect(200);
-    const login = await request(http)
-      .post('/auth/login')
-      .send({ email: email, password: password })
-      .expect(201);
-    const owner = await prisma.profile.findFirst({
-      where: { account: { loginMethods: { some: { email: email } } } },
-    });
-    return {
-      access: login.body.accessToken as string,
-      profileId: owner!.id,
-      companyId: company!.id,
-      joinCode: company!.joinCode,
-    };
-  };
-
-  // member self-registers via join code → owner approves with a role → member logs in
-  const registerMember = async (
-    joinCode: string,
-    roleCode: string,
-    tag: string,
-  ) => {
-    const email = `${tag}@mbr.test`;
-    const password = 'password123';
-    const { phone, token } = await verifiedPhone(app, nextPhone);
-    await request(http)
-      .post('/auth/register/member')
-      .send({
-        joinCode: joinCode,
-        credentials: { type: 'password', email: email, password: password },
-        name: tag,
-        phone: phone,
-        phoneVerificationToken: token,
-      })
-      .expect(201);
-    const profile = await prisma.profile.findFirst({
-      where: { account: { loginMethods: { some: { email: email } } } },
-    });
-    const role = await prisma.role.findUnique({ where: { code: roleCode } });
-    await request(http)
-      .patch(`/profiles/${profile!.id}/approve`)
-      .set('Authorization', `Bearer ${ownerAccess}`)
-      .send({ roleId: role!.id, cornerId: null })
-      .expect(200);
-    const login = await request(http)
-      .post('/auth/login')
-      .send({ email: email, password: password })
-      .expect(201);
-    return { access: login.body.accessToken as string, profileId: profile!.id };
-  };
-
-  // member self-registers via join code and waits for approval (not approved here)
-  const registerPending = async (tag: string, joinCode: string = joinCode1) => {
-    const { phone, token } = await verifiedPhone(app, nextPhone);
-    await request(http)
-      .post('/auth/register/member')
-      .send({
-        joinCode: joinCode,
-        credentials: {
-          type: 'password',
-          email: `${tag}@mbr.test`,
-          password: 'password123',
-        },
-        name: tag,
-        phone: phone,
-        phoneVerificationToken: token,
-      })
-      .expect(201);
-    const profile = await prisma.profile.findFirst({
-      where: {
-        account: { loginMethods: { some: { email: `${tag}@mbr.test` } } },
-      },
-    });
-    return profile!.id;
-  };
+  // a member joins with the code and waits for approval (not approved here);
+  // their login email is proven and becomes their contact email
+  const registerPending = async (tag: string, joinCode: string = joinCode1) =>
+    (await accounts.pendingMember(joinCode, tag, { contactEmail: true }))
+      .profileId;
 
   const approve = (
     access: string,
@@ -219,6 +133,12 @@ describe('Members (e2e)', () => {
     await app.init();
     prisma = app.get(PrismaService);
     http = app.getHttpServer();
+    accounts = suiteAccounts(app, {
+      nextPhone: nextPhone,
+      emailDomain: 'mbr.test',
+      taxIdOf: (n) => `7${n}6-00-0000${n}`,
+      companyNameOf: (n) => `Members Co ${n}`,
+    });
 
     const adminLogin = await request(http)
       .post('/auth/login')
@@ -229,11 +149,11 @@ describe('Members (e2e)', () => {
       .expect(201);
     adminAccess = adminLogin.body.accessToken;
 
-    const company1 = await registerCompany(1);
+    const company1 = await accounts.registerOwner(adminAccess, 1);
     joinCode1 = company1.joinCode;
     ownerAccess = company1.access;
     ownerProfileId = company1.profileId;
-    const company2 = await registerCompany(2);
+    const company2 = await accounts.registerOwner(adminAccess, 2);
     owner2Access = company2.access;
     owner2ProfileId = company2.profileId;
     company2Id = company2.companyId;
@@ -249,17 +169,33 @@ describe('Members (e2e)', () => {
     branchBId = await openBranch(ownerAccess, store.body.id, 'Branch B');
     company2BranchId = await openBranch(owner2Access, store.body.id, 'Other');
 
-    const manager = await registerMember(
+    // contact emails: the suite checks the manager's in the member list and
+    // the emails the staff are sent when moved
+    const manager = await accounts.registerJoinedMember(
+      ownerAccess,
       company1.joinCode,
       'MANAGER',
       'manager',
+      { contactEmail: true },
     );
     managerAccess = manager.access;
     managerProfileId = manager.profileId;
-    const staff = await registerMember(company1.joinCode, 'STAFF', 'staff');
+    const staff = await accounts.registerJoinedMember(
+      ownerAccess,
+      company1.joinCode,
+      'STAFF',
+      'staff',
+      { contactEmail: true },
+    );
     staffAccess = staff.access;
     staffProfileId = staff.profileId;
-    const staff2 = await registerMember(company1.joinCode, 'STAFF', 'staff2');
+    const staff2 = await accounts.registerJoinedMember(
+      ownerAccess,
+      company1.joinCode,
+      'STAFF',
+      'staff2',
+      { contactEmail: true },
+    );
     staff2ProfileId = staff2.profileId;
     staff2Access = staff2.access;
   });
@@ -525,23 +461,7 @@ describe('Members (e2e)', () => {
 
     it("the admin cannot approve a company's pending owner as a member (400); they stay its owner", async () => {
       // Company 3 registers; the admin has not approved the company yet.
-      const { phone, token } = await verifiedPhone(app, nextPhone);
-      await request(http)
-        .post('/auth/register')
-        .send({
-          companyName: 'Members Co 3',
-          taxId: '736-00-00003',
-          ownerName: 'Owner 3',
-          credentials: {
-            type: 'password',
-            email: 'owner3@mbr.test',
-            password: 'password123',
-          },
-          ownerPhone: phone,
-          ownerPhoneVerificationToken: token,
-        })
-        .expect(201);
-      const pendingOwnerId = await profileIdByEmail('owner3@mbr.test');
+      const pendingOwnerId = (await accounts.pendingOwner(3)).profileId;
 
       await approve(
         adminAccess,

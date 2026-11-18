@@ -7,7 +7,6 @@ import {
   Equals,
   IsEmail,
   IsNotEmpty,
-  IsOptional,
   IsString,
   MaxLength,
   MinLength,
@@ -38,39 +37,7 @@ export class PasswordCredentialsDto {
   password!: string;
 }
 
-/**
- * register / register/member: a social identity vouched for by
- * POST /auth/social/login (SIGNUP_REQUIRED), plus an optional typed
- * contact email for the profile they create.
- */
-export class SocialCredentialsDto {
-  @LowercaseTag()
-  @Equals('social')
-  type!: 'social';
-
-  // the SIGNUP_REQUIRED response's signupToken
-  @IsString()
-  @IsNotEmpty()
-  signupToken!: string;
-
-  // a typed address for notifications (required when the provider shared no
-  // verified email; otherwise it overrides the provider email)…
-  @IsOptional()
-  @Transform(({ value }) => normalizeEmail(value))
-  @IsEmail()
-  contactEmail?: string;
-
-  // …always with its proof from POST /auth/email/confirm (both or neither)
-  @IsOptional()
-  @IsString()
-  @IsNotEmpty()
-  emailVerificationToken?: string;
-}
-
-/**
- * POST /auth/signup: a social identity and nothing else. A contact email
- * belongs to a company profile, and signup makes none.
- */
+/** POST /auth/signup: a social identity, vouched for by POST /auth/social/login (SIGNUP_REQUIRED). */
 export class SocialSignupCredentialsDto {
   @LowercaseTag()
   @Equals('social')
@@ -82,10 +49,7 @@ export class SocialSignupCredentialsDto {
   signupToken!: string;
 }
 
-/** register and register/member (until Task 7). */
-export type SignupCredentials = PasswordCredentialsDto | SocialCredentialsDto;
-
-/** POST /auth/signup. */
+/** POST /auth/signup: a password, or a social identity. */
 export type AccountSignupCredentials =
   PasswordCredentialsDto | SocialSignupCredentialsDto;
 
@@ -98,22 +62,12 @@ export type AccountSignupCredentials =
  * matches exactly and reads the raw JSON before any @Transform runs, so it
  * would never see 'Social' as 'social'.
  */
-function credentialsTypeFor(socialClass: new () => SocialSignupCredentialsDto) {
-  return () =>
-    Type((options?: TypeHelpOptions) => {
-      const credentials = options?.object[options.property] as
-        { type?: unknown } | null | undefined;
-      const tag = credentials?.type;
-      return typeof tag === 'string' && tag.toLowerCase() === 'social'
-        ? socialClass
-        : PasswordCredentialsDto;
-    });
-}
-
-/** register and register/member: the social variant may carry a contact email. */
-export const CredentialsType = credentialsTypeFor(SocialCredentialsDto);
-
-/** POST /auth/signup: the social variant is only the ticket. */
-export const SignupCredentialsType = credentialsTypeFor(
-  SocialSignupCredentialsDto,
-);
+export const SignupCredentialsType = () =>
+  Type((options?: TypeHelpOptions) => {
+    const credentials = options?.object[options.property] as
+      { type?: unknown } | null | undefined;
+    const tag = credentials?.type;
+    return typeof tag === 'string' && tag.toLowerCase() === 'social'
+      ? SocialSignupCredentialsDto
+      : PasswordCredentialsDto;
+  });

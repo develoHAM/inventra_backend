@@ -87,20 +87,18 @@ describe('Account recovery (e2e)', () => {
       { method: 'DELETE' },
     );
 
-    // the account to recover: a (pending) owner with a verified phone
+    // the account to recover: a sign-in with a verified phone and a
+    // password (recovery is about the sign-in, so no company is needed)
     await request(http)
-      .post('/auth/register')
+      .post('/auth/signup')
       .send({
-        companyName: 'AR Co',
-        taxId: '660-00-00001',
-        ownerName: 'AR Owner',
+        phone: ownerPhone,
+        phoneVerificationToken: await verifiedPhoneToken(app, ownerPhone),
         credentials: {
           type: 'password',
           email: ownerEmail,
           password: oldPassword,
         },
-        ownerPhone: ownerPhone,
-        ownerPhoneVerificationToken: await verifiedPhoneToken(app, ownerPhone),
       })
       .expect(201);
 

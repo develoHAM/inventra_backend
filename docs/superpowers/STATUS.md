@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-11-13.
+> Last updated: 2026-11-19.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -28,9 +28,9 @@
 | Notify | **Notifications** (email · SMS · push) + **account security** (OCTOMO phone verification · find ID · password reset) | ✅ complete (Slices 1a–4) |
 | Social | **Social login** (Kakao · Google · Facebook · Apple, native app-to-app) + **login methods** (link · add a password · unlink) | ✅ complete (Tasks 1–14) |
 | Members | **Roles & branches** (membership piece 1 of 3: promote/demote, move between branches, one branch per manager, change history, notifications) | ✅ complete (Tasks 1–8) |
-| Members | **One sign-in, many companies** (membership piece 2 of 3: a profile per company, switching, join/create from inside the app) | 🔨 Tasks 1, 1b, 2, 3, 4, 5, 6 done; Task 7 next |
+| Members | **One sign-in, many companies** (membership piece 2 of 3: a profile per company, switching, join/create from inside the app) | ✅ complete (Tasks 1, 1b, 2–7) |
 
-## Where we are right now — One sign-in, many companies (membership piece 2): Tasks 1, 1b, 2, 3, 4, 5, 6 done
+## Where we are right now — One sign-in, many companies (membership piece 2): complete
 
 Spec `docs/superpowers/specs/2026-11-12-one-sign-in-many-companies-design.md`, plan `docs/superpowers/plans/2026-11-12-one-sign-in-many-companies.md` (7 tasks, native execution: per task teach → reference code → user applies or asks Claude to → Claude tests → human runs migrate + e2e). Ledger `.superpowers/sdd/2026-11-12-one-sign-in-many-companies/progress.md` (git-ignored).
 
@@ -66,10 +66,17 @@ Spec `docs/superpowers/specs/2026-11-12-one-sign-in-many-companies-design.md`, p
   - `NotificationsService.notifyProfiles`, push half only: the recipients query (already there, for their accounts' devices) also selects `company: { select: { id, name } }` — a relation select, one batched lookup for all recipients, not one per recipient (N+1). Each push row's data is `{ ...event data, profileId: <recipient>, ...(company ? { companyId } : {}) }` (the recipient's ids last, so they win a same-named key) and its title `${company.name} · ${subject}`; the platform admin (no company) keeps the event's data and title, plus its `profileId`. Email rows unchanged (no data, no prefix).
   - E2e: `push.e2e-spec` company approval now expects `PUSH Co · …` and `profileId`; `notifications.e2e-spec` order test registers the owner's phone first and checks the order push row (`cornerId`, `orderId`, `profileId`, `companyId`, `NTF 1b Co · …`). (Plan said owner files → manager's device; the suite's existing flow is manager files → owner notified, the actor being excluded — same check.)
   - Noticed, left as is: the email half looks up each recipient's contact email one by one (`findProfileEmail` in a loop) — a small N+1, cheap at a branch's few recipients.
-- **1287 unit tests green (89 suites) + 263 e2e green (17 suites)** — both **measured** 2026-11-18 after Task 6 (`Tests: 263 passed, 263 total`, on a database rebuilt from all 29 migrations).
+- **Task 7**: retire the old signup endpoints; the part-timer story.
+  - **Removed:** `POST /auth/register` and `POST /auth/register/member`, `RegisterDto`, `RegisterMemberDto`, `AuthService.register` / `registerMember` / `signupLogin` / `contactEmailFor`, `SocialCredentialsDto` (+ its contact-email pair), `SignupCredentials`, `CredentialsType`; `AuthService` no longer injects `EventEmitter2` or `EmailVerificationService`, and `AuthModule` no longer imports `EmailVerificationModule` (still registered through `AppModule`, `SocialAuthModule`, `ProfilesModule`). `credentialsTypeFor` folded into a plain `SignupCredentialsType`. A password signup's login email no longer becomes an unproven contact email.
+  - **Shared e2e helpers:** `test/helpers/accounts.ts` — `signUp`, `createCompany`, `joinCompany`, `switchTo`, `setContactEmail`, and `suiteAccounts(app, { nextPhone, emailDomain, taxIdOf, companyNameOf })` → `pendingOwner` / `registerOwner` / `pendingMember` / `registerJoinedMember` (`{ contactEmail: true }` proves the login address BEFORE approval); `test/helpers/email.ts` — `waitFor`, `inbox`, `clearInbox`, `emailProof`. Every suite moved onto them; `profiles`, `notifications` and `push` prove contact emails (they assert emails), so they need Mailpit for setup.
+  - Join-code's two "probing costs a verified phone" tests went with `register/member` (the per-account brake in `accounts.e2e` 14–18 replaces that guarantee); social signup no longer turns a provider-verified email into a contact email (asserted null).
+  - **Part-timer story** (`accounts.e2e` 26–31): one phone; join A (approved) then B (pending) with A still working; B approved → switch; A's and B's tokens each 404 on the other's members; both approval pushes on the phone carry their own `profileId`/`companyId`/title; logout ends refresh and switch; a DEACTIVATED A drops out of the dropdown and login opens B.
+- **Migrations of this piece:** `20261112162955_accounts`, `20261113120851_profiles`, `20261115135455_company_join_attempts`.
+- **New endpoints of this piece:** `POST /auth/signup`, `POST /auth/switch`, `GET /me/companies`, `POST /me/companies/join`, `POST /me/companies`, `PATCH /profiles/me`, `PUT /profiles/me/contact-email`; `GET /auth/me` answers `{ accountId, phone, profile | null }`.
+- **1211 unit tests green (89 suites) + 267 e2e green (17 suites)** — both **measured** 2026-11-19 after Task 7 (`Tests: 267 passed, 267 total`, first run, on a database rebuilt from all 29 migrations). Unit count fell from 1287 with the removed register code's tests.
 - The sections below are history: they use the names of their time (`users.*` permissions, `/users/:id/...` routes, `src/members`, `src/users`).
 
-**Next:** Task 7 — retire `POST /auth/register` and `/auth/register/member` (and `RegisterDto`, `RegisterMemberDto`, `SocialCredentialsDto`'s contact-email pair + `contactEmailFor` if unused); shared e2e helpers `test/helpers/accounts.ts` (`signUp`, `createCompany`, `joinCompany`, `switchTo`, `registerOwner`, `registerJoinedMember`) driving signup → join/create → switch; every e2e suite moves onto them; the part-timer story; docs.
+**Next:** a short follow-up chosen by the user (2026-11-19): **prove a contact email inside join and create** — `POST /me/companies/join` and `POST /me/companies` accept an optional `{ contactEmail, emailVerificationToken }` pair (both or neither), spent in the same step as the profile insert, so someone who gives it up front is emailed on approval without a separate `PUT /profiles/me/contact-email`. Then membership piece 3 (leaving: leave a company, delete an account, close a company when its last owner leaves, provider disconnect) — brainstorm → spec → plan.
 
 ## Prior — Roles & branches complete (membership piece 1, Tasks 1–8)
 

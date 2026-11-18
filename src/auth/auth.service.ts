@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -8,36 +7,17 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
-import { RegisterDto } from './dto/register.dto';
-import { ProfileModel } from '../generated/prisma/models';
-import { RegisterMemberDto } from './dto/register-member.dto';
-import {
-  PhoneVerificationPurpose,
-  ProfileStatus,
-} from '../generated/prisma/enums';
+import { PhoneVerificationPurpose } from '../generated/prisma/enums';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
-import { EventEmitter2 } from '@nestjs/event-emitter';
-import { NotificationEvent } from '../notifications/notification-events';
-import type {
-  CompanyRegisteredEvent,
-  MemberJoinRequestedEvent,
-} from '../notifications/notification-events';
 import { PhoneVerificationService } from '../phone-verification/phone-verification.service';
-import { generateUniqueJoinCode } from '../companies/join-code';
 import { DevicesService } from '../devices/devices.service';
 import { LogoutDto } from './dto/logout.dto';
 import { Prisma } from '../generated/prisma/client';
-import type {
-  AccountSignupCredentials,
-  SignupCredentials,
-  SocialCredentialsDto,
-} from './dto/credentials.dto';
+import type { AccountSignupCredentials } from './dto/credentials.dto';
 import { SignupDto } from './dto/signup.dto';
 import { SignupTicketService } from '../social-auth/signup-tickets/signup-ticket.service';
 import type { SpentSignupTicket } from '../social-auth/signup-tickets/signup-ticket.service';
-import { EmailVerificationService } from '../email-verification/email-verification.service';
-import { normalizeEmail } from '../common/email';
 import { AccountsService } from '../accounts/accounts.service';
 import type { OpenProfileSummary } from '../accounts/company-profile-view';
 import type { SessionResponse } from './types/session-response';
@@ -51,23 +31,15 @@ type NewLoginMethod = Omit<
   'accountId'
 >;
 
-/** What register / register/member create for their credentials (until Task 7). */
-interface SignupLogin {
-  contactEmail: string; // where the new profile's notifications go
-  loginMethod: NewLoginMethod;
-}
-
 @Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly passwordService: PasswordService,
     private readonly tokenService: TokenService,
-    private readonly eventEmitter: EventEmitter2,
     private readonly phoneVerification: PhoneVerificationService,
     private readonly devices: DevicesService,
     private readonly signupTickets: SignupTicketService,
-    private readonly emailVerification: EmailVerificationService,
     private readonly accounts: AccountsService,
   ) {}
 
@@ -142,40 +114,6 @@ export class AuthService {
       : Promise.resolve(null);
   }
 
-  /**
-   * Inside the signup transaction: spend whatever proves the credentials and
-   * return the login method to create, plus where notifications go.
-   */
-  private async signupLogin(
-    transaction: Prisma.TransactionClient,
-    credentials: SignupCredentials,
-    passwordHash: string | null,
-  ): Promise<SignupLogin> {
-    if (credentials.type === 'password') {
-      return {
-        contactEmail: credentials.email, // notifications go to the login email
-        loginMethod: {
-          method: 'local',
-          email: credentials.email,
-          passwordHash: passwordHash!, // hashed by passwordHashFor for password credentials
-        },
-      };
-    }
-
-    const ticket = await this.signupTickets.consume(
-      transaction,
-      credentials.signupToken,
-    );
-    return {
-      contactEmail: await this.contactEmailFor(
-        transaction,
-        ticket,
-        credentials,
-      ),
-      loginMethod: this.loginMethodFromTicket(ticket),
-    };
-  }
-
   /** The login method a spent social signup ticket becomes. */
   private loginMethodFromTicket(ticket: SpentSignupTicket): NewLoginMethod {
     return {
@@ -212,43 +150,17 @@ export class AuthService {
   }
 
   /**
-   * Where a social signup's notifications go: an address the user typed and
-   * proved with an emailed code (their explicit choice wins), else the
-   * provider's verified email, else 400. Never an unverified address.
-   */
-  private async contactEmailFor(
-    transaction: Prisma.TransactionClient,
-    ticket: SpentSignupTicket,
-    credentials: SocialCredentialsDto,
-  ): Promise<string> {
-    const { contactEmail, emailVerificationToken } = credentials;
-    if (contactEmail !== undefined && emailVerificationToken !== undefined) {
-      await this.emailVerification.consume(transaction, {
-        token: emailVerificationToken,
-        email: contactEmail,
-      });
-      return normalizeEmail(contactEmail) as string;
-    }
-    const neitherSent =
-      contactEmail === undefined && emailVerificationToken === undefined;
-    if (neitherSent && ticket.emailVerified && ticket.email !== null) {
-      return ticket.email;
-    }
-    throw new BadRequestException('A verified contact email is required');
-  }
-
-  /**
    * The new account's first login method — unless the database already has it:
    * the same provider identity (UQ_login_methods_identity) or, for a password
    * login, the same email (UQ_login_methods_local_email), registered by a
    * signup that got there first. skipDuplicates makes it INSERT … ON CONFLICT
    * DO NOTHING: a duplicate comes back as count 0 instead of an error. The
-   * throw rolls the whole signup back, the new account and profile included.
+   * throw rolls the whole signup back, the new account included.
    */
   private async addFirstLoginMethod(
     transaction: Prisma.TransactionClient,
     accountId: string,
-    loginMethod: SignupLogin['loginMethod'],
+    loginMethod: NewLoginMethod,
   ): Promise<void> {
     const inserted = await transaction.accountLoginMethod.createMany({
       data: [{ ...loginMethod, accountId: accountId }],
@@ -310,208 +222,6 @@ export class AuthService {
 
     // After the commit: only now can the session's own insert see the account.
     return this.startSession(accountId, null);
-  }
-
-  async register(dto: RegisterDto): Promise<{
-    accessToken: string;
-    refreshToken: string;
-    profile: Partial<ProfileModel>;
-  }> {
-    const {
-      companyName,
-      taxId,
-      ownerName,
-      ownerPhone,
-      ownerPhoneVerificationToken,
-      credentials,
-    } = dto;
-
-    const [emailTaken, taxIdTaken, phoneTaken] = await Promise.all([
-      this.isLoginEmailTaken(credentials),
-      this.prisma.company.findUnique({ where: { taxId: taxId } }),
-      this.findPhoneOwner(ownerPhone),
-    ]);
-
-    if (emailTaken) throw new ConflictException('Email already registered');
-    if (taxIdTaken) throw new ConflictException('Tax ID already registered');
-    if (phoneTaken) throw new ConflictException('Phone already registered');
-
-    const passwordHash = await this.passwordHashFor(credentials);
-
-    const role = await this.prisma.role.findUniqueOrThrow({
-      where: {
-        code: 'OWNER',
-      },
-    });
-
-    const companyJoinCode = await generateUniqueJoinCode(this.prisma);
-
-    const { profile, company, accountId } = await this.prisma.$transaction(
-      async (transaction) => {
-        // Spend the proofs first: if anything below fails, they roll back too.
-        await this.phoneVerification.consume(transaction, {
-          token: ownerPhoneVerificationToken,
-          phone: ownerPhone,
-          purpose: PhoneVerificationPurpose.SIGNUP,
-        });
-        const login = await this.signupLogin(
-          transaction,
-          credentials,
-          passwordHash,
-        );
-
-        // The sign-in (phone + logins), then the owner's profile in the new company.
-        const newAccountId = await this.accounts.createAccount(
-          transaction,
-          ownerPhone,
-        );
-        if (newAccountId === null) {
-          throw new ConflictException('Phone already registered'); // taken meanwhile
-        }
-        const newProfile = await transaction.profile.create({
-          data: {
-            accountId: newAccountId,
-            name: ownerName,
-            contactEmail: login.contactEmail,
-            companyId: null,
-            status: 'PENDING_APPROVAL',
-            roleId: role.id,
-          },
-        });
-        await this.addFirstLoginMethod(
-          transaction,
-          newAccountId,
-          login.loginMethod,
-        );
-
-        const newCompany = await transaction.company.create({
-          data: {
-            name: companyName,
-            taxId: taxId,
-            joinCode: companyJoinCode,
-            createdByProfileId: newProfile.id,
-          },
-        });
-
-        const updatedProfile = await transaction.profile.update({
-          where: { id: newProfile.id },
-          data: {
-            companyId: newCompany.id,
-          },
-        });
-
-        return {
-          profile: updatedProfile,
-          company: newCompany,
-          accountId: newAccountId,
-        };
-      },
-    );
-
-    const registeredEvent: CompanyRegisteredEvent = {
-      companyId: company.id,
-    };
-    this.eventEmitter.emit(
-      NotificationEvent.COMPANY_REGISTERED,
-      registeredEvent,
-    );
-
-    const tokens = await this.issueSessionFor(accountId, profile.id);
-
-    return {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      profile: {
-        id: profile.id,
-        status: profile.status, // PENDING_APPROVAL
-        companyId: profile.companyId,
-        roleId: profile.roleId,
-      },
-    };
-  }
-
-  async registerMember(dto: RegisterMemberDto): Promise<{
-    accessToken: string;
-    refreshToken: string;
-    profile: Partial<ProfileModel>;
-  }> {
-    const { joinCode, name, phone, phoneVerificationToken, credentials } = dto;
-
-    const [emailTaken, phoneTaken] = await Promise.all([
-      this.isLoginEmailTaken(credentials),
-      this.findPhoneOwner(phone),
-    ]);
-
-    if (emailTaken) throw new ConflictException('Email already registered');
-    if (phoneTaken) throw new ConflictException('Phone already registered');
-
-    const passwordHash = await this.passwordHashFor(credentials);
-
-    // The phone token is spent BEFORE the join code is looked at, so learning
-    // whether a code exists costs a real phone verification. An unknown code
-    // RETURNS (commit → the token stays spent) instead of throwing (rollback).
-    const created = await this.prisma.$transaction(async (transaction) => {
-      await this.phoneVerification.consume(transaction, {
-        token: phoneVerificationToken,
-        phone: phone,
-        purpose: PhoneVerificationPurpose.SIGNUP,
-      });
-
-      const company = await transaction.company.findUnique({
-        where: { joinCode: joinCode },
-      });
-      if (!company) return null;
-
-      // Only now: a mistyped join code must not burn the user's signup ticket.
-      const login = await this.signupLogin(
-        transaction,
-        credentials,
-        passwordHash,
-      );
-
-      // The sign-in (phone + logins), then the member's profile in that company.
-      const accountId = await this.accounts.createAccount(transaction, phone);
-      if (accountId === null) {
-        throw new ConflictException('Phone already registered'); // taken meanwhile
-      }
-      const profile = await transaction.profile.create({
-        data: {
-          accountId: accountId,
-          name: name,
-          contactEmail: login.contactEmail,
-          companyId: company.id,
-          roleId: null, // role assigned by the owner at approval
-          status: ProfileStatus.PENDING_APPROVAL,
-        },
-      });
-      await this.addFirstLoginMethod(transaction, accountId, login.loginMethod);
-      return { profile: profile, companyId: company.id, accountId: accountId };
-    });
-
-    if (!created) throw new NotFoundException('Invalid join code');
-    const { profile, companyId, accountId } = created;
-
-    const joinRequestedEvent: MemberJoinRequestedEvent = {
-      companyId: companyId,
-      memberProfileId: profile.id,
-    };
-    this.eventEmitter.emit(
-      NotificationEvent.MEMBER_JOIN_REQUESTED,
-      joinRequestedEvent,
-    );
-
-    const tokens = await this.issueSessionFor(accountId, profile.id);
-
-    return {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      profile: {
-        id: profile.id,
-        status: profile.status, // PENDING_APPROVAL
-        companyId: profile.companyId,
-        roleId: profile.roleId, // null
-      },
-    };
   }
 
   async login(dto: LoginDto): Promise<SessionResponse> {

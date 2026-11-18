@@ -1,10 +1,14 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { jest } from '@jest/globals';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { notificationTemplates } from '../src/notifications/notification-templates';
 import { testPhones, verifiedPhone } from './helpers/phone';
+import { joinCompany, suiteAccounts, switchTo } from './helpers/accounts';
+import type { OwnerSetup, Session } from './helpers/accounts';
+import { waitFor } from './helpers/email';
 
 /**
  * GET /me/companies, POST /me/companies/join and POST /me/companies: an
@@ -13,6 +17,10 @@ import { testPhones, verifiedPhone } from './helpers/phone';
  * company profile gets its own name and a code-proven contact email.
  * Requires Postgres, Redis and Mailpit running.
  */
+// Emails go through the queue to Mailpit and pushes through the worker:
+// tests poll (up to 10 s), so Jest's 5 s default would cut a wait short.
+jest.setTimeout(30_000);
+
 describe('Join or create a company from a sign-in (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
@@ -569,6 +577,174 @@ describe('Join or create a company from a sign-in (e2e)', () => {
           select: { name: true, contactEmail: true },
         }),
       ).resolves.toEqual({ name: 'Lee', contactEmail: null });
+    });
+  });
+  describe('the part-timer: one sign-in, two companies', () => {
+    const parkEmail = 'park@part.accounts.e2e.test';
+    const parkPhone = 'park-phone'; // one phone for both companies
+    let ownerA: OwnerSetup;
+    let ownerB: OwnerSetup;
+    let park: Session; // straight from signup: no company
+    let parkInA: string; // profile ids
+    let parkInB: string;
+    let parkA: Session; // company A open
+    let parkB: Session; // company B open
+
+    const approveAsStaff = async (ownerAccess: string, profileId: string) => {
+      const staff = await prisma.role.findUniqueOrThrow({
+        where: { code: 'STAFF' },
+      });
+      await request(http)
+        .patch(`/profiles/${profileId}/approve`)
+        .set(...auth(ownerAccess))
+        .send({ roleId: staff.id, cornerId: null })
+        .expect(200);
+    };
+    const memberIds = async (accessToken: string) =>
+      (
+        (
+          await request(http)
+            .get('/profiles')
+            .set(...auth(accessToken))
+            .expect(200)
+        ).body as Array<{ id: string }>
+      ).map((member) => member.id);
+
+    beforeAll(async () => {
+      const parts = suiteAccounts(app, {
+        nextPhone: nextPhone,
+        emailDomain: 'part.accounts.e2e.test',
+        taxIdOf: taxIdOf, // 21, 22: unused above
+        companyNameOf: (n) => `Part Co ${n}`,
+      });
+      ownerA = await parts.registerOwner(adminAccess, 21);
+      ownerB = await parts.registerOwner(adminAccess, 22);
+      park = await signUp(parkEmail);
+      // the phone belongs to the sign-in: registered once, before any company
+      await request(http)
+        .post('/devices')
+        .set(...auth(park.accessToken))
+        .send({ token: parkPhone, platform: 'ANDROID' })
+        .expect(204);
+    });
+
+    it("26. joins A and is approved, then asks to join B: A's routes still work with A's token", async () => {
+      parkInA = (await joinCompany(app, park, ownerA.joinCode, 'Park'))
+        .profileId;
+      await approveAsStaff(ownerA.access, parkInA);
+      parkA = await switchTo(app, park, parkInA);
+
+      parkInB = (await joinCompany(app, parkA, ownerB.joinCode, 'Park'))
+        .profileId;
+
+      // waiting for B changes nothing in A
+      expect(await memberIds(parkA.accessToken)).toContain(ownerA.profileId);
+      const companies = await myCompanies(parkA.accessToken);
+      expect(companies.map((entry) => [entry.profileId, entry.status])).toEqual(
+        [
+          [parkInA, 'ACTIVE'],
+          [parkInB, 'PENDING_APPROVAL'],
+        ],
+      );
+    });
+
+    it('27. B approves; switching opens B, with no password', async () => {
+      await approveAsStaff(ownerB.access, parkInB);
+
+      parkB = await switchTo(app, parkA, parkInB);
+
+      const me = await request(http)
+        .get('/auth/me')
+        .set(...auth(parkB.accessToken))
+        .expect(200);
+      expect(me.body.profile).toMatchObject({
+        id: parkInB,
+        companyId: ownerB.companyId,
+        status: 'ACTIVE',
+      });
+    });
+
+    it("28. each company's token sees only that company", async () => {
+      // A's token on B's member, and B's token on A's: not found
+      await request(http)
+        .get(`/profiles/${ownerB.profileId}/history`)
+        .set(...auth(parkA.accessToken))
+        .expect(404);
+      await request(http)
+        .get(`/profiles/${ownerA.profileId}/history`)
+        .set(...auth(parkB.accessToken))
+        .expect(404);
+
+      const inB = await memberIds(parkB.accessToken);
+      expect(inB).toContain(ownerB.profileId);
+      expect(inB).not.toContain(ownerA.profileId);
+    });
+
+    it("29. one phone gets both companies' approvals, each naming its own profile and company", async () => {
+      const pushes = await waitFor(async () => {
+        const rows = await prisma.notification.findMany({
+          where: { eventType: 'member.approved', recipientAddress: parkPhone },
+          orderBy: { createdAt: 'asc' },
+        });
+        return rows.length === 2 ? rows : null;
+      });
+
+      const expected = notificationTemplates.memberApproved;
+      expect(
+        pushes.map((push) => [
+          push.recipientProfileId,
+          push.subject,
+          push.data,
+        ]),
+      ).toEqual([
+        [
+          parkInA,
+          `Part Co 21 · ${expected('Part Co 21').subject}`,
+          { companyId: ownerA.companyId, profileId: parkInA },
+        ],
+        [
+          parkInB,
+          `Part Co 22 · ${expected('Part Co 22').subject}`,
+          { companyId: ownerB.companyId, profileId: parkInB },
+        ],
+      ]);
+    });
+
+    it('30. signing out ends the session for both companies', async () => {
+      await request(http)
+        .post('/auth/logout')
+        .set(...auth(parkB.accessToken))
+        .send({ refreshToken: parkB.refreshToken })
+        .expect(201);
+
+      // no refreshing into B, and no switching back to A
+      await request(http)
+        .post('/auth/refresh')
+        .send({ refreshToken: parkB.refreshToken })
+        .expect(401);
+      await request(http)
+        .post('/auth/switch')
+        .set(...auth(parkB.accessToken))
+        .send({ refreshToken: parkB.refreshToken, profileId: parkInA })
+        .expect(401);
+    });
+
+    it('31. a company they left disappears from GET /me/companies', async () => {
+      // leaving itself is piece 3: here the profile is ended directly
+      await prisma.profile.update({
+        where: { id: parkInA },
+        data: { status: 'DEACTIVATED' },
+      });
+
+      const login = await request(http)
+        .post('/auth/login')
+        .send({ email: parkEmail, password: password })
+        .expect(201);
+
+      expect(login.body.profile).toMatchObject({ id: parkInB });
+      await expect(myCompanies(login.body.accessToken)).resolves.toEqual([
+        expect.objectContaining({ profileId: parkInB, status: 'ACTIVE' }),
+      ]);
     });
   });
 });

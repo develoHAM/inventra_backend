@@ -4,6 +4,8 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { testPhones, verifiedPhone, verifiedPhoneToken } from './helpers/phone';
+import { createCompany, signUp } from './helpers/accounts';
+import type { Session } from './helpers/accounts';
 
 describe('Auth & Authorization (e2e)', () => {
   let app: INestApplication;
@@ -29,6 +31,7 @@ describe('Auth & Authorization (e2e)', () => {
   let joinCode: string;
   let memberId: string;
   let memberAccess: string;
+  let memberSession: Session; // signed up, no company yet
 
   // accounts.phone is unique across the shared DB: suite 01's own block
   const nextPhone = testPhones(1);
@@ -62,21 +65,23 @@ describe('Auth & Authorization (e2e)', () => {
     await app.close();
   });
 
-  it('1. registers a company — owner PENDING with an auto-login session', async () => {
-    const { phone, token } = await verifiedPhone(app, nextPhone);
+  it('1. signs up, then creates a company — the owner is PENDING, and the company opens with a switch', async () => {
+    const session = await signUp(app, nextPhone, {
+      email: owner.ownerEmail,
+      password: owner.ownerPassword,
+    });
+    const created = await createCompany(app, session, {
+      companyName: owner.companyName,
+      taxId: owner.taxId,
+      ownerName: owner.ownerName,
+    });
+
     const res = await request(http)
-      .post('/auth/register')
+      .post('/auth/switch')
+      .set('Authorization', `Bearer ${session.accessToken}`)
       .send({
-        companyName: owner.companyName,
-        taxId: owner.taxId,
-        ownerName: owner.ownerName,
-        credentials: {
-          type: 'password',
-          email: owner.ownerEmail,
-          password: owner.ownerPassword,
-        },
-        ownerPhone: phone,
-        ownerPhoneVerificationToken: token,
+        refreshToken: session.refreshToken,
+        profileId: created.profileId,
       })
       .expect(201);
 
@@ -129,45 +134,30 @@ describe('Auth & Authorization (e2e)', () => {
     ownerAccess = res.body.accessToken;
   });
 
-  it('6. a member self-registers with the join code (PENDING, role-less)', async () => {
-    const { phone, token } = await verifiedPhone(app, nextPhone);
+  it('6. a member signs up, then joins with the code (PENDING, role-less)', async () => {
+    memberSession = await signUp(app, nextPhone, {
+      email: member.email,
+      password: member.password,
+    });
+
     const res = await request(http)
-      .post('/auth/register/member')
-      .send({
-        name: member.name,
-        credentials: {
-          type: 'password',
-          email: member.email,
-          password: member.password,
-        },
-        joinCode: joinCode,
-        phone: phone,
-        phoneVerificationToken: token,
-      })
+      .post('/me/companies/join')
+      .set('Authorization', `Bearer ${memberSession.accessToken}`)
+      .send({ joinCode: joinCode, name: member.name })
       .expect(201);
 
-    expect(res.body.profile.status).toBe('PENDING_APPROVAL');
-    expect(res.body.profile.roleId).toBeNull();
+    expect(res.body.status).toBe('PENDING_APPROVAL');
+    expect(res.body.role).toBeNull();
   });
 
-  it('7. an unknown join code is rejected (404) — but only for a verified phone', async () => {
-    // the phone token is checked (and spent) before the join code, so a
-    // real verification is needed to learn that a code doesn't exist
-    const { phone, token } = await verifiedPhone(app, nextPhone);
-    await request(http)
-      .post('/auth/register/member')
-      .send({
-        name: member.name,
-        credentials: {
-          type: 'password',
-          email: 'nobody@e2e.test',
-          password: member.password,
-        },
-        joinCode: '00000000', // well-formed, but no company has it
-        phone: phone,
-        phoneVerificationToken: token,
-      })
+  it('7. an unknown join code is rejected (404, and counted by the guessing brake)', async () => {
+    const res = await request(http)
+      .post('/me/companies/join')
+      .set('Authorization', `Bearer ${memberSession.accessToken}`)
+      .send({ joinCode: '00000000', name: member.name }) // well-formed, but no company has it
       .expect(404);
+
+    expect(res.body.message).toBe('Invalid join code');
   });
 
   it('8. the owner approves the member with the STAFF role', async () => {

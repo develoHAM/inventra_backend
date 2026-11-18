@@ -48,7 +48,7 @@ export class CompaniesService {
     return approvedOwner;
   }
 
-  /** The code staff type at POST /auth/register/member. */
+  /** The code people type at POST /me/companies/join. */
   async getJoinCode(caller: AuthProfile): Promise<{ joinCode: string }> {
     const companyId = this.requireCompany(caller);
     const company = await this.prisma.company.findFirst({
@@ -61,7 +61,7 @@ export class CompaniesService {
 
   /**
    * Replace the code: the old one stops working immediately. Members who
-   * already joined are unaffected — the code is only checked at signup.
+   * already joined are unaffected — the code is only checked when joining.
    */
   async rotateJoinCode(caller: AuthProfile): Promise<{ joinCode: string }> {
     const companyId = this.requireCompany(caller);

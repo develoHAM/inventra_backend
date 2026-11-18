@@ -11,7 +11,6 @@ import { AccountRecoveryController } from './account-recovery.controller';
 import { AccountRecoveryService } from './account-recovery.service';
 import { DevicesModule } from '../devices/devices.module';
 import { SignupTicketsModule } from '../social-auth/signup-tickets/signup-tickets.module';
-import { EmailVerificationModule } from '../email-verification/email-verification.module';
 import { AccountsModule } from '../accounts/accounts.module';
 
 @Module({
@@ -20,7 +19,6 @@ import { AccountsModule } from '../accounts/accounts.module';
     PhoneVerificationModule,
     DevicesModule,
     SignupTicketsModule, // social signup spends the ticket
-    EmailVerificationModule, // …and, when needed, the contact-email proof
     AccountsModule, // the sign-in and which profile to open
   ],
   controllers: [AuthController, AccountRecoveryController],

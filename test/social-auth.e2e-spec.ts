@@ -10,6 +10,8 @@ import type {
   SocialProvider,
 } from '../src/social-auth/verifiers/social-identity-verifier';
 import { testPhones, verifiedPhone, verifiedPhoneToken } from './helpers/phone';
+import { createCompany, joinCompany, switchTo } from './helpers/accounts';
+import type { Session } from './helpers/accounts';
 
 // Emailed codes travel through the queue to Mailpit: allow polling.
 jest.setTimeout(30_000);
@@ -82,6 +84,8 @@ describe('Social login (e2e)', () => {
       request(http).get(path).set('Authorization', `Bearer ${accessToken}`),
     post: (path: string) =>
       request(http).post(path).set('Authorization', `Bearer ${accessToken}`),
+    put: (path: string) =>
+      request(http).put(path).set('Authorization', `Bearer ${accessToken}`),
     delete: (path: string) =>
       request(http).delete(path).set('Authorization', `Bearer ${accessToken}`),
   });
@@ -208,28 +212,39 @@ describe('Social login (e2e)', () => {
       ownerTicket = response.body.signupToken;
     });
 
-    it('the owner signs up with the ticket: a Kakao login, no password; the verified email becomes the contact email', async () => {
+    it('the owner signs up with the ticket (a Kakao login, no password), then creates a company', async () => {
       const phone = await verifiedPhone(app, nextPhone);
       ownerPhone = phone.phone;
 
       const response = await request(http)
-        .post('/auth/register')
+        .post('/auth/signup')
         .send({
-          companyName: 'Social Co',
-          taxId: '815-00-00001',
-          ownerName: 'Social Owner',
-          ownerPhone: phone.phone,
-          ownerPhoneVerificationToken: phone.token,
+          phone: phone.phone,
+          phoneVerificationToken: phone.token,
           credentials: { type: 'social', signupToken: ownerTicket },
         })
         .expect(201);
-      ownerProfileId = response.body.profile.id;
+      expect(response.body.profile).toBeNull(); // the sign-in only
+      const session: Session = {
+        accessToken: response.body.accessToken,
+        refreshToken: response.body.refreshToken,
+      };
+      const created = await createCompany(app, session, {
+        companyName: 'Social Co',
+        taxId: '815-00-00001',
+        ownerName: 'Social Owner',
+      });
+      ownerProfileId = created.profileId;
+      joinCode = created.joinCode;
+      await switchTo(app, session, ownerProfileId); // opens it next sign-in
 
       const owner = await prisma.profile.findUniqueOrThrow({
         where: { id: ownerProfileId },
         include: { account: { include: { loginMethods: true } } },
       });
-      expect(owner.contactEmail).toBe('owner@social.test');
+      // a contact email is proven per company: the provider's email no
+      // longer becomes one by itself
+      expect(owner.contactEmail).toBeNull();
       // the logins belong to the sign-in (the account)
       expect(owner.account.loginMethods).toEqual([
         expect.objectContaining({
@@ -239,24 +254,16 @@ describe('Social login (e2e)', () => {
           passwordHash: null,
         }),
       ]);
-      joinCode = (
-        await prisma.company.findFirstOrThrow({
-          where: { createdByProfileId: ownerProfileId },
-        })
-      ).joinCode;
     });
 
     it('the same ticket cannot be spent twice → 400', async () => {
       const phone = await verifiedPhone(app, nextPhone);
 
       const response = await request(http)
-        .post('/auth/register')
+        .post('/auth/signup')
         .send({
-          companyName: 'Social Co Again',
-          taxId: '815-00-00002',
-          ownerName: 'Social Owner',
-          ownerPhone: phone.phone,
-          ownerPhoneVerificationToken: phone.token,
+          phone: phone.phone,
+          phoneVerificationToken: phone.token,
           credentials: { type: 'social', signupToken: ownerTicket },
         })
         .expect(400);
@@ -309,25 +316,29 @@ describe('Social login (e2e)', () => {
   });
 
   describe('a member whose provider shared no email', () => {
-    const registerMember = (body: Record<string, unknown>) =>
-      request(http)
-        .post('/auth/register/member')
-        .send({ joinCode: joinCode, name: 'Social Member', ...body });
-    let memberTicket: string;
     let memberPhone: { phone: string; token: string };
+    let memberSession: Session; // the company's profile open
 
-    it('without a proven contact email → 400, and nothing is spent (the transaction rolls back)', async () => {
-      memberTicket = await signupTicketFor('apple', 'apple-member');
+    it('signs up with the ticket alone (no email needed), then joins the company', async () => {
+      const memberTicket = await signupTicketFor('apple', 'apple-member');
       memberPhone = await verifiedPhone(app, nextPhone);
 
-      const response = await registerMember({
-        phone: memberPhone.phone,
-        phoneVerificationToken: memberPhone.token,
-        credentials: { type: 'social', signupToken: memberTicket },
-      }).expect(400);
-      expect(response.body.message).toBe(
-        'A verified contact email is required',
-      );
+      const response = await request(http)
+        .post('/auth/signup')
+        .send({
+          phone: memberPhone.phone,
+          phoneVerificationToken: memberPhone.token,
+          credentials: { type: 'social', signupToken: memberTicket },
+        })
+        .expect(201);
+      const session: Session = {
+        accessToken: response.body.accessToken,
+        refreshToken: response.body.refreshToken,
+      };
+      memberProfileId = (
+        await joinCompany(app, session, joinCode, 'Social Member')
+      ).profileId;
+      memberSession = await switchTo(app, session, memberProfileId);
     });
 
     it('the code goes out as a REDACTED email: the notifications table never holds it', async () => {
@@ -349,24 +360,20 @@ describe('Social login (e2e)', () => {
       expect(row.body).not.toContain(code);
     });
 
-    it('with the code proven, the SAME ticket and phone token now sign the member up', async () => {
+    it("with the code proven, it becomes that company's contact email", async () => {
       const code = await emailedCode('member@social.test');
       const confirmed = await request(http)
         .post('/auth/email/confirm')
         .send({ email: 'Member@Social.test', code: code })
         .expect(200);
 
-      const response = await registerMember({
-        phone: memberPhone.phone,
-        phoneVerificationToken: memberPhone.token,
-        credentials: {
-          type: 'social',
-          signupToken: memberTicket,
-          contactEmail: 'Member@Social.TEST', // stored lowercase
+      await authed(memberSession.accessToken)
+        .put('/profiles/me/contact-email')
+        .send({
+          email: 'Member@Social.TEST', // stored lowercase
           emailVerificationToken: confirmed.body.emailVerificationToken,
-        },
-      }).expect(201);
-      memberProfileId = response.body.profile.id;
+        })
+        .expect(200);
 
       const member = await prisma.profile.findUniqueOrThrow({
         where: { id: memberProfileId },
@@ -417,10 +424,8 @@ describe('Social login (e2e)', () => {
       const responses = await Promise.all(
         tickets.map((ticket, index) =>
           request(http)
-            .post('/auth/register/member')
+            .post('/auth/signup')
             .send({
-              joinCode: joinCode,
-              name: `Twice ${index}`,
               phone: phones[index].phone,
               phoneVerificationToken: phones[index].token,
               credentials: { type: 'social', signupToken: ticket },
@@ -572,10 +577,8 @@ describe('Social login (e2e)', () => {
       const phone = await verifiedPhone(app, nextPhone);
 
       const response = await request(http)
-        .post('/auth/register/member')
+        .post('/auth/signup')
         .send({
-          joinCode: joinCode,
-          name: 'Copycat',
           phone: phone.phone,
           phoneVerificationToken: phone.token,
           credentials: {

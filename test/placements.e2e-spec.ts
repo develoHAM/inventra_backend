@@ -2,12 +2,12 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/prisma/prisma.service';
-import { testPhones, verifiedPhone } from './helpers/phone';
+import { suiteAccounts } from './helpers/accounts';
+import { testPhones } from './helpers/phone';
 
 describe('Product Placement (e2e)', () => {
   let app: INestApplication;
-  let prisma: PrismaService;
+  let accounts: ReturnType<typeof suiteAccounts>;
   let http: any;
 
   let adminAccess: string;
@@ -34,81 +34,8 @@ describe('Product Placement (e2e)', () => {
     `Bearer ${token}`,
   ];
 
-  // register a company → ADMIN approves it → owner logs in
   // accounts.phone is unique across the shared DB: suite 04's own block
   const nextPhone = testPhones(4);
-
-  const registerCompany = async (n: number) => {
-    const taxId = `6${n}0-00-0000${n}`;
-    const email = `owner${n}@pl.test`;
-    const password = 'password123';
-    const { phone, token } = await verifiedPhone(app, nextPhone);
-    await request(http)
-      .post('/auth/register')
-      .send({
-        companyName: `PL Co ${n}`,
-        taxId: taxId,
-        ownerName: `Owner ${n}`,
-        credentials: { type: 'password', email: email, password: password },
-        ownerPhone: phone,
-        ownerPhoneVerificationToken: token,
-      })
-      .expect(201);
-    const company = await prisma.company.findUnique({
-      where: { taxId: taxId },
-    });
-    await request(http)
-      .patch(`/companies/${company!.id}/approve`)
-      .set(...auth(adminAccess))
-      .expect(200);
-    const login = await request(http)
-      .post('/auth/login')
-      .send({ email: email, password: password })
-      .expect(201);
-    return {
-      access: login.body.accessToken as string,
-      joinCode: company!.joinCode as string,
-    };
-  };
-
-  // member self-registers → owner approves with a role → member logs in
-  const registerMember = async (
-    joinCode: string,
-    ownerToken: string,
-    roleCode: string,
-    tag: string,
-  ) => {
-    const email = `${tag}@pl.test`;
-    const password = 'password123';
-    const { phone, token } = await verifiedPhone(app, nextPhone);
-    await request(http)
-      .post('/auth/register/member')
-      .send({
-        joinCode: joinCode,
-        credentials: { type: 'password', email: email, password: password },
-        name: tag,
-        phone: phone,
-        phoneVerificationToken: token,
-      })
-      .expect(201);
-    const profile = await prisma.profile.findFirst({
-      where: { account: { loginMethods: { some: { email: email } } } },
-    });
-    const role = await prisma.role.findUnique({ where: { code: roleCode } });
-    await request(http)
-      .patch(`/profiles/${profile!.id}/approve`)
-      .set(...auth(ownerToken))
-      .send({ roleId: role!.id, cornerId: null })
-      .expect(200);
-    const login = await request(http)
-      .post('/auth/login')
-      .send({ email: email, password: password })
-      .expect(201);
-    return {
-      access: login.body.accessToken as string,
-      profileId: profile!.id as string,
-    };
-  };
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -123,7 +50,12 @@ describe('Product Placement (e2e)', () => {
       }),
     );
     await app.init();
-    prisma = app.get(PrismaService);
+    accounts = suiteAccounts(app, {
+      nextPhone: nextPhone,
+      emailDomain: 'pl.test',
+      taxIdOf: (n) => `6${n}0-00-0000${n}`,
+      companyNameOf: (n) => `PL Co ${n}`,
+    });
     http = app.getHttpServer();
 
     const adminLogin = await request(http)
@@ -136,26 +68,26 @@ describe('Product Placement (e2e)', () => {
     adminAccess = adminLogin.body.accessToken;
 
     // company 1: owner + a manager + a staff + a second (unrelated) manager
-    const c1 = await registerCompany(1);
+    const c1 = await accounts.registerOwner(adminAccess, 1);
     ownerAccess = c1.access;
-    const mgr = await registerMember(
-      c1.joinCode,
+    const mgr = await accounts.registerJoinedMember(
       ownerAccess,
+      c1.joinCode,
       'MANAGER',
       'manager',
     );
     managerProfileId = mgr.profileId;
-    const stf = await registerMember(
-      c1.joinCode,
+    const stf = await accounts.registerJoinedMember(
       ownerAccess,
+      c1.joinCode,
       'STAFF',
       'staff',
     );
     staffAccess = stf.access;
     staffProfileId = stf.profileId;
-    const other = await registerMember(
-      c1.joinCode,
+    const other = await accounts.registerJoinedMember(
       ownerAccess,
+      c1.joinCode,
       'MANAGER',
       'othermgr',
     );
@@ -230,7 +162,7 @@ describe('Product Placement (e2e)', () => {
       .expect(200);
 
     // company 2: its own brand + product (for the cross-company rejection)
-    const c2 = await registerCompany(2);
+    const c2 = await accounts.registerOwner(adminAccess, 2);
     owner2Access = c2.access;
     const brand2Id = (
       await request(http)

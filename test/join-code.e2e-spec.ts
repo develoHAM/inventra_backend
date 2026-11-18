@@ -3,12 +3,14 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { testPhones, verifiedPhone } from './helpers/phone';
+import { testPhones } from './helpers/phone';
+import { createCompany, signUp, switchTo } from './helpers/accounts';
 
 /**
  * GET /companies/me/join-code (OWNER + MANAGER) and
  * POST /companies/me/join-code/rotate (OWNER) — and that a rotated code
- * really changes who can sign up.
+ * really changes who can join. (Guessing codes is braked per account:
+ * see accounts.e2e-spec.)
  */
 describe('Company join code (e2e)', () => {
   let app: INestApplication;
@@ -43,35 +45,30 @@ describe('Company join code (e2e)', () => {
   const joinCodeInDb = async () =>
     (await prisma.company.findUnique({ where: { id: companyId } }))!.joinCode;
 
-  /** Member signup with a fresh verified phone; returns the HTTP response. */
+  /** A fresh sign-in joins with `joinCode`; returns the join's HTTP response. */
   const signUpMember = async (joinCode: string, email: string) => {
-    const { phone, token } = await verifiedPhone(app, nextPhone);
+    const session = await signUp(app, nextPhone, {
+      email: email,
+      password: password,
+    });
     return request(http)
-      .post('/auth/register/member')
-      .send({
-        joinCode: joinCode,
-        credentials: { type: 'password', email: email, password: password },
-        name: email.split('@')[0],
-        phone: phone,
-        phoneVerificationToken: token,
-      });
+      .post('/me/companies/join')
+      .set(...auth(session.accessToken))
+      .send({ joinCode: joinCode, name: email.split('@')[0] });
   };
 
-  /** Sign up via the current code, then the owner approves with a role. */
+  /** Join via the current code, then the owner approves with a role. */
   const approvedMember = async (email: string, roleCode: string) => {
     // awaiting signUpMember already sent the request: check the response
-    const signUp = await signUpMember(await joinCodeInDb(), email);
-    expect(signUp.status).toBe(201);
-    const profile = await prisma.profile.findFirst({
-      where: { account: { loginMethods: { some: { email: email } } } },
-    });
+    const joined = await signUpMember(await joinCodeInDb(), email);
+    expect(joined.status).toBe(201);
     const role = await prisma.role.findUnique({ where: { code: roleCode } });
     await request(http)
-      .patch(`/profiles/${profile!.id}/approve`)
+      .patch(`/profiles/${joined.body.profileId}/approve`)
       .set(...auth(ownerAccess))
       .send({ roleId: role!.id, cornerId: null })
       .expect(200);
-    return login(email);
+    return login(email); // their only company opens
   };
 
   beforeAll(async () => {
@@ -101,29 +98,21 @@ describe('Company join code (e2e)', () => {
   });
 
   it('a pending owner cannot see the code yet (403)', async () => {
-    const { phone, token } = await verifiedPhone(app, nextPhone);
-    const registered = await request(http)
-      .post('/auth/register')
-      .send({
-        companyName: 'JC Co',
-        taxId: taxId,
-        ownerName: 'JC Owner',
-        credentials: {
-          type: 'password',
-          email: 'owner@jc.test',
-          password: password,
-        },
-        ownerPhone: phone,
-        ownerPhoneVerificationToken: token,
-      })
-      .expect(201);
-    companyId = (await prisma.company.findUnique({
-      where: { taxId: taxId },
-    }))!.id;
+    const session = await signUp(app, nextPhone, {
+      email: 'owner@jc.test',
+      password: password,
+    });
+    const created = await createCompany(app, session, {
+      companyName: 'JC Co',
+      taxId: taxId,
+      ownerName: 'JC Owner',
+    });
+    companyId = created.companyId;
+    const pendingOwner = await switchTo(app, session, created.profileId);
 
     await request(http)
       .get('/companies/me/join-code')
-      .set(...auth(registered.body.accessToken))
+      .set(...auth(pendingOwner.accessToken))
       .expect(403);
   });
 
@@ -220,46 +209,5 @@ describe('Company join code (e2e)', () => {
 
     expect(response.status).toBe(400);
     expect(response.body.message).toEqual(['joinCode must be 8 digits']);
-  });
-
-  describe('join codes cannot be probed without a verified phone', () => {
-    const rawSignUp = (joinCode: string, phone: string, token: string) =>
-      request(http)
-        .post('/auth/register/member')
-        .send({
-          joinCode: joinCode,
-          credentials: {
-            type: 'password',
-            email: `probe-${phone}@jc.test`,
-            password: password,
-          },
-          name: 'Prober',
-          phone: phone,
-          phoneVerificationToken: token,
-        });
-
-    it('with a made-up token, a real code and a fake code get the SAME answer (400)', async () => {
-      const realCode = await rawSignUp(
-        await joinCodeInDb(),
-        nextPhone(),
-        'made-up',
-      );
-      const fakeCode = await rawSignUp('00000000', nextPhone(), 'made-up');
-
-      expect(realCode.status).toBe(400);
-      expect(fakeCode.status).toBe(400);
-      expect(realCode.body.message).toBe(fakeCode.body.message);
-    });
-
-    it('a verified phone buys exactly one probe: the token is spent even on a 404', async () => {
-      const { phone, token } = await verifiedPhone(app, nextPhone);
-
-      await rawSignUp('00000000', phone, token).expect(404);
-
-      // same token, now with the right code: already spent
-      const retry = await rawSignUp(await joinCodeInDb(), phone, token);
-      expect(retry.status).toBe(400);
-      expect(retry.body.message).toBe('Invalid or expired verification token');
-    });
   });
 });

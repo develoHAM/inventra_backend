@@ -1,7 +1,7 @@
 # One Sign-In, Many Companies — Design
 
 **Date:** 2026-11-12
-**Status:** approved by the user on 2026-11-12 (after a builder review).
+**Status:** approved by the user on 2026-11-12 (after a builder review); **built** 2026-11-19 (Tasks 1, 1b, 2–7). "As built" at the end lists every deviation.
 **Piece 2 of 3** of the membership track:
 1. Roles & branches (built: `2026-11-06-roles-and-branches-design.md`).
 2. **One sign-in, a separate profile per company** (this doc).
@@ -188,3 +188,18 @@ Everything else (members, corners, orders, history…) is unchanged and runs as 
 - Exact paths and response shapes for the account routes; module layout (e.g. an `AccountsModule`).
 - The join-attempt limit's numbers and window.
 - The order of migrations and tasks.
+
+## As built (2026-11-19)
+
+Plan `docs/superpowers/plans/2026-11-12-one-sign-in-many-companies.md`; every task carries its own "As built" note. The deviations from this design:
+
+- **Names (Task 1b):** the sign-in is `Account` and the company profile is `Profile` (`profiles`, `ProfileStatus`, `*_profile_id`, `AuthProfile`, `/profiles/…`); login methods are `AccountLoginMethod` at `/accounts/me/login-methods`. No model is called "User".
+- **Migrations:** `20261112162955_accounts` (expand → copy → contract; migrated accounts reuse their user's id), `20261113120851_profiles` (renames only), `20261115135455_company_join_attempts`.
+- **Tokens:** access `{ sub: accountId, pid?: profileId, type }`, refresh `{ sub: accountId, jti, type }`; `POST /auth/switch { refreshToken, profileId }` rotates the session and is the only writer of `accounts.last_profile_id`. `@AccountRoute()` marks the routes that work with no company open; elsewhere a profile-less token gets 403 `Choose a company first`.
+- **Signup:** `POST /auth/signup { phone, phoneVerificationToken, credentials }` → a session with `profile: null, companies: []`. The credentials tag is case-insensitive (`'Social'`, `'PASSWORD'`), picked by a `@Type` type function.
+- **Join / create:** `GET /me/companies`, `POST /me/companies/join { joinCode, name }`, `POST /me/companies { companyName, taxId, ownerName }` (`AccountCompaniesService`). Guessing brake: 5 wrong codes per account per rolling hour (`company_join_attempts`), checked before the code is looked up — a blocked account gets 429 even for a right code. Create locks the account row, then counts its waiting OWNER profiles.
+- **Per-company name and contact email:** `PATCH /profiles/me { name }` and `PUT /profiles/me/contact-email { email, emailVerificationToken }` (no permission needed, so a waiting profile can set its email before approval). **A contact email is always proven by an emailed code**: signup, join and create set none, and a provider-verified email no longer becomes one by itself.
+- **Pushes:** the title is `${companyName} · ${subject}`; the data carries the recipient's `profileId` and, when it has one, its `companyId` (the recipient's ids win a same-named event key); the platform admin keeps the event's own title and data. Email rows are unchanged.
+- **Retired (Task 7):** `POST /auth/register` and `POST /auth/register/member`, `RegisterDto`, `RegisterMemberDto`, `SocialCredentialsDto` with its contact-email pair, `contactEmailFor`. The e2e suites set people up through `test/helpers/accounts.ts` (`suiteAccounts`: signup → create or join → switch → approval, with `{ contactEmail: true }` proving the address before approval), and `test/accounts.e2e-spec.ts` tells the part-timer story (tests 26–31).
+- **Follow-up chosen by the user (2026-11-19):** prove a contact email inside join and create (`{ …, contactEmail?, emailVerificationToken? }`, spent in the same step), so a person who gives it up front is emailed on approval without a separate call.
+

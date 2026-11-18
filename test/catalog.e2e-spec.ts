@@ -2,12 +2,12 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/prisma/prisma.service';
-import { testPhones, verifiedPhone } from './helpers/phone';
+import { suiteAccounts } from './helpers/accounts';
+import { testPhones } from './helpers/phone';
 
 describe('Product Catalog (e2e)', () => {
   let app: INestApplication;
-  let prisma: PrismaService;
+  let accounts: ReturnType<typeof suiteAccounts>;
   let http: any;
 
   let adminAccess: string;
@@ -21,79 +21,8 @@ describe('Product Catalog (e2e)', () => {
   let brandId: number;
   let productId: string;
 
-  // register a company → ADMIN approves it → owner logs in
   // accounts.phone is unique across the shared DB: suite 02's own block
   const nextPhone = testPhones(2);
-
-  const registerCompany = async (n: number) => {
-    const taxId = `9${n}0-00-0000${n}`;
-    const email = `owner${n}@cat.test`;
-    const password = 'password123';
-    const { phone, token } = await verifiedPhone(app, nextPhone);
-    await request(http)
-      .post('/auth/register')
-      .send({
-        companyName: `Cat Co ${n}`,
-        taxId: taxId,
-        ownerName: `Owner ${n}`,
-        credentials: { type: 'password', email: email, password: password },
-        ownerPhone: phone,
-        ownerPhoneVerificationToken: token,
-      })
-      .expect(201);
-    const company = await prisma.company.findUnique({
-      where: { taxId: taxId },
-    });
-    await request(http)
-      .patch(`/companies/${company!.id}/approve`)
-      .set('Authorization', `Bearer ${adminAccess}`)
-      .expect(200);
-    const login = await request(http)
-      .post('/auth/login')
-      .send({ email: email, password: password })
-      .expect(201);
-    return {
-      access: login.body.accessToken as string,
-      companyId: company!.id as string,
-      joinCode: company!.joinCode as string,
-    };
-  };
-
-  // member self-registers via join code → owner approves with a role → member logs in
-  const registerMember = async (
-    joinCode: string,
-    ownerToken: string,
-    roleCode: string,
-    tag: string,
-  ) => {
-    const email = `${tag}@cat.test`;
-    const password = 'password123';
-    const { phone, token } = await verifiedPhone(app, nextPhone);
-    await request(http)
-      .post('/auth/register/member')
-      .send({
-        joinCode: joinCode,
-        credentials: { type: 'password', email: email, password: password },
-        name: tag,
-        phone: phone,
-        phoneVerificationToken: token,
-      })
-      .expect(201);
-    const profile = await prisma.profile.findFirst({
-      where: { account: { loginMethods: { some: { email: email } } } },
-    });
-    const role = await prisma.role.findUnique({ where: { code: roleCode } });
-    await request(http)
-      .patch(`/profiles/${profile!.id}/approve`)
-      .set('Authorization', `Bearer ${ownerToken}`)
-      .send({ roleId: role!.id, cornerId: null })
-      .expect(200);
-    const login = await request(http)
-      .post('/auth/login')
-      .send({ email: email, password: password })
-      .expect(201);
-    return login.body.accessToken as string;
-  };
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -108,7 +37,12 @@ describe('Product Catalog (e2e)', () => {
       }),
     );
     await app.init();
-    prisma = app.get(PrismaService);
+    accounts = suiteAccounts(app, {
+      nextPhone: nextPhone,
+      emailDomain: 'cat.test',
+      taxIdOf: (n) => `9${n}0-00-0000${n}`,
+      companyNameOf: (n) => `Cat Co ${n}`,
+    });
     http = app.getHttpServer();
 
     const adminLogin = await request(http)
@@ -120,23 +54,25 @@ describe('Product Catalog (e2e)', () => {
       .expect(201);
     adminAccess = adminLogin.body.accessToken;
 
-    const c1 = await registerCompany(1);
+    const c1 = await accounts.registerOwner(adminAccess, 1);
     ownerAccess = c1.access;
     company1Id = c1.companyId;
-    staffAccess = await registerMember(
-      c1.joinCode,
+    const staff = await accounts.registerJoinedMember(
       ownerAccess,
+      c1.joinCode,
       'STAFF',
       'staff',
     );
-    managerAccess = await registerMember(
-      c1.joinCode,
+    staffAccess = staff.access;
+    const manager = await accounts.registerJoinedMember(
       ownerAccess,
+      c1.joinCode,
       'MANAGER',
       'manager',
     );
+    managerAccess = manager.access;
 
-    const c2 = await registerCompany(2);
+    const c2 = await accounts.registerOwner(adminAccess, 2);
     owner2Access = c2.access;
   });
 

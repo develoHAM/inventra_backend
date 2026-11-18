@@ -1,21 +1,16 @@
 import { plainToInstance } from 'class-transformer';
 import { validate, ValidationError } from 'class-validator';
-import { RegisterDto } from './register.dto';
-import { RegisterMemberDto } from './register-member.dto';
+import { SignupDto } from './signup.dto';
 import {
   PasswordCredentialsDto,
-  SocialCredentialsDto,
+  SocialSignupCredentialsDto,
 } from './credentials.dto';
 
-// What the global ValidationPipe does: build the DTO (running @Type and
-// @Transform), then validate with the same whitelist options.
-async function check(
-  dtoClass: new () => object,
-  body: Record<string, unknown>,
-) {
-  const instance = plainToInstance(dtoClass, body) as {
-    credentials: { type?: string };
-  };
+// The credentials rules, seen through the one DTO that carries them
+// (POST /auth/signup). What the global ValidationPipe does: build the DTO
+// (running @Type and @Transform), then validate with the same options.
+async function check(body: Record<string, unknown>) {
+  const instance = plainToInstance(SignupDto, body);
   const errors = await validate(instance, {
     whitelist: true,
     forbidNonWhitelisted: true,
@@ -36,31 +31,16 @@ function flatten(errors: ValidationError[], parent = ''): string[] {
   });
 }
 
-const memberBase = {
-  joinCode: '48291307',
-  name: 'Sam Staff',
-  phone: '01012345678',
-  phoneVerificationToken: 'phone-token',
-};
-const ownerBase = {
-  companyName: 'Acme',
-  taxId: '123-45-67890',
-  ownerName: 'Jane Owner',
-  ownerPhone: '01012345678',
-  ownerPhoneVerificationToken: 'phone-token',
-};
+const base = { phone: '01012345678', phoneVerificationToken: 'phone-token' };
 const password = {
   type: 'password',
   email: 'sam@acme.com',
   password: 'password123',
 };
 
-describe.each([
-  ['RegisterDto', RegisterDto, ownerBase],
-  ['RegisterMemberDto', RegisterMemberDto, memberBase],
-] as const)('%s credentials', (_name, dtoClass, base) => {
+describe('signup credentials', () => {
   it('builds a PasswordCredentialsDto from type "password" and keeps the tag', async () => {
-    const { instance, messages } = await check(dtoClass, {
+    const { instance, messages } = await check({
       ...base,
       credentials: password,
     });
@@ -71,51 +51,37 @@ describe.each([
     expect(instance.credentials.type).toBe('password');
   });
 
-  it('the tag is case-insensitive: "Social" builds a SocialCredentialsDto, stored as "social"', async () => {
-    const { instance, messages } = await check(dtoClass, {
-      ...base,
-      credentials: { type: 'Social', signupToken: 'signup-token' },
-    });
-
-    expect(messages).toEqual([]);
-    expect(instance.credentials).toBeInstanceOf(SocialCredentialsDto);
-    expect(instance.credentials.type).toBe('social');
-  });
-
-  it('"PASSWORD" builds a PasswordCredentialsDto, stored as "password"', async () => {
-    const { instance, messages } = await check(dtoClass, {
-      ...base,
-      credentials: { ...password, type: 'PASSWORD' },
-    });
-
-    expect(messages).toEqual([]);
-    expect(instance.credentials).toBeInstanceOf(PasswordCredentialsDto);
-    expect(instance.credentials.type).toBe('password');
-  });
-
-  it('builds a SocialCredentialsDto from type "social"', async () => {
-    const { instance, messages } = await check(dtoClass, {
-      ...base,
-      credentials: {
-        type: 'social',
-        signupToken: 'signup-token',
-        contactEmail: 'sam@acme.com',
-        emailVerificationToken: 'email-token',
-      },
-    });
-
-    expect(messages).toEqual([]);
-    expect(instance.credentials).toBeInstanceOf(SocialCredentialsDto);
-  });
-
-  it('a social body needs only the signup token (contact email is optional)', async () => {
-    const { messages } = await check(dtoClass, {
+  it('builds a SocialSignupCredentialsDto from type "social": just the ticket', async () => {
+    const { instance, messages } = await check({
       ...base,
       credentials: { type: 'social', signupToken: 'signup-token' },
     });
 
     expect(messages).toEqual([]);
+    expect(instance.credentials).toBeInstanceOf(SocialSignupCredentialsDto);
   });
+
+  it.each([
+    ['Social', SocialSignupCredentialsDto, 'social'],
+    ['PASSWORD', PasswordCredentialsDto, 'password'],
+  ] as const)(
+    'the tag is case-insensitive: "%s" builds the right class, stored lowercase',
+    async (tag, expectedClass, stored) => {
+      const body =
+        stored === 'social'
+          ? { type: tag, signupToken: 'signup-token' }
+          : { ...password, type: tag };
+
+      const { instance, messages } = await check({
+        ...base,
+        credentials: body,
+      });
+
+      expect(messages).toEqual([]);
+      expect(instance.credentials).toBeInstanceOf(expectedClass);
+      expect(instance.credentials.type).toBe(stored);
+    },
+  );
 
   it.each([
     [
@@ -130,10 +96,7 @@ describe.each([
   ])(
     'rejects %s (falls back to the password class, whose tag check fails)',
     async (_label, credentials) => {
-      const { messages } = await check(dtoClass, {
-        ...base,
-        credentials: credentials,
-      });
+      const { messages } = await check({ ...base, credentials: credentials });
 
       expect(messages).toContain(
         'credentials.type: type must be equal to password',
@@ -142,7 +105,7 @@ describe.each([
   );
 
   it('rejects mixing shapes: a social field inside a password body', async () => {
-    const { messages } = await check(dtoClass, {
+    const { messages } = await check({
       ...base,
       credentials: { ...password, signupToken: 'x' },
     });
@@ -153,7 +116,7 @@ describe.each([
   });
 
   it('rejects mixing shapes: a password field inside a social body', async () => {
-    const { messages } = await check(dtoClass, {
+    const { messages } = await check({
       ...base,
       credentials: {
         type: 'social',
@@ -168,7 +131,7 @@ describe.each([
   });
 
   it('still validates the password variant itself (min length, email format)', async () => {
-    const { messages } = await check(dtoClass, {
+    const { messages } = await check({
       ...base,
       credentials: {
         type: 'password',
@@ -189,59 +152,20 @@ describe.each([
     ['missing', undefined],
     ['not an object', 'oops'],
   ])('rejects credentials that are %s', async (_label, credentials) => {
-    const { messages } = await check(dtoClass, {
-      ...base,
-      credentials: credentials,
-    });
+    const { messages } = await check({ ...base, credentials: credentials });
 
     expect(messages).toContain('credentials: credentials must be an object');
   });
 
-  it('rejects the OLD flat fields (the contract changed)', async () => {
-    const legacy =
-      dtoClass === RegisterDto
-        ? { ownerEmail: 'a@b.com', ownerPassword: 'password123' }
-        : { email: 'a@b.com', password: 'password123' };
-
-    const { messages } = await check(dtoClass, {
+  it('a password signup email is trimmed and lowercased (emails are case-insensitive)', async () => {
+    const { instance, messages } = await check({
       ...base,
-      ...legacy,
-      credentials: password,
-    });
-
-    expect(
-      messages.some((message) => message.includes('should not exist')),
-    ).toBe(true);
-  });
-});
-
-describe('emails are stored lowercase (case-insensitive)', () => {
-  it('a password signup email is trimmed and lowercased', async () => {
-    const { instance, messages } = await check(RegisterMemberDto, {
-      ...memberBase,
       credentials: { ...password, email: '  Sam@Acme.COM ' },
     });
 
     expect(messages).toEqual([]);
-    expect(
-      (instance.credentials as unknown as PasswordCredentialsDto).email,
-    ).toBe('sam@acme.com');
-  });
-
-  it("a social signup's typed contact email too", async () => {
-    const { instance, messages } = await check(RegisterDto, {
-      ...ownerBase,
-      credentials: {
-        type: 'social',
-        signupToken: 'raw-signup-token',
-        contactEmail: 'Work@Acme.COM',
-        emailVerificationToken: 'raw-email-token',
-      },
-    });
-
-    expect(messages).toEqual([]);
-    expect(
-      (instance.credentials as unknown as SocialCredentialsDto).contactEmail,
-    ).toBe('work@acme.com');
+    expect((instance.credentials as PasswordCredentialsDto).email).toBe(
+      'sam@acme.com',
+    );
   });
 });

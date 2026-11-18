@@ -2,12 +2,12 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/prisma/prisma.service';
-import { testPhones, verifiedPhone } from './helpers/phone';
+import { suiteAccounts } from './helpers/accounts';
+import { testPhones } from './helpers/phone';
 
 describe('Restock Orders (e2e)', () => {
   let app: INestApplication;
-  let prisma: PrismaService;
+  let accounts: ReturnType<typeof suiteAccounts>;
   let http: any;
 
   let adminAccess: string;
@@ -30,77 +30,6 @@ describe('Restock Orders (e2e)', () => {
 
   // accounts.phone is unique across the shared DB: suite 06's own block
   const nextPhone = testPhones(6);
-
-  const registerCompany = async (n: number) => {
-    const taxId = `4${n}0-00-0000${n}`;
-    const email = `owner${n}@ord.test`;
-    const password = 'password123';
-    const { phone, token } = await verifiedPhone(app, nextPhone);
-    await request(http)
-      .post('/auth/register')
-      .send({
-        companyName: `ORD Co ${n}`,
-        taxId: taxId,
-        ownerName: `Owner ${n}`,
-        credentials: { type: 'password', email: email, password: password },
-        ownerPhone: phone,
-        ownerPhoneVerificationToken: token,
-      })
-      .expect(201);
-    const company = await prisma.company.findUnique({
-      where: { taxId: taxId },
-    });
-    await request(http)
-      .patch(`/companies/${company!.id}/approve`)
-      .set(...auth(adminAccess))
-      .expect(200);
-    const login = await request(http)
-      .post('/auth/login')
-      .send({ email: email, password: password })
-      .expect(201);
-    return {
-      access: login.body.accessToken as string,
-      joinCode: company!.joinCode as string,
-    };
-  };
-
-  const registerMember = async (
-    joinCode: string,
-    ownerToken: string,
-    roleCode: string,
-    tag: string,
-  ) => {
-    const email = `${tag}@ord.test`;
-    const password = 'password123';
-    const { phone, token } = await verifiedPhone(app, nextPhone);
-    await request(http)
-      .post('/auth/register/member')
-      .send({
-        joinCode: joinCode,
-        credentials: { type: 'password', email: email, password: password },
-        name: tag,
-        phone: phone,
-        phoneVerificationToken: token,
-      })
-      .expect(201);
-    const profile = await prisma.profile.findFirst({
-      where: { account: { loginMethods: { some: { email: email } } } },
-    });
-    const role = await prisma.role.findUnique({ where: { code: roleCode } });
-    await request(http)
-      .patch(`/profiles/${profile!.id}/approve`)
-      .set(...auth(ownerToken))
-      .send({ roleId: role!.id, cornerId: null })
-      .expect(200);
-    const login = await request(http)
-      .post('/auth/login')
-      .send({ email: email, password: password })
-      .expect(201);
-    return {
-      access: login.body.accessToken as string,
-      profileId: profile!.id as string,
-    };
-  };
 
   const placeProduct = async (barcode: string): Promise<number> => {
     const categoryId = (
@@ -152,7 +81,12 @@ describe('Restock Orders (e2e)', () => {
       }),
     );
     await app.init();
-    prisma = app.get(PrismaService);
+    accounts = suiteAccounts(app, {
+      nextPhone: nextPhone,
+      emailDomain: 'ord.test',
+      taxIdOf: (n) => `4${n}0-00-0000${n}`,
+      companyNameOf: (n) => `ORD Co ${n}`,
+    });
     http = app.getHttpServer();
 
     const adminLogin = await request(http)
@@ -164,26 +98,26 @@ describe('Restock Orders (e2e)', () => {
       .expect(201);
     adminAccess = adminLogin.body.accessToken;
 
-    const company1 = await registerCompany(1);
+    const company1 = await accounts.registerOwner(adminAccess, 1);
     ownerAccess = company1.access;
-    const manager = await registerMember(
-      company1.joinCode,
+    const manager = await accounts.registerJoinedMember(
       ownerAccess,
+      company1.joinCode,
       'MANAGER',
       'manager',
     );
     managerProfileId = manager.profileId;
-    const staff = await registerMember(
-      company1.joinCode,
+    const staff = await accounts.registerJoinedMember(
       ownerAccess,
+      company1.joinCode,
       'STAFF',
       'staff',
     );
     staffAccess = staff.access;
     staffProfileId = staff.profileId;
-    const otherManager = await registerMember(
-      company1.joinCode,
+    const otherManager = await accounts.registerJoinedMember(
       ownerAccess,
+      company1.joinCode,
       'MANAGER',
       'othermgr',
     );
@@ -217,7 +151,7 @@ describe('Restock Orders (e2e)', () => {
     placementAId = await placeProduct('ORD-BC-A');
     placementBId = await placeProduct('ORD-BC-B');
 
-    const company2 = await registerCompany(2);
+    const company2 = await accounts.registerOwner(adminAccess, 2);
     owner2Access = company2.access;
   });
 

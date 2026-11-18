@@ -24,7 +24,6 @@ describe('Phone verification (e2e)', () => {
   const ownerPhoneDashed = '010-1100-9001';
   const ownerPhoneDigits = '01011009001';
   let ownerToken: string;
-  let joinCode: string;
 
   const start = (phone: string, purpose = 'SIGNUP') =>
     request(http)
@@ -35,12 +34,10 @@ describe('Phone verification (e2e)', () => {
       .post('/auth/phone/confirm')
       .send({ verificationId: verificationId });
   // callers pass `email` at the top level for brevity; it goes into credentials
-  const registerMember = ({ email, ...body }: Record<string, unknown>) =>
+  const signUpWith = ({ email, ...body }: Record<string, unknown>) =>
     request(http)
-      .post('/auth/register/member')
+      .post('/auth/signup')
       .send({
-        joinCode: joinCode,
-        name: 'PV Member',
         credentials: {
           type: 'password',
           email: email,
@@ -113,38 +110,21 @@ describe('Phone verification (e2e)', () => {
   });
 
   it('signup spends the token and stores the phone as digits only', async () => {
-    await request(http)
-      .post('/auth/register')
-      .send({
-        companyName: 'PV Co',
-        taxId: '880-00-00001',
-        ownerName: 'PV Owner',
-        credentials: {
-          type: 'password',
-          email: 'owner@pv.test',
-          password: 'password123',
-        },
-        ownerPhone: ownerPhoneDashed,
-        ownerPhoneVerificationToken: ownerToken,
-      })
-      .expect(201);
+    await signUpWith({
+      email: 'owner@pv.test',
+      phone: ownerPhoneDashed,
+      phoneVerificationToken: ownerToken,
+    }).expect(201);
 
-    const owner = await prisma.profile.findFirst({
-      where: {
-        account: { loginMethods: { some: { email: 'owner@pv.test' } } },
-      },
-      include: { account: true },
+    // the phone belongs to the sign-in (the account), not a company profile
+    const account = await prisma.account.findFirst({
+      where: { loginMethods: { some: { email: 'owner@pv.test' } } },
     });
-    // the phone belongs to the sign-in (the account), not the company profile
-    expect(owner!.account.phone).toBe(ownerPhoneDigits);
+    expect(account!.phone).toBe(ownerPhoneDigits);
     const spent = await prisma.phoneVerification.findFirst({
       where: { phone: ownerPhoneDigits, consumedAt: { not: null } },
     });
     expect(spent).not.toBeNull();
-
-    joinCode = (await prisma.company.findUnique({
-      where: { taxId: '880-00-00001' },
-    }))!.joinCode;
   });
 
   it('a registered phone can neither start SIGNUP nor sign up again (409)', async () => {
@@ -152,7 +132,7 @@ describe('Phone verification (e2e)', () => {
     expect(restart.body.message).toBe('Phone already registered');
 
     // reusing the spent token: the phone check comes first
-    const reuse = await registerMember({
+    const reuse = await signUpWith({
       email: 'reuse@pv.test',
       phone: ownerPhoneDigits,
       phoneVerificationToken: ownerToken,
@@ -163,7 +143,7 @@ describe('Phone verification (e2e)', () => {
   it('a token verified for one phone cannot register another phone', async () => {
     const tokenForA = await verifiedPhoneToken(app, nextPhone());
 
-    const response = await registerMember({
+    const response = await signUpWith({
       email: 'wrong-phone@pv.test',
       phone: nextPhone(), // B: never verified
       phoneVerificationToken: tokenForA,
@@ -178,23 +158,23 @@ describe('Phone verification (e2e)', () => {
     const findIdToken = (await confirm(started.body.verificationId).expect(200))
       .body.verificationToken;
 
-    await registerMember({
+    await signUpWith({
       email: 'find-id@pv.test',
       phone: phone,
       phoneVerificationToken: findIdToken,
     }).expect(400);
   });
 
-  it('a member signs up with a fresh verified phone', async () => {
+  it('a second person signs up with a fresh verified phone (no company yet)', async () => {
     const phone = nextPhone();
     const token = await verifiedPhoneToken(app, phone);
 
-    const response = await registerMember({
+    const response = await signUpWith({
       email: 'member@pv.test',
       phone: phone,
       phoneVerificationToken: token,
     }).expect(201);
-    expect(response.body.profile.status).toBe('PENDING_APPROVAL');
+    expect(response.body.profile).toBeNull();
   });
 
   it('allows 10 checks per verification, then 429 (OCTOMO quota)', async () => {

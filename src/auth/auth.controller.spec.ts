@@ -41,14 +41,16 @@ describe('AuthController', () => {
     controller = new AuthController(authService as any);
   });
 
-  it.each([
-    'signup',
-    'register',
-    'registerMember',
-    'login',
-    'refresh',
-  ] as const)('%s is public (no token yet)', (method) => {
-    expect(metadata(IS_PUBLIC_KEY, method)).toBe(true);
+  it.each(['signup', 'login', 'refresh'] as const)(
+    '%s is public (no token yet)',
+    (method) => {
+      expect(metadata(IS_PUBLIC_KEY, method)).toBe(true);
+    },
+  );
+
+  it('the old one-step signups are gone (POST /auth/register, /auth/register/member)', () => {
+    expect('register' in AuthController.prototype).toBe(false);
+    expect('registerMember' in AuthController.prototype).toBe(false);
   });
 
   it.each(['me', 'logout', 'switchProfile'] as const)(

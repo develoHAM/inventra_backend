@@ -1,13 +1,11 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
 import { Public } from './decorators/public.decorator';
-import { RegisterDto } from './dto/register.dto';
 import { AuthService } from './auth.service';
 import { CurrentProfile } from './decorators/current-profile.decorator';
 import { CurrentAccount } from './decorators/current-account.decorator';
 import { AccountRoute } from './decorators/account-route.decorator';
 import type { AuthProfile } from './types/auth-profile';
 import type { AuthAccount } from './types/auth-account';
-import { RegisterMemberDto } from './dto/register-member.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { LogoutDto } from './dto/logout.dto';
@@ -25,12 +23,6 @@ export class AuthController {
     return this.authService.signup(dto);
   }
 
-  @Public()
-  @Post('register')
-  async register(@Body() dto: RegisterDto) {
-    return await this.authService.register(dto);
-  }
-
   // request.profile is undefined when no company is open
   @AccountRoute()
   @Get('me')
@@ -39,12 +31,6 @@ export class AuthController {
     @CurrentProfile() profile: AuthProfile | undefined,
   ) {
     return this.authService.me(account, profile ?? null);
-  }
-
-  @Public()
-  @Post('register/member')
-  async registerMember(@Body() dto: RegisterMemberDto) {
-    return await this.authService.registerMember(dto);
   }
 
   @Public()

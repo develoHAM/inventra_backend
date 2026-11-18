@@ -2,8 +2,6 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { StartVerificationDto } from './start-verification.dto';
 import { ConfirmVerificationDto } from './confirm-verification.dto';
-import { RegisterDto } from '../../auth/dto/register.dto';
-import { RegisterMemberDto } from '../../auth/dto/register-member.dto';
 
 // What the global ValidationPipe does: turn the JSON body into a DTO
 // instance (running @Transform), then validate it. Returns the instance
@@ -89,107 +87,4 @@ describe('ConfirmVerificationDto', () => {
 
     expect(failedFields).toEqual(['verificationId']);
   });
-});
-
-describe('RegisterDto (phone fields)', () => {
-  const validBody = {
-    companyName: 'Acme',
-    taxId: '123-45-67890',
-    ownerName: 'Jane Owner',
-    credentials: {
-      type: 'password',
-      email: 'jane@acme.com',
-      password: 'password123',
-    },
-    ownerPhone: '010-1234-5678',
-    ownerPhoneVerificationToken: 'some-token',
-  };
-
-  it('normalizes the owner phone', async () => {
-    const { instance, failedFields } = await check(RegisterDto, validBody);
-
-    expect(failedFields).toEqual([]);
-    expect(instance.ownerPhone).toBe('01012345678');
-  });
-
-  it.each(['ownerPhone', 'ownerPhoneVerificationToken'] as const)(
-    'requires %s',
-    async (field) => {
-      const { [field]: _omitted, ...body } = validBody;
-
-      const { failedFields } = await check(RegisterDto, body);
-
-      expect(failedFields).toEqual([field]);
-    },
-  );
-
-  it('rejects a non-Korean-mobile owner phone', async () => {
-    const { failedFields } = await check(RegisterDto, {
-      ...validBody,
-      ownerPhone: '+82-10-1234-5678',
-    });
-
-    expect(failedFields).toEqual(['ownerPhone']);
-  });
-});
-
-describe('RegisterMemberDto (phone fields)', () => {
-  const validBody = {
-    joinCode: '48291307',
-    credentials: {
-      type: 'password',
-      email: 'sam@acme.com',
-      password: 'password123',
-    },
-    name: 'Sam Staff',
-    phone: '010 9999 8888',
-    phoneVerificationToken: 'some-token',
-  };
-
-  it('normalizes the member phone', async () => {
-    const { instance, failedFields } = await check(
-      RegisterMemberDto,
-      validBody,
-    );
-
-    expect(failedFields).toEqual([]);
-    expect(instance.phone).toBe('01099998888');
-  });
-
-  it.each([
-    ['4829 1307', '48291307'],
-    ['4829-1307', '48291307'],
-  ])('normalizes a typed join code %p', async (typed, stored) => {
-    const { instance, failedFields } = await check(RegisterMemberDto, {
-      ...validBody,
-      joinCode: typed,
-    });
-
-    expect(failedFields).toEqual([]);
-    expect(instance.joinCode).toBe(stored);
-  });
-
-  it.each([
-    ['7 digits', '4829130'],
-    ['the old INV- format', 'INV-3FA91C07B2DE'],
-    ['letters', 'ABCD1234'],
-  ])('rejects a join code that is %s', async (_label, joinCode) => {
-    const { failedFields } = await check(RegisterMemberDto, {
-      ...validBody,
-      joinCode: joinCode,
-    });
-
-    expect(failedFields).toEqual(['joinCode']);
-  });
-
-  it.each(['phone', 'phoneVerificationToken'] as const)(
-    'requires %s',
-    async (field) => {
-      const { [field]: _omitted, ...body } = validBody;
-
-      const { failedFields } = await check(RegisterMemberDto, body);
-
-      expect(failedFields).toEqual([field]);
-    },
-  );
 });

@@ -412,7 +412,9 @@ Added mid-track (the user's decision): **Account** = the sign-in, **Profile** = 
 - [ ] **Step 5 (human):** Run `npm run test:e2e`. Expected: all green.
 - [ ] **Step 6:** Commit: `feat(notifications): pushes from every company, tagged and tappable`.
 
-### Task 7: Retire the old signup endpoints; the part-timer story; docs
+### Task 7: Retire the old signup endpoints; the part-timer story; docs — ✅ done
+
+> As built: the composites are `suiteAccounts(app, naming)` → `pendingOwner` / `registerOwner` / `pendingMember` / `registerJoinedMember` (+ `setContactEmail`, `test/helpers/email.ts`); **not foreseen by the plan:** the new flow sets no contact email, so suites that assert emails (`profiles`, `notifications`, `push`) prove one before approval with `{ contactEmail: true }` (the real code flow via Mailpit, the user's choice A). Also removed: `AuthService`'s `EventEmitter2` / `EmailVerificationService` and `AuthModule`'s `EmailVerificationModule` import; `credentialsTypeFor` folded into `SignupCredentialsType`. Join-code's two phone-probing tests went with `register/member`. Part-timer story = `accounts.e2e` 26–31. 1211 unit + 267 e2e green (first run). Follow-up chosen: prove a contact email inside join/create.
 
 **Files:**
 - Delete:
