@@ -28,9 +28,9 @@
 | Notify | **Notifications** (email · SMS · push) + **account security** (OCTOMO phone verification · find ID · password reset) | ✅ complete (Slices 1a–4) |
 | Social | **Social login** (Kakao · Google · Facebook · Apple, native app-to-app) + **login methods** (link · add a password · unlink) | ✅ complete (Tasks 1–14) |
 | Members | **Roles & branches** (membership piece 1 of 3: promote/demote, move between branches, one branch per manager, change history, notifications) | ✅ complete (Tasks 1–8) |
-| Members | **One sign-in, many companies** (membership piece 2 of 3: a profile per company, switching, join/create from inside the app) | 🔨 Tasks 1, 1b, 2, 3, 4, 5 done; Task 6 next |
+| Members | **One sign-in, many companies** (membership piece 2 of 3: a profile per company, switching, join/create from inside the app) | 🔨 Tasks 1, 1b, 2, 3, 4, 5, 6 done; Task 7 next |
 
-## Where we are right now — One sign-in, many companies (membership piece 2): Tasks 1, 1b, 2, 3, 4, 5 done
+## Where we are right now — One sign-in, many companies (membership piece 2): Tasks 1, 1b, 2, 3, 4, 5, 6 done
 
 Spec `docs/superpowers/specs/2026-11-12-one-sign-in-many-companies-design.md`, plan `docs/superpowers/plans/2026-11-12-one-sign-in-many-companies.md` (7 tasks, native execution: per task teach → reference code → user applies or asks Claude to → Claude tests → human runs migrate + e2e). Ledger `.superpowers/sdd/2026-11-12-one-sign-in-many-companies/progress.md` (git-ignored).
 
@@ -62,10 +62,14 @@ Spec `docs/superpowers/specs/2026-11-12-one-sign-in-many-companies-design.md`, p
   - `MyProfileService.setMyContactEmail`: one transaction — `EmailVerificationService.consume(transaction, { token, email })` (bound to that address, single use; bad/used → 400 `Invalid or expired email verification`, nothing written), then the update. Email via `normalizeEmail`. `ProfilesModule` imports `EmailVerificationModule`.
   - **Route order:** `MyProfileController` is registered FIRST in `ProfilesModule.controllers` (Express matches in registration order and `:id` matches `me`); the controller spec checks the order from the module metadata.
   - E2e `test/accounts.e2e-spec.ts` 20–25: no company open → 403; a waiting profile renames itself and sets a code-proven email (typed mixed-case, stored lowercase); the same proof twice → 400; approval's `member.approved` email lands at that address (Mailpit); the account's other profile keeps its own name and no email.
-- **1283 unit tests green (89 suites) + 263 e2e green (17 suites)** — both **measured** 2026-11-18 after Task 5 (`Tests: 263 passed, 263 total`, on a database rebuilt from all 29 migrations).
+- **Task 6**: notifications from every company.
+  - `NotificationsService.notifyProfiles`, push half only: the recipients query (already there, for their accounts' devices) also selects `company: { select: { id, name } }` — a relation select, one batched lookup for all recipients, not one per recipient (N+1). Each push row's data is `{ ...event data, profileId: <recipient>, ...(company ? { companyId } : {}) }` (the recipient's ids last, so they win a same-named key) and its title `${company.name} · ${subject}`; the platform admin (no company) keeps the event's data and title, plus its `profileId`. Email rows unchanged (no data, no prefix).
+  - E2e: `push.e2e-spec` company approval now expects `PUSH Co · …` and `profileId`; `notifications.e2e-spec` order test registers the owner's phone first and checks the order push row (`cornerId`, `orderId`, `profileId`, `companyId`, `NTF 1b Co · …`). (Plan said owner files → manager's device; the suite's existing flow is manager files → owner notified, the actor being excluded — same check.)
+  - Noticed, left as is: the email half looks up each recipient's contact email one by one (`findProfileEmail` in a loop) — a small N+1, cheap at a branch's few recipients.
+- **1287 unit tests green (89 suites) + 263 e2e green (17 suites)** — both **measured** 2026-11-18 after Task 6 (`Tests: 263 passed, 263 total`, on a database rebuilt from all 29 migrations).
 - The sections below are history: they use the names of their time (`users.*` permissions, `/users/:id/...` routes, `src/members`, `src/users`).
 
-**Next:** Task 6 — notifications from every company (`notifyProfiles` pushes to each recipient profile's account devices with `profileId` and, when it has one, `companyId` in the data, so the app can switch to the right company; push title `${companyName} · ${subject}`; email rows unchanged).
+**Next:** Task 7 — retire `POST /auth/register` and `/auth/register/member` (and `RegisterDto`, `RegisterMemberDto`, `SocialCredentialsDto`'s contact-email pair + `contactEmailFor` if unused); shared e2e helpers `test/helpers/accounts.ts` (`signUp`, `createCompany`, `joinCompany`, `switchTo`, `registerOwner`, `registerJoinedMember`) driving signup → join/create → switch; every e2e suite moves onto them; the part-timer story; docs.
 
 ## Prior — Roles & branches complete (membership piece 1, Tasks 1–8)
 

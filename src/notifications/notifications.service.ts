@@ -153,15 +153,33 @@ export class NotificationsService {
     if (channels.includes(NotificationChannel.PUSH)) {
       // A device belongs to the person's account, so each recipient profile
       // leads to its account's devices. One row per device (each succeeds,
-      // retries or dies on its own), recording the profile it is for.
+      // retries or dies on its own), recording the profile it is for. The
+      // same query brings each profile's company (a relation select: one
+      // batched lookup for all recipients, not one per recipient).
       const profiles = await this.prisma.profile.findMany({
         where: { id: { in: recipientIds } },
-        select: { id: true, accountId: true },
+        select: {
+          id: true,
+          accountId: true,
+          company: { select: { id: true, name: true } },
+        },
       });
       const devices = await this.devices.findTokens([
         ...new Set(profiles.map((profile) => profile.accountId)),
       ]);
       for (const profile of profiles) {
+        // One phone gets every company's pushes (the devices are the
+        // account's): the title names the company, and the data says which
+        // profile to switch to on tap. The recipient's ids come last, so
+        // they win over any event key of the same name.
+        const subject = profile.company
+          ? `${profile.company.name} · ${input.message.subject}`
+          : input.message.subject; // the platform admin: no company to name
+        const data: Record<string, string> = {
+          ...input.data,
+          profileId: profile.id,
+          ...(profile.company ? { companyId: profile.company.id } : {}),
+        };
         const profileDevices = devices.filter(
           (device) => device.accountId === profile.accountId,
         );
@@ -171,9 +189,9 @@ export class NotificationsService {
             channel: NotificationChannel.PUSH,
             recipientProfileId: profile.id,
             recipientAddress: device.token,
-            subject: input.message.subject,
+            subject: subject,
             body: input.message.body,
-            data: input.data,
+            data: data,
           });
         }
       }

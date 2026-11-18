@@ -389,7 +389,9 @@ Added mid-track (the user's decision): **Account** = the sign-in, **Profile** = 
 - [ ] **Step 5 (human):** Run `npm run test:e2e`. Expected: all green.
 - [ ] **Step 6:** Commit: `feat(profiles): each company's name and contact email`.
 
-### Task 6: Notifications from every company
+### Task 6: Notifications from every company — ✅ done
+
+> As built: the recipients query gained `company: { select: { id, name } }` (one batched lookup, no N+1); data and title are computed per recipient, outside the device loop; the recipient's `profileId`/`companyId` come last so they win a same-named event key (unit-tested). **E2e deviation:** the order case reuses `notifications.e2e-spec`'s existing flow (the manager files, the owner's registered phone receives) instead of owner → manager; `push.e2e-spec`'s approval push expects the prefixed title and `profileId`. 1287 unit + 263 e2e green.
 
 **Files:**
 - Modify: `src/notifications/notifications.service.ts`

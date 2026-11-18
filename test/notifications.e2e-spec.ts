@@ -5,7 +5,10 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { testPhones, verifiedPhone } from './helpers/phone';
-import { NotificationStatus } from '../src/generated/prisma/enums';
+import {
+  NotificationChannel,
+  NotificationStatus,
+} from '../src/generated/prisma/enums';
 import { NotificationEvent } from '../src/notifications/notification-events';
 import { notificationTemplates } from '../src/notifications/notification-templates';
 
@@ -331,7 +334,14 @@ describe('Notifications (e2e)', () => {
           .expect(201)
       ).body.id;
 
+      // the owner's phone, so the order's push has somewhere to go
       await request(http)
+        .post('/devices')
+        .set(...auth(ownerAccess))
+        .send({ token: 'ntf-1b-owner-phone', platform: 'ANDROID' })
+        .expect(204);
+
+      const order = await request(http)
         .post(`/corners/${cornerId}/orders`)
         .set(...auth(managerAccess))
         .send({
@@ -351,6 +361,34 @@ describe('Notifications (e2e)', () => {
         },
       });
       expect(toManager).toBe(0); // the actor is excluded
+
+      // the push names the company and says which profile it is for, so
+      // the app can switch to it on tap (an order event carries only
+      // cornerId and orderId of its own)
+      const [push] = await sentTo(
+        NotificationEvent.ORDER_CREATED,
+        'ntf-1b-owner-phone',
+      );
+      const owner = await prisma.profile.findFirstOrThrow({
+        where: {
+          account: { loginMethods: { some: { email: ownerEmail1b } } },
+        },
+        select: { id: true, companyId: true },
+      });
+      const expected = notificationTemplates.orderCreated(
+        'NTF 1b Corner',
+        'Restock request',
+        1,
+      );
+      expect(push.channel).toBe(NotificationChannel.PUSH);
+      expect(push.recipientProfileId).toBe(owner.id);
+      expect(push.subject).toBe(`${companyName} · ${expected.subject}`);
+      expect(push.data).toEqual({
+        cornerId: cornerId,
+        orderId: order.body.id,
+        profileId: owner.id,
+        companyId: owner.companyId,
+      });
     });
 
     it('stock.belowTarget alerts manager AND owner once on the crossing, not again after', async () => {

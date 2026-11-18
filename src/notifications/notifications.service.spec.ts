@@ -296,15 +296,24 @@ describe('NotificationsService', () => {
           profileId === 'no-email' ? null : `${profileId}@example.com`,
         );
       jest.spyOn(service, 'dispatch').mockResolvedValue(undefined);
-      // Each profile belongs to the account "account-of-<profile id>".
+      // Each profile belongs to the account "account-of-<profile id>" and
+      // works for Acme, except the platform admin, who has no company.
       prisma.profile.findMany.mockImplementation(
         async (args: { where: { id: { in: string[] } } }) =>
           args.where.id.in.map((id) => ({
             id: id,
             accountId: `account-of-${id}`,
+            company:
+              id === 'admin-1' ? null : { id: 'company-1', name: 'Acme' },
           })),
       );
     });
+
+    /** The PUSH rows dispatched, in order. */
+    const pushCalls = () =>
+      (service.dispatch as jest.Mock).mock.calls
+        .map((call) => call[0])
+        .filter((call) => call.channel === NotificationChannel.PUSH);
 
     it('dispatches one EMAIL per user with the rendered message', async () => {
       await service.notifyProfiles({
@@ -329,7 +338,7 @@ describe('NotificationsService', () => {
       );
     });
 
-    it("dispatches one PUSH per device of the profile's ACCOUNT, recording the profile (title = subject, address = token)", async () => {
+    it("dispatches one PUSH per device of the profile's ACCOUNT, recording the profile, titled with its company", async () => {
       devices.findTokens.mockResolvedValue([
         { accountId: 'account-of-owner-1', token: 'owner-phone' },
         { accountId: 'account-of-owner-1', token: 'owner-laptop' },
@@ -341,9 +350,15 @@ describe('NotificationsService', () => {
         message: message,
       });
 
+      // one query for every recipient's account AND company (no N+1)
+      expect(prisma.profile.findMany).toHaveBeenCalledTimes(1);
       expect(prisma.profile.findMany).toHaveBeenCalledWith({
         where: { id: { in: ['owner-1'] } },
-        select: { id: true, accountId: true },
+        select: {
+          id: true,
+          accountId: true,
+          company: { select: { id: true, name: true } },
+        },
       });
       expect(devices.findTokens).toHaveBeenCalledWith(['account-of-owner-1']);
       for (const token of ['owner-phone', 'owner-laptop']) {
@@ -352,12 +367,123 @@ describe('NotificationsService', () => {
           channel: NotificationChannel.PUSH,
           recipientProfileId: 'owner-1',
           recipientAddress: token,
-          subject: 'Hello',
+          subject: 'Acme · Hello',
           body: 'Body',
+          data: { profileId: 'owner-1', companyId: 'company-1' },
         });
       }
       // 1 email + 2 devices
       expect(service.dispatch).toHaveBeenCalledTimes(3);
+    });
+
+    it('two recipients in one company, with one and two devices → three pushes, each tagged with ITS profile and the company', async () => {
+      devices.findTokens.mockResolvedValue([
+        { accountId: 'account-of-manager-1', token: 'manager-phone' },
+        { accountId: 'account-of-owner-1', token: 'owner-phone' },
+        { accountId: 'account-of-owner-1', token: 'owner-tablet' },
+      ]);
+
+      await service.notifyProfiles({
+        profileIds: ['manager-1', 'owner-1'],
+        eventType: 'order.created',
+        message: message,
+        data: { cornerId: 'corner-1', orderId: 'order-1' },
+      });
+
+      expect(
+        pushCalls().map((call) => [
+          call.recipientAddress,
+          call.subject,
+          call.data,
+        ]),
+      ).toEqual([
+        [
+          'manager-phone',
+          'Acme · Hello',
+          {
+            cornerId: 'corner-1',
+            orderId: 'order-1',
+            profileId: 'manager-1',
+            companyId: 'company-1',
+          },
+        ],
+        [
+          'owner-phone',
+          'Acme · Hello',
+          {
+            cornerId: 'corner-1',
+            orderId: 'order-1',
+            profileId: 'owner-1',
+            companyId: 'company-1',
+          },
+        ],
+        [
+          'owner-tablet',
+          'Acme · Hello',
+          {
+            cornerId: 'corner-1',
+            orderId: 'order-1',
+            profileId: 'owner-1',
+            companyId: 'company-1',
+          },
+        ],
+      ]);
+    });
+
+    it("the platform admin (no company) keeps the event's own data and title, plus its profileId", async () => {
+      devices.findTokens.mockResolvedValue([
+        { accountId: 'account-of-admin-1', token: 'admin-phone' },
+      ]);
+
+      await service.notifyProfiles({
+        profileIds: ['admin-1'],
+        eventType: 'company.registered',
+        message: message,
+        data: { companyId: 'company-new' }, // the company to review
+      });
+
+      expect(pushCalls()).toEqual([
+        expect.objectContaining({
+          subject: 'Hello', // no company of its own to name
+          data: { companyId: 'company-new', profileId: 'admin-1' },
+        }),
+      ]);
+    });
+
+    it("the recipient's own ids win over event keys of the same name", async () => {
+      devices.findTokens.mockResolvedValue([
+        { accountId: 'account-of-owner-1', token: 'owner-phone' },
+      ]);
+
+      await service.notifyProfiles({
+        profileIds: ['owner-1'],
+        eventType: 'order.created',
+        message: message,
+        data: { profileId: 'someone-else', companyId: 'another-company' },
+      });
+
+      expect(pushCalls()[0].data).toEqual({
+        profileId: 'owner-1',
+        companyId: 'company-1',
+      });
+    });
+
+    it('EMAIL rows are unchanged: the title is not prefixed and no data is attached', async () => {
+      await service.notifyProfiles({
+        profileIds: ['owner-1'],
+        eventType: 'order.created',
+        message: message,
+        data: { cornerId: 'corner-1' },
+      });
+
+      expect(service.dispatch).toHaveBeenCalledWith({
+        eventType: 'order.created',
+        channel: NotificationChannel.EMAIL,
+        recipientProfileId: 'owner-1',
+        recipientAddress: 'owner-1@example.com',
+        subject: 'Hello',
+        body: 'Body',
+      });
     });
 
     it('passes deep-link data to PUSH rows only, never to EMAIL rows', async () => {
@@ -381,9 +507,12 @@ describe('NotificationsService', () => {
       const emailCall = calls.find(
         (call) => call.channel === NotificationChannel.EMAIL,
       );
+      // the event's own keys survive, next to the recipient's ids
       expect(pushCall.data).toEqual({
         cornerId: 'corner-1',
         orderId: 'order-1',
+        profileId: 'owner-1',
+        companyId: 'company-1',
       });
       expect(emailCall.data).toBeUndefined();
     });
