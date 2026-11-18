@@ -1,3 +1,4 @@
+import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { Test } from '@nestjs/testing';
@@ -9,14 +10,30 @@ import { AccountCompaniesService } from './account-companies.service';
 import { AccountsController } from './accounts.controller';
 import { AccountsModule } from './accounts.module';
 import { AccountsService } from './accounts.service';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { NotificationsService } from '../notifications/notifications.service';
+
+/** Stands in for NotificationsModule, whose BullMQ queue would reach for Redis. */
+@Module({
+  providers: [
+    { provide: NotificationsService, useValue: { dispatch: jest.fn() } },
+  ],
+  exports: [NotificationsService],
+})
+class StubNotificationsModule {}
 
 describe('AccountsModule wiring', () => {
-  // The real module with only the database and storage swapped out: a
-  // missing provider (e.g. the event emitter) fails here, not at app start.
+  // The real module (now with the email proofs it spends at join and
+  // create) with only the database, storage and the notification queue
+  // swapped out: a missing provider fails here, not at app start.
   it('Nest can resolve the company routes and both services', async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [
-        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        ConfigModule.forRoot({
+          isGlobal: true,
+          ignoreEnvFile: true,
+          load: [() => ({ VERIFICATION_CODE_SECRET: 'v'.repeat(32) })],
+        }),
         EventEmitterModule.forRoot(),
         PrismaModule,
         StorageModule, // global in the app; AccountsService presigns photos
@@ -27,6 +44,8 @@ describe('AccountsModule wiring', () => {
       .useValue({})
       .overrideProvider(StorageService)
       .useValue({})
+      .overrideModule(NotificationsModule)
+      .useModule(StubNotificationsModule)
       .compile();
 
     expect(moduleRef.get(AccountsController)).toBeInstanceOf(

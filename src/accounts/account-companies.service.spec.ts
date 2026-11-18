@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   HttpException,
@@ -20,16 +21,21 @@ describe('AccountCompaniesService', () => {
   let prisma: {
     companyJoinAttempt: { count: jest.Mock; create: jest.Mock };
     company: { findFirst: jest.Mock; findUnique: jest.Mock };
-    profile: { createManyAndReturn: jest.Mock };
     role: { findUniqueOrThrow: jest.Mock };
     $transaction: jest.Mock;
   };
   let transaction: {
     account: { updateMany: jest.Mock };
-    profile: { count: jest.Mock; create: jest.Mock; update: jest.Mock };
+    profile: {
+      count: jest.Mock;
+      create: jest.Mock;
+      update: jest.Mock;
+      createManyAndReturn: jest.Mock;
+    };
     company: { createManyAndReturn: jest.Mock };
   };
   let accounts: { isPlatformAdmin: jest.Mock; toCompanyProfileView: jest.Mock };
+  let emailVerification: { consume: jest.Mock };
   let eventEmitter: { emit: jest.Mock };
 
   // a fresh sign-in: no company open yet
@@ -71,6 +77,7 @@ describe('AccountCompaniesService', () => {
             company: { id: 'company-new', name: 'New Co' },
           }),
         ),
+        createManyAndReturn: jest.fn().mockResolvedValue([profileRow()]),
       },
       company: {
         createManyAndReturn: jest
@@ -87,9 +94,6 @@ describe('AccountCompaniesService', () => {
         findFirst: jest.fn().mockResolvedValue({ id: 'company-1' }),
         findUnique: jest.fn().mockResolvedValue(null), // join-code draws: free
       },
-      profile: {
-        createManyAndReturn: jest.fn().mockResolvedValue([profileRow()]),
-      },
       role: { findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 2 }) },
       $transaction: jest.fn((work: (client: unknown) => unknown) =>
         work(transaction),
@@ -101,11 +105,13 @@ describe('AccountCompaniesService', () => {
         Promise.resolve({ profileId: row.id, view: true }),
       ),
     };
+    emailVerification = { consume: jest.fn().mockResolvedValue(undefined) };
     eventEmitter = { emit: jest.fn() };
 
     service = new AccountCompaniesService(
       prisma as any,
       accounts as any,
+      emailVerification as any,
       eventEmitter as any,
     );
   });
@@ -128,7 +134,7 @@ describe('AccountCompaniesService', () => {
       expect(accounts.isPlatformAdmin).toHaveBeenCalledWith('account-1');
       expect(prisma.companyJoinAttempt.count).not.toHaveBeenCalled();
       expect(prisma.company.findFirst).not.toHaveBeenCalled();
-      expect(prisma.profile.createManyAndReturn).not.toHaveBeenCalled();
+      expect(transaction.profile.createManyAndReturn).not.toHaveBeenCalled();
     });
 
     it("counts this account's failed attempts in the last hour (a rolling window)", async () => {
@@ -184,7 +190,7 @@ describe('AccountCompaniesService', () => {
       expect(prisma.companyJoinAttempt.create).toHaveBeenCalledWith({
         data: { accountId: 'account-1' },
       });
-      expect(prisma.profile.createManyAndReturn).not.toHaveBeenCalled();
+      expect(transaction.profile.createManyAndReturn).not.toHaveBeenCalled();
     });
 
     it('…with no transaction: a throw inside one would roll the attempt row back', async () => {
@@ -205,7 +211,7 @@ describe('AccountCompaniesService', () => {
     it('inserts a waiting profile with no role, letting the partial unique index refuse a second one', async () => {
       await service.join(account, dto);
 
-      expect(prisma.profile.createManyAndReturn).toHaveBeenCalledWith({
+      expect(transaction.profile.createManyAndReturn).toHaveBeenCalledWith({
         data: [
           {
             accountId: 'account-1',
@@ -213,6 +219,7 @@ describe('AccountCompaniesService', () => {
             name: 'Sam',
             status: ProfileStatus.PENDING_APPROVAL,
             roleId: null,
+            contactEmail: null, // no proof sent: set later, or never
           },
         ],
         skipDuplicates: true,
@@ -221,7 +228,7 @@ describe('AccountCompaniesService', () => {
     });
 
     it('already pending or a member there (nothing inserted) → 409, no event, no attempt recorded', async () => {
-      prisma.profile.createManyAndReturn.mockResolvedValue([]);
+      transaction.profile.createManyAndReturn.mockResolvedValue([]);
 
       await expect(service.join(account, dto)).rejects.toThrow(
         new ConflictException(
@@ -232,6 +239,84 @@ describe('AccountCompaniesService', () => {
       expect(prisma.companyJoinAttempt.create).not.toHaveBeenCalled();
     });
 
+    it('…and that 409 is thrown INSIDE the transaction, so a proof sent with it is not wasted', async () => {
+      transaction.profile.createManyAndReturn.mockResolvedValue([]);
+
+      await expect(service.join(account, dto)).rejects.toThrow(
+        ConflictException,
+      );
+      await expect(prisma.$transaction.mock.results[0].value).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it('the profile is inserted on the transaction (after the code lookup, which stays outside)', async () => {
+      await service.join(account, dto);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.company.findFirst.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.$transaction.mock.invocationCallOrder[0],
+      );
+    });
+
+    describe('with a proven contact email (contactEmail + emailVerificationToken)', () => {
+      const withProof = {
+        ...dto,
+        contactEmail: 'sam@acme.com',
+        emailVerificationToken: 'email-token',
+      };
+
+      it('spends the proof for that address on the transaction, BEFORE the insert', async () => {
+        await service.join(account, withProof);
+
+        expect(emailVerification.consume).toHaveBeenCalledWith(transaction, {
+          token: 'email-token',
+          email: 'sam@acme.com',
+        });
+        expect(
+          emailVerification.consume.mock.invocationCallOrder[0],
+        ).toBeLessThan(
+          transaction.profile.createManyAndReturn.mock.invocationCallOrder[0],
+        );
+      });
+
+      it('the new profile gets that contact email', async () => {
+        await service.join(account, withProof);
+
+        expect(
+          transaction.profile.createManyAndReturn.mock.calls[0][0].data,
+        ).toEqual([expect.objectContaining({ contactEmail: 'sam@acme.com' })]);
+      });
+
+      it('a bad, used or expired proof → 400: no profile, no event, and not counted as a guessed code', async () => {
+        emailVerification.consume.mockRejectedValue(
+          new BadRequestException('Invalid or expired email verification'),
+        );
+
+        await expect(service.join(account, withProof)).rejects.toThrow(
+          new BadRequestException('Invalid or expired email verification'),
+        );
+        expect(transaction.profile.createManyAndReturn).not.toHaveBeenCalled();
+        expect(eventEmitter.emit).not.toHaveBeenCalled();
+        expect(prisma.companyJoinAttempt.create).not.toHaveBeenCalled();
+      });
+
+      it('a wrong code → 404 before the proof is touched (it stays unspent)', async () => {
+        prisma.company.findFirst.mockResolvedValue(null);
+
+        await expect(service.join(account, withProof)).rejects.toThrow(
+          NotFoundException,
+        );
+        expect(emailVerification.consume).not.toHaveBeenCalled();
+      });
+    });
+
+    it('without the pair, no proof is spent', async () => {
+      await service.join(account, dto);
+
+      expect(emailVerification.consume).not.toHaveBeenCalled();
+    });
+
     it('emits MEMBER_JOIN_REQUESTED after the insert', async () => {
       await service.join(account, dto);
 
@@ -240,7 +325,7 @@ describe('AccountCompaniesService', () => {
         { companyId: 'company-1', memberProfileId: 'profile-new' },
       );
       expect(
-        prisma.profile.createManyAndReturn.mock.invocationCallOrder[0],
+        transaction.profile.createManyAndReturn.mock.invocationCallOrder[0],
       ).toBeLessThan(eventEmitter.emit.mock.invocationCallOrder[0]);
     });
 
@@ -334,6 +419,7 @@ describe('AccountCompaniesService', () => {
           companyId: null,
           roleId: 2,
           status: ProfileStatus.PENDING_APPROVAL,
+          contactEmail: null, // no proof sent
         },
         select: { id: true },
       });
@@ -410,6 +496,78 @@ describe('AccountCompaniesService', () => {
           company: { id: 'company-new', name: 'New Co' },
         }),
       );
+    });
+
+    it('without the pair, no proof is spent', async () => {
+      await service.create(account, dto);
+
+      expect(emailVerification.consume).not.toHaveBeenCalled();
+    });
+
+    describe('with a proven contact email (contactEmail + emailVerificationToken)', () => {
+      const withProof = {
+        ...dto,
+        contactEmail: 'kim@newco.com',
+        emailVerificationToken: 'email-token',
+      };
+
+      it('spends it on the transaction AFTER the lock and count, BEFORE the owner profile', async () => {
+        await service.create(account, withProof);
+
+        expect(emailVerification.consume).toHaveBeenCalledWith(transaction, {
+          token: 'email-token',
+          email: 'kim@newco.com',
+        });
+        const spent = emailVerification.consume.mock.invocationCallOrder[0];
+        expect(
+          transaction.profile.count.mock.invocationCallOrder[0],
+        ).toBeLessThan(spent);
+        expect(spent).toBeLessThan(
+          transaction.profile.create.mock.invocationCallOrder[0],
+        );
+      });
+
+      it('the owner profile gets that contact email', async () => {
+        await service.create(account, withProof);
+
+        expect(transaction.profile.create.mock.calls[0][0].data).toEqual(
+          expect.objectContaining({ contactEmail: 'kim@newco.com' }),
+        );
+      });
+
+      it('a company already waiting → 409 before the proof is spent', async () => {
+        transaction.profile.count.mockResolvedValue(1);
+
+        await expect(service.create(account, withProof)).rejects.toThrow(
+          ConflictException,
+        );
+        expect(emailVerification.consume).not.toHaveBeenCalled();
+      });
+
+      it('a bad proof → 400: no profile, no company, no event', async () => {
+        emailVerification.consume.mockRejectedValue(
+          new BadRequestException('Invalid or expired email verification'),
+        );
+
+        await expect(service.create(account, withProof)).rejects.toThrow(
+          new BadRequestException('Invalid or expired email verification'),
+        );
+        expect(transaction.profile.create).not.toHaveBeenCalled();
+        expect(transaction.company.createManyAndReturn).not.toHaveBeenCalled();
+        expect(eventEmitter.emit).not.toHaveBeenCalled();
+      });
+
+      it('a taken tax ID → 409 thrown inside the transaction: the spent proof rolls back with it', async () => {
+        transaction.company.createManyAndReturn.mockResolvedValue([]);
+
+        await expect(service.create(account, withProof)).rejects.toThrow(
+          new ConflictException('Tax ID already registered'),
+        );
+        expect(emailVerification.consume).toHaveBeenCalled();
+        await expect(prisma.$transaction.mock.results[0].value).rejects.toThrow(
+          ConflictException,
+        );
+      });
     });
   });
 });

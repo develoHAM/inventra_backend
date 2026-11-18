@@ -8,7 +8,7 @@ import { notificationTemplates } from '../src/notifications/notification-templat
 import { testPhones, verifiedPhone } from './helpers/phone';
 import { joinCompany, suiteAccounts, switchTo } from './helpers/accounts';
 import type { OwnerSetup, Session } from './helpers/accounts';
-import { waitFor } from './helpers/email';
+import { clearInbox, emailProof, inbox, waitFor } from './helpers/email';
 
 /**
  * GET /me/companies, POST /me/companies/join and POST /me/companies: an
@@ -745,6 +745,144 @@ describe('Join or create a company from a sign-in (e2e)', () => {
       await expect(myCompanies(login.body.accessToken)).resolves.toEqual([
         expect.objectContaining({ profileId: parkInB, status: 'ACTIVE' }),
       ]);
+    });
+  });
+  describe('a contact email proven up front, with the join or the create', () => {
+    const domain = 'upfront.accounts.e2e.test';
+    const kangContact = `kang.contact@${domain}`;
+    const yoonContact = `yoon.contact@${domain}`;
+    let ownerC: OwnerSetup;
+    let ownerD: OwnerSetup;
+    let kang: Session; // signed up, no company
+    let kangProof: string;
+
+    const joinWith = (session: Session, body: Record<string, unknown>) =>
+      request(http)
+        .post('/me/companies/join')
+        .set(...auth(session.accessToken))
+        .send(body);
+
+    /** Until `address` has a message with this subject. */
+    const mailWithSubject = (address: string, subject: string) =>
+      waitFor(async () => {
+        const messages = await inbox(address);
+        return messages.some((message) => message.Subject === subject)
+          ? messages
+          : null;
+      });
+
+    beforeAll(async () => {
+      for (const address of [kangContact, yoonContact]) {
+        await clearInbox(address);
+      }
+      const upfront = suiteAccounts(app, {
+        nextPhone: nextPhone,
+        emailDomain: domain,
+        taxIdOf: taxIdOf, // 31, 32, 33: unused above
+        companyNameOf: (n) => `Upfront Co ${n}`,
+      });
+      ownerC = await upfront.registerOwner(adminAccess, 31);
+      ownerD = await upfront.registerOwner(adminAccess, 32);
+      kang = await signUp(`kang@${domain}`);
+    });
+
+    it('32. join with a proven email → that profile has it, and the approval email arrives there', async () => {
+      kangProof = await emailProof(app, kangContact);
+
+      const joined = await joinWith(kang, {
+        joinCode: ownerC.joinCode,
+        name: 'Kang',
+        contactEmail: 'Kang.Contact@Upfront.Accounts.E2E.test', // stored lowercase
+        emailVerificationToken: kangProof,
+      }).expect(201);
+
+      const profileId = joined.body.profileId as string;
+      await expect(
+        prisma.profile.findUniqueOrThrow({
+          where: { id: profileId },
+          select: { contactEmail: true },
+        }),
+      ).resolves.toEqual({ contactEmail: kangContact });
+
+      // no PUT /profiles/me/contact-email, no switch: approve straight away
+      const staff = await prisma.role.findUniqueOrThrow({
+        where: { code: 'STAFF' },
+      });
+      await request(http)
+        .patch(`/profiles/${profileId}/approve`)
+        .set(...auth(ownerC.access))
+        .send({ roleId: staff.id, cornerId: null })
+        .expect(200);
+      await mailWithSubject(
+        kangContact,
+        notificationTemplates.memberApproved('Upfront Co 31').subject,
+      );
+    });
+
+    it('33. the same proof again → 400: no profile in the other company, and no guess counted', async () => {
+      const res = await joinWith(kang, {
+        joinCode: ownerD.joinCode,
+        name: 'Kang',
+        contactEmail: kangContact,
+        emailVerificationToken: kangProof,
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toBe('Invalid or expired email verification');
+      await expect(
+        prisma.profile.count({
+          where: {
+            companyId: ownerD.companyId,
+            account: { loginMethods: { some: { email: `kang@${domain}` } } },
+          },
+        }),
+      ).resolves.toBe(0);
+      await expect(
+        prisma.companyJoinAttempt.count({
+          where: {
+            account: { loginMethods: { some: { email: `kang@${domain}` } } },
+          },
+        }),
+      ).resolves.toBe(0);
+    });
+
+    it('34. half the pair → 400 (both or neither)', async () => {
+      const res = await joinWith(kang, {
+        joinCode: ownerD.joinCode,
+        name: 'Kang',
+        contactEmail: kangContact,
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain(
+        'emailVerificationToken should not be empty',
+      );
+    });
+
+    it("35. create with a proven email → the company-approved email arrives at the owner's address", async () => {
+      const yoon = await signUp(`yoon@${domain}`);
+      const proof = await emailProof(app, yoonContact);
+
+      const created = await request(http)
+        .post('/me/companies')
+        .set(...auth(yoon.accessToken))
+        .send({
+          companyName: 'Upfront Co 33',
+          taxId: taxIdOf(33),
+          ownerName: 'Yoon',
+          contactEmail: yoonContact,
+          emailVerificationToken: proof,
+        })
+        .expect(201);
+
+      await request(http)
+        .patch(`/companies/${created.body.company.id}/approve`)
+        .set(...auth(adminAccess))
+        .expect(200);
+      await mailWithSubject(
+        yoonContact,
+        notificationTemplates.companyApproved('Upfront Co 33').subject,
+      );
     });
   });
 });
