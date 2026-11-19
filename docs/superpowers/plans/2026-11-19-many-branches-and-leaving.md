@@ -301,7 +301,7 @@
 - **Consumes:** Task 2's `ProfileBranchesService`, `decideCompanyRoleChange`, `MemberRoleChangedEvent.cornerId`, `branchRoleIn`.
 - **Produces:**
   - **`decideBranchRoleChange(input: { callerRole: string | null; callerBranchRole: BranchRoleCode | null; isSelf: boolean; targetBranchRole: BranchRoleCode; requestedRole: BranchRoleCode }): 'noop' | { checkManagerCount: boolean }`:**
-    - admin or owner: any change, `checkManagerCount: false`;
+    - admin or owner: promote STAFF → MANAGER **or demote MANAGER → STAFF** in any branch, `checkManagerCount: false`. Demoting a branch's last manager is allowed (piece 1: a branch may have no manager), and nobody is auto-promoted, because the owner chose this;
     - MANAGER of that branch: STAFF → MANAGER for another person, or themselves MANAGER → STAFF with `checkManagerCount: true`;
     - else 403 `Managers can only promote staff of their own branch, or step down themselves`, or 403 `You cannot change member roles` for other roles.
   - `decideCompanyRoleChange` now also allows `isSelf` owner → MANAGER/STAFF (the owner-count check applies).
@@ -310,6 +310,7 @@
 
 - [ ] **Step 1 (Claude):** Write the tests.
   - **`decideBranchRoleChange`**, every row of its rule list:
+    - an owner demoting a manager to staff → `{ checkManagerCount: false }`, the same for the admin;
     - a manager demoting **another** manager → 403;
     - a manager acting in a branch they only staff → 403.
   - **`changeRole`:**
@@ -324,7 +325,8 @@
     - the last owner → 409 `A company needs at least one owner`.
   - **Template:** `memberRoleChanged` with a corner name uses the branch sentence from Global Constraints.
   - **e2e:**
-    - an owner changes someone's role in A only; B is untouched;
+    - an owner promotes someone to MANAGER in A only; B is untouched;
+    - an owner demotes A's manager to staff → 200, even A's only manager. A is left with no manager and nobody is promoted, and the person's `member.roleChanged` names A;
     - A's manager promotes A's staff → 200, but B's staff → 403;
     - A's second manager steps down → 200; the last one → 409;
     - an owner steps down while another owner exists → 200; the last owner → 409.
