@@ -27,6 +27,8 @@
 - The company-wide role comes **only** from `companyRoleOf`. The member-list `role=` filter is the one other place a role is worked out, and an e2e table checks it against the function.
 - "Live" assignment = `deletedAt: null` **and** its branch `deletedAt: null`.
 - Owners never have assignments. Promotion to owner ends every assignment.
+- **Who may do what** = the spec's per-actor tables (revised by the user 2026-11-21).
+- Every ACTIVE or SUSPENDED manager or staff member keeps **at least one** live assignment. Only data from before this piece can lack one, which is why `companyRoleOf` keeps the "no branch → STAFF" fallback.
 
 **History** (`membership_changes`, append-only, written in the same transaction as the change)
 - New rows follow the spec's **History encoding** table exactly: one row per assignment changed or ended; (role, branch) pairs on both sides.
@@ -38,9 +40,12 @@
 - Events are emitted after commit.
 
 **Exact responses** (new; existing ones unchanged)
-- 400 `A manager needs a branch`
-- 400 `Owners work across the whole company`
+- 400 `Managers and staff need a branch` (approving, and demoting an owner, with no `cornerId`)
+- 400 `Owners work across the whole company` (a `cornerId` with OWNER, or adding an owner to a branch)
+- 403 `Managers can approve only as staff or manager` (replaces `Managers can approve only as staff`; `Managers can approve only into their own branch` is kept)
 - 409 `Already in this branch` · 404 `Not in this branch`
+- 409 `A member needs at least one branch` (removing someone's last branch)
+- 409 `Some members work only in this branch; give them another branch first` (deleting a branch)
 - 403 `You can only work in your own branches`
 - 400 `Change a role in a branch with PUT /profiles/:id/branches/:cornerId/role`
 - 403 `Managers can only promote staff of their own branch, or step down themselves`
@@ -78,9 +83,10 @@
 - **Views keep `role: { code, name }`.** The name comes from the `roles` table through `loadRoleNames(prisma)`: one query per response, four rows.
 - **The disconnect moves out of `LoginMethodsService`** into `ProviderDisconnectService`, which `SocialAuthModule` exports. `ProfilesModule` exports `LeavingService`.
 - **e2e helpers:**
-  - `registerJoinedMember` takes `options.cornerId`. MANAGER without a branch now fails, by design.
+  - `registerJoinedMember` takes `options.cornerId`, **required for MANAGER and STAFF** (the API answers 400 without one) and omitted for OWNER.
   - New `addToBranch(ownerAccess, profileId, cornerId, role)`.
-  - Suites that approved a MANAGER with no branch and then called `PUT /profiles/:id/branch` now approve as STAFF and call `addToBranch(…, 'MANAGER')`. A "manager of no branch" fixture becomes staff with no branch.
+  - New `createBranch(ownerAccess, name)`: a store plus a corner, returning the corner id, for suites that had no branch (catalog, accounts, auth, join-code, notifications).
+  - Suites that approved someone with no branch and then called `PUT /profiles/:id/branch` now approve straight into the branch they need. A "no branch" fixture (only the role-filter table needs one) is made through Prisma, as data from before this piece.
 - **One unit-test fixture**, `src/testing/auth-profile.ts` → `anAuthProfile(overrides: Partial<AuthProfile> = {}): AuthProfile`, replaces the ~39 inline `AuthProfile` literals in the specs.
 - **`POST /profiles/me/leave` answers 200** with a `LeaveSummary`.
 
@@ -188,7 +194,7 @@
 - Modify: `src/profiles/{member-rules,profiles.service,profile-view,profiles.controller,profiles.module}.ts`, `dto/change-role.dto.ts`; delete `dto/change-branch.dto.ts`
 - Modify: `src/corners/corners.service.ts`, `src/accounts/{accounts.service,company-profile-view}.ts`
 - Modify: `src/notifications/{notification-events,notification-templates,notifications.listener,notifications.service}.ts`
-- Test: the matching `*.spec.ts` (every spec that builds an `AuthProfile` moves to `anAuthProfile()`), `test/helpers/accounts.ts`, `test/profiles.e2e-spec.ts`, and every e2e suite using `PUT /profiles/:id/branch`: audits, orders, placements, inventory, reservations, notifications, stores-corners
+- Test: the matching `*.spec.ts` (every spec that builds an `AuthProfile` moves to `anAuthProfile()`), `test/helpers/accounts.ts`, `test/profiles.e2e-spec.ts`, every e2e suite using `PUT /profiles/:id/branch` (audits, orders, placements, inventory, reservations, notifications, stores-corners), and every suite that approves with `cornerId: null` (accounts, auth, join-code, catalog via the helper)
 
 **Interfaces:**
 - **Consumes:** Task 1's `ProfileBranch`, `companyRoleOf`, `branchRoleIn`, `BranchRole`, `BranchRoleCode`.
@@ -206,7 +212,8 @@
     - same role → `'noop'`;
     - a non-owner target asking for MANAGER or STAFF → 400 `Change a role in a branch with PUT /profiles/:id/branches/:cornerId/role`;
     - promote: admin or owner;
-    - demote an owner: the admin only (Task 3 adds self).
+    - demote an owner: the admin only (Task 3 adds self); `cornerId` required for MANAGER **and** STAFF (400 `Managers and staff need a branch`).
+  - **`approve`** follows the spec's tables: admin or owner → OWNER (`cornerId` must be null), MANAGER or STAFF (`cornerId` required); a caller who is MANAGER in the target branch → STAFF or MANAGER into it; anyone else → 403.
   - **`ProfileBranchesService`:**
     - `add(caller: AuthProfile, profileId: string, dto: AddBranchDto): Promise<ProfileView>`;
     - `remove(caller: AuthProfile, profileId: string, cornerId: string): Promise<ProfileView>`;
@@ -214,7 +221,7 @@
   - **Routes:** `POST /profiles/:id/branches` (201, `profiles.move`), `DELETE /profiles/:id/branches/:cornerId` (200, `profiles.move`). `PUT /profiles/:id/branch` is removed.
   - Events: `MemberMovedEvent` and `MemberRoleChangedEvent` as in "Decisions beyond the spec".
   - `anAuthProfile(overrides)` defaults: an ACTIVE STAFF with no branches in company `'company-1'`.
-  - **e2e helper:** `registerJoinedMember(…, options: PersonOptions & { cornerId?: string })`; `addToBranch(ownerAccess: string, profileId: string, cornerId: string, role: 'MANAGER' | 'STAFF'): Promise<void>`.
+  - **e2e helpers:** `registerJoinedMember(…, options: PersonOptions & { cornerId?: string })`; `addToBranch(ownerAccess: string, profileId: string, cornerId: string, role: 'MANAGER' | 'STAFF'): Promise<void>`; `createBranch(ownerAccess: string, name: string): Promise<string>` (both in `suiteAccounts`).
 
 - [ ] **Step 1 (Claude):** Add `src/testing/auth-profile.ts` and move every spec's inline `AuthProfile` to it. Run `npx tsc --noEmit -p tsconfig.json`. Expected: errors only where the old fields are read, which is the RED to come.
 - [ ] **Step 2 (Claude):** Write the unit tests.
@@ -225,10 +232,12 @@
     - STAFF assigned to the corner: passes;
     - no assignment to the corner → 403 `You can only work in your own branches`.
   - **`approve`:**
-    - MANAGER with `cornerId: null` → 400 `A manager needs a branch`;
+    - MANAGER or STAFF with `cornerId: null` → 400 `Managers and staff need a branch`;
     - with a branch: lock the corner, guarded `updateMany` to ACTIVE (`roleId` stays null), `createManyAndReturn` the assignment, and one `APPROVED` row from `(null, null)` to `(role, corner)`;
-    - STAFF with null: no assignment, row to `(STAFF, null)`;
-    - a manager approving into a branch where `branchRoleIn` is not MANAGER → 403.
+    - OWNER (admin or owner caller) with null: guarded `updateMany` to ACTIVE with `roleId` = OWNER, no assignment, one row to `(OWNER, null)`; OWNER with a `cornerId` → 400 `Owners work across the whole company`;
+    - a manager of X approving as MANAGER into X → allowed, the same writes;
+    - a manager approving as OWNER → 403 `Managers can approve only as staff or manager`;
+    - a manager approving into a branch where `branchRoleIn` is not MANAGER → 403 `Managers can approve only into their own branch`.
   - **`ProfileBranchesService.add`:**
     - caller not admin or owner → 403;
     - target not ACTIVE → 400; target OWNER → 400 `Owners work across the whole company`;
@@ -237,15 +246,20 @@
     - one `BRANCH_ADDED` row from `(null, null)` to `(role, X)`;
     - `member.moved { change: 'ADDED', cornerId }` after commit.
   - **`ProfileBranchesService.remove`:**
+    - the timeline: lock the corner, then lock the profile by writing to it, then count the member's **other** live assignments in live branches;
+    - 0 others → 409 `A member needs at least one branch`, and nothing is written;
     - guarded `updateMany` (`deletedAt: null`) with count 0 → 404 `Not in this branch`;
     - `BRANCH_REMOVED` row from `(R, X)` to `(null, null)`;
     - event `REMOVED`.
   - **`changeRole`** (company-level) through `decideCompanyRoleChange`:
     - **promote to OWNER:** the profile gets `roleId = OWNER`, every live assignment is ended in one `updateManyAndReturn`, and there is one row per ended assignment from `(R, X)` to `(OWNER, null)`, or one from `(STAFF, null)` if the person had no branch;
     - **demote an owner (admin):** company lock, then count active owners (< 2 → 409);
-    - demoting to MANAGER needs `cornerId` (400 `A manager needs a branch`), and the assignment is created;
+    - demoting to MANAGER or to STAFF needs `cornerId` (400 `Managers and staff need a branch`), and the assignment is created; the row goes from `(OWNER, null)` to `(R, X)`;
     - a non-owner target with MANAGER/STAFF → the 400 above.
-  - **`CornersService.remove`:** `updateManyAndReturn` on the live assignments of the branch; one `BRANCH_DELETED` row each, from `(R, X)` to `(null, null)`; `member.moved { change: 'BRANCH_DELETED' }` each.
+  - **`CornersService.remove`:**
+    - the timeline: lock the corner, then lock the assigned profiles in `id` order, then count each one's other live assignments;
+    - anyone with 0 others → 409 `Some members work only in this branch; give them another branch first`, and nothing is written (the branch stays live);
+    - otherwise `updateManyAndReturn` on the live assignments of the branch; one `BRANCH_DELETED` row each, from `(R, X)` to `(null, null)`; `member.moved { change: 'BRANCH_DELETED' }` each.
   - **`findCornerRecipientIds`:** filters `branches: { some: { companyStoreId, deletedAt: null, role: { code: 'MANAGER' } } }`.
   - **Listener and templates:** `ADDED` → `memberBranchAdded`, `REMOVED` → `memberBranchRemoved`, `BRANCH_DELETED` → `memberBranchClosed`, each with the corner's name, read without a `deletedAt` filter.
   - **`profileListWhere`:** the where shape for `role=STAFF` without a branch, `role=MANAGER&cornerId=X`, `role=OWNER&cornerId=X` (matches nothing), `cornerId=none`, the default `status` exclusion, and `status=DEACTIVATED`.
@@ -275,15 +289,16 @@
   - `SELECT count(*) FROM profiles p JOIN roles r ON r.id = p.role_id WHERE r.code IN ('MANAGER', 'STAFF')` = 0.
 - [ ] **Step 9:** Run `npm test`, `npm run build`, `npm run lint`. Expected: PASS.
 - [ ] **Step 10 (Claude):** Update the e2e (Review Focus 1).
-  - **Helper:** add `addToBranch`, and pass `cornerId` through `registerJoinedMember`.
-  - Each suite listed in **Files** stops calling `PUT /profiles/:id/branch`.
+  - **Helper:** add `addToBranch` and `createBranch`, and pass `cornerId` through `registerJoinedMember`.
+  - Each suite listed in **Files** stops calling `PUT /profiles/:id/branch` and stops approving with `cornerId: null`.
   - **`test/profiles.e2e-spec.ts`:**
     - **The multi-branch story:** someone added as MANAGER in A and STAFF in B gets `role.code === 'MANAGER'` and two `branches`. `POST /products` → 201. They can work in B's orders (201). Approving into B → 403. `GET /corners/B/history` → 403. Any route of corner C → 403.
-    - **Adding and removing:** adding again → 409; adding an owner → 400; removing → 200 and then 404.
-    - **Approval:** approving a MANAGER with no branch → 400.
+    - **Adding and removing:** adding again → 409; adding an owner → 400; removing A from someone in A and B → 200 and then 404; removing their last branch B → 409.
+    - **Removing two branches at once** (`Promise.all` on A and B of someone in only A and B): one 200, one 409, and they keep one branch.
+    - **Approval:** approving a MANAGER or a STAFF with no branch → 400; an owner approving a newcomer as OWNER → 200, `role.code === 'OWNER'`, no `branches`; a manager of A approving as MANAGER into A → 200, into B → 403, as OWNER → 403.
     - **Promotion:** promoting to OWNER ends both assignments and writes two history rows.
-    - **Branch deletion:** deleting A ends only A's assignment; B stays.
-    - **The role-filter table:** fixtures are an owner, a manager-in-A + staff-in-B, staff in A, staff with no branch, a pending member, and a profile set to `DEACTIVATED` through Prisma. For each `role` in OWNER/MANAGER/STAFF, `GET /profiles?role=` returns exactly the fixtures whose expected role (written in the test, from the spec's rule) matches. For `cornerId=A&role=MANAGER` and `cornerId=A&role=STAFF`, the same with the role in A. `?status=DEACTIVATED` shows the deactivated profile, and the default list doesn't.
+    - **Branch deletion:** deleting A while it is someone's only branch → 409 and A stays; after `addToBranch` gives them B, deleting A → 200, and only A's assignment ends.
+    - **The role-filter table:** fixtures are an owner, a manager-in-A + staff-in-B, staff in A, staff with no branch (its assignment soft-deleted through Prisma, as data from before this piece), a pending member, and a profile set to `DEACTIVATED` through Prisma. For each `role` in OWNER/MANAGER/STAFF, `GET /profiles?role=` returns exactly the fixtures whose expected role (written in the test, from the spec's rule) matches. For `cornerId=A&role=MANAGER` and `cornerId=A&role=STAFF`, the same with the role in A. `?status=DEACTIVATED` shows the deactivated profile, and the default list doesn't.
 - [ ] **Step 11 (human):** Run `npm run test:e2e 2>&1 | tee e2e.log`. Expected: all green (Claude reads `e2e.log`).
 - [ ] **Step 12:** Commit: `feat(profiles)!: a role per branch; company-wide role worked out from assignments`.
 
@@ -304,7 +319,7 @@
     - admin or owner: promote STAFF → MANAGER **or demote MANAGER → STAFF** in any branch, `checkManagerCount: false`. Demoting a branch's last manager is allowed (piece 1: a branch may have no manager), and nobody is auto-promoted, because the owner chose this;
     - MANAGER of that branch: STAFF → MANAGER for another person, or themselves MANAGER → STAFF with `checkManagerCount: true`;
     - else 403 `Managers can only promote staff of their own branch, or step down themselves`, or 403 `You cannot change member roles` for other roles.
-  - `decideCompanyRoleChange` now also allows `isSelf` owner → MANAGER/STAFF (the owner-count check applies).
+  - `decideCompanyRoleChange` now also allows `isSelf` owner → MANAGER/STAFF (the owner-count check applies; `cornerId` required for both, as for the admin).
   - **`ProfileBranchesService.changeRole(caller, profileId, cornerId, dto: ChangeBranchRoleDto): Promise<ProfileView>`**, `ChangeBranchRoleDto { role: 'MANAGER' | 'STAFF' }`.
   - **Route:** `PUT /profiles/:id/branches/:cornerId/role` (200, `profiles.changeRole`).
 
@@ -321,7 +336,8 @@
     - one `ROLE_CHANGED` row from `(R1, X)` to `(R2, X)`;
     - `member.roleChanged { cornerId: X }`.
   - **Owner self-demotion:**
-    - allowed while another ACTIVE owner exists, behind the company lock;
+    - allowed while another ACTIVE owner exists, behind the company lock, into the branch they name;
+    - to STAFF or MANAGER with no `cornerId` → 400 `Managers and staff need a branch`;
     - the last owner → 409 `A company needs at least one owner`.
   - **Template:** `memberRoleChanged` with a corner name uses the branch sentence from Global Constraints.
   - **e2e:**
@@ -329,7 +345,7 @@
     - an owner demotes A's manager to staff → 200, even A's only manager. A is left with no manager and nobody is promoted, and the person's `member.roleChanged` names A;
     - A's manager promotes A's staff → 200, but B's staff → 403;
     - A's second manager steps down → 200; the last one → 409;
-    - an owner steps down while another owner exists → 200; the last owner → 409.
+    - an owner steps down to STAFF in A while another owner exists → 200 (one branch, A); with no branch → 400; the last owner → 409.
 - [ ] **Step 2:** Run `npm test`. Expected: FAIL.
 - [ ] **Step 3 (user):** Code to the interfaces.
 - [ ] **Step 4:** Run `npm test`, `npm run build`, `npm run lint`. Expected: PASS.

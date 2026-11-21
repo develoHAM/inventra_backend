@@ -1,7 +1,7 @@
 # Many Branches & Leaving: Design
 
 **Date:** 2026-11-19
-**Status:** approved 2026-11-19, plan next
+**Status:** approved 2026-11-19; role rules revised by the user 2026-11-21 (see "Who may do what")
 **Piece 3 of 3** of the membership track:
 1. Roles & branches (built): promote and demote people, move them between branches, change history.
 2. One sign-in, many companies (built): an account with one profile per company, Slack-style switching.
@@ -75,6 +75,51 @@ Part A comes first because Part B's rules ("the last manager of a branch") are a
 | Proof for deleting an account | A fresh **phone verification** |
 | Names on records after deletion | **Kept for now** |
 | A closed company | **Closing is final.** Its tax ID and its product barcodes stay taken. A revival flow comes later |
+| Who may do what | The per-actor tables in "Who may do what" below (revised 2026-11-21) |
+| Every manager and staff member has a branch | Approving someone as manager or staff, and demoting an owner, always name a branch. **A member's last branch can't be removed.** **A branch can't be deleted while it is someone's only branch**; the owner gives them another branch first |
+
+## Who may do what (the user's, revised 2026-11-21)
+
+X and Y are branches of the same company.
+
+**Admin**
+
+| Actor | Action | Target | Allowed when |
+|---|---|---|---|
+| Admin | approves | a pending newcomer | as **any role**: owner (no branch), or manager or staff (**a branch is required**) |
+| Admin | promotes | staff in X → manager in X | any branch |
+| Admin | demotes | manager in X → staff in X | any branch, even X's last manager (nobody is auto-promoted) |
+| Admin | promotes | a manager or staff member → owner | always; their branch assignments end |
+| Admin | demotes | an owner → manager or staff | **a branch is required for both**; only while another ACTIVE owner remains |
+| Admin | adds / removes | any member to or from a branch | always, except removing a member's **last** branch |
+
+**Owner**
+
+| Actor | Action | Target | Allowed when |
+|---|---|---|---|
+| Owner | approves | a pending newcomer | the same as the admin |
+| Owner | promotes | staff in X → manager in X | any branch |
+| Owner | demotes | manager in X → staff in X | any branch, even X's last manager |
+| Owner | promotes | a manager or staff member → owner | always; their branch assignments end |
+| Owner | demotes | another owner | ✗ never (only the admin can) |
+| Owner | demotes | themselves → manager or staff | **a branch is required for both**; only while another ACTIVE owner remains |
+| Owner | adds / removes | any member to or from a branch | always, except removing a member's **last** branch |
+
+**Manager of X**
+
+| Actor | Action | Target | Allowed when |
+|---|---|---|---|
+| Manager of X | approves | a pending newcomer | **as staff or manager**, only into X |
+| Manager of X | promotes | staff in X → manager in X | X only |
+| Manager of X | demotes | another manager of X | ✗ never (owners and the admin only) |
+| Manager of X | demotes | themselves in X → staff in X | only while X has another ACTIVE manager |
+| Manager of X | promotes / demotes | anyone in another branch Y | ✗, unless they also manage Y; then Y follows these same rows |
+| Manager of X | promotes | anyone → owner | ✗ never |
+| Manager of X | adds / removes | members to or from a branch | ✗ never |
+
+**Staff:** no approvals, no role changes, no branch changes.
+
+The principle behind the rows: you raise people up to your own level inside your scope; you lower only people below you; you lower yourself only while someone else still covers your role.
 
 ## Decisions (my calls, stated so they can be rejected)
 
@@ -95,9 +140,8 @@ Part A comes first because Part B's rules ("the last manager of a branch") are a
 | Current branch | Not in the token. The URL names the branch. Remembering the last branch opened is the client's job |
 | Assignment rows | Follow the soft-delete convention (`deleted_at`, `deleted_by_profile_id`) |
 | Owners and branches | Owners can't be put in branches. Promotion to owner ends all of the person's assignments |
-| Who adds people to branches and removes them | **Only owners and the admin.** (My earlier suggestion that managers could add staff to their branches is dropped: the user said owners assign.) Managers keep two powers: approving newcomers as staff into a branch they manage, and promoting staff to manager in a branch they manage |
-| Approving as a manager | Needs a branch, because a manager manages a branch. Staff may still be approved with no branch |
-| A member with no branch | Counts as **STAFF company-wide**, the same as staff with no branch today, and can't open any branch's routes |
+| A member with no branch | The new rules never create one, but data from before this piece can hold one (staff approved with no branch, managers left behind by a branch deletion). They count as **STAFF company-wide** and can't open any branch's routes until an owner adds them to a branch. `companyRoleOf` keeps this fallback for them |
+| The "only branch" check | Counts the member's **other** live assignments in live branches. It applies to ACTIVE and SUSPENDED members (pending members have none; people who left have none). Closing a company and leaving aren't blocked by it, because everyone affected is leaving |
 | Existing managers with no branch (left behind by a branch deletion) | Become staff-level at the migration, because there's no branch for them to manage |
 | Moving someone (`PUT /profiles/:id/branch`) | **Removed.** Adding and removing assignments replace it. There's no production deployment and no client yet |
 | Notifications | `member.left` (new) goes to the owners and to the managers of the leaver's branches. A successor gets `member.roleChanged`. Being added to or removed from a branch reuses `member.moved`, and a role change in a branch reuses `member.roleChanged`. A closure notifies nobody, since nobody is left. Korean member copy says **지점** |
@@ -195,11 +239,11 @@ type AuthProfile = {
 
 | Endpoint | Permission | Who | Notes |
 |---|---|---|---|
-| `PATCH /profiles/:id/approve { roleId, cornerId \| null }` | `profiles.approve` | as today | `MANAGER` needs a `cornerId` (400 otherwise). Writes the first assignment. `STAFF` with `null` writes none |
+| `PATCH /profiles/:id/approve { roleId, cornerId \| null }` | `profiles.approve` | admin, owner: any role. A manager of X: STAFF or MANAGER into X | `MANAGER` and `STAFF` need a `cornerId` (400 otherwise) and write the first assignment. `OWNER` needs `cornerId: null` (400 otherwise) and sets `role_id = OWNER` with no assignment |
 | `POST /profiles/:id/branches { cornerId, role }` | `profiles.move` | admin, owner | Target: an ACTIVE non-owner member of the company. Branch: live, in the company. Already in that branch → 409 |
 | `PUT /profiles/:id/branches/:cornerId/role { role }` | `profiles.changeRole` | admin or owner: MANAGER ↔ STAFF. A manager of **that** branch: staff → manager. A manager demoting **themselves** to staff there, while another ACTIVE manager of that branch remains | Same role → 200, no change. Not in that branch → 404 |
-| `DELETE /profiles/:id/branches/:cornerId` | `profiles.move` | admin, owner | Not in that branch → 404 |
-| `PUT /profiles/:id/role { role, cornerId? }` | `profiles.changeRole` | **Company-level only.** Promote an ACTIVE member to OWNER (admin, owner), which ends all their assignments. Demote an OWNER (the admin; or **the owner themselves** while another ACTIVE owner remains) to MANAGER (`cornerId` required) or STAFF (`cornerId` or null) | MANAGER ↔ STAFF for a non-owner here → 400, pointing to the branch endpoint |
+| `DELETE /profiles/:id/branches/:cornerId` | `profiles.move` | admin, owner | Not in that branch → 404. Their **last** branch → 409 |
+| `PUT /profiles/:id/role { role, cornerId? }` | `profiles.changeRole` | **Company-level only.** Promote an ACTIVE member to OWNER (admin, owner), which ends all their assignments. Demote an OWNER (the admin; or **the owner themselves** while another ACTIVE owner remains) to MANAGER or STAFF, **`cornerId` required for both** | MANAGER ↔ STAFF for a non-owner here → 400, pointing to the branch endpoint |
 | `PUT /profiles/:id/branch` | | | **removed** |
 
 The permission codes are unchanged, so the seed doesn't change.
@@ -224,9 +268,13 @@ The permission codes are unchanged, so the seed doesn't change.
 - `NotificationsService.findCornerRecipientIds`: ACTIVE profiles with a live MANAGER assignment there, plus the owners.
 
 **Branch deletion** (`DELETE /corners/:id`):
-1. Soft-delete the branch with the guarded write (as today).
-2. `updateManyAndReturn` its live assignments (`deleted_at` = now, `deleted_by` = the caller), returning each profile and role.
-3. Write one `BRANCH_DELETED` row each and send one `member.moved` each.
+1. Lock the live branch, then lock the profiles assigned to it (by `id`).
+2. If any of them has **no other live assignment** → 409, and nothing changes. The owner gives them another branch first.
+3. Soft-delete the branch with the guarded write (as today).
+4. `updateManyAndReturn` its live assignments (`deleted_at` = now, `deleted_by` = the caller), returning each profile and role.
+5. Write one `BRANCH_DELETED` row each and send one `member.moved` each.
+
+**Removing an assignment** (`DELETE /profiles/:id/branches/:cornerId`): lock the branch, then the profile, then count the member's other live assignments. None → 409.
 
 ### History encoding (new rows)
 
@@ -234,12 +282,12 @@ Each new row describes **one assignment** (or the company-level role). From and 
 
 | Change | From | To |
 |---|---|---|
-| Approved | (null, null) | (role, branch or null) |
+| Approved | (null, null) | (MANAGER or STAFF, X), or (OWNER, null) |
 | `BRANCH_ADDED` | (null, null) | (R, X) |
 | `BRANCH_REMOVED`, `BRANCH_DELETED` | (R, X) | (null, null) |
 | `ROLE_CHANGED` in a branch, or the branch successor (`ROLE_CHANGED` / `AUTO_PROMOTED`) | (R1, X) | (R2, X) |
 | Promoted to owner, or the owner successor | one row per ended assignment: (R, X); a person with no branch: (STAFF, null) | (OWNER, null) |
-| Owner demoted | (OWNER, null) | (R, X or null) |
+| Owner demoted | (OWNER, null) | (R, X) |
 | `LEFT_COMPANY`, `ACCOUNT_DELETED`, `COMPANY_CLOSED` | one row per ended assignment: (R, X); an owner or a person with no branch: (their role, null) | (null, null) |
 
 The branch history query is unchanged: rows where the branch is the from or the to. Old rows, such as `MOVED` and `BRANCH_DELETED` with the role kept, still read fine because the views show only ids and names.
@@ -322,6 +370,7 @@ A **pending** leaver goes through steps 1, 3 and 6 only (no assignments, no hist
 - **Lock order everywhere:** account → company → branches (by `id`) → profiles.
 - Adding someone to the same branch twice: the partial unique index plus `createManyAndReturn({ skipDuplicates: true })` gives `[]` → 409.
 - Adding someone to a branch that's being deleted: lock the live branch first (the existing `lockLiveCorner`).
+- **Removing two of a person's branches at once**, or deleting branch X while removing the same person from Y: each request locks its own branch, then the person's profile, and only then counts the other assignments. The second request waits on the profile lock, then sees the first one's result and gets 409.
 - Deleting an account twice at once: the account lock, plus the single-use proof.
 
 ### Existing code that changes
@@ -352,6 +401,8 @@ A **pending** leaver goes through steps 1, 3 and 6 only (no assignments, no hist
 - The default list hides people who left; `?status=DEACTIVATED` shows them.
 - `pickSuccessor`.
 - The branch-role and company-role rules, including both kinds of self-demotion.
+- Approval: as owner (no branch), manager or staff (branch required), and a manager approving as staff or manager into their own branch only.
+- The only-branch rule: removing a member's last branch → 409; deleting a branch that is someone's only branch → 409, with nothing changed.
 - The guard builds `branches`; `PermissionsService` looks roles up by code.
 - Leaving:
   - staff;
@@ -375,7 +426,7 @@ A **pending** leaver goes through steps 1, 3 and 6 only (no assignments, no hist
   - the last owner leaves alone: the company closes, the invite code returns 404, and registering its tax ID again returns 409;
   - an account is deleted: its phone can sign up again, its email login can sign up again, and its old refresh token gets 401;
   - two owners leave at once (`Promise.all`) and the company still ends up with exactly one ACTIVE owner, or closes if neither remained.
-- `test/members.e2e-spec.ts` is updated for branch assignments.
+- `test/members.e2e-spec.ts` is updated for branch assignments, including approving as owner, approving with no branch (400), removing a last branch (409) and deleting someone's only branch (409, then 200 once they have another).
 
 **Migration check**
 - The number of copied rows equals the number of MANAGER and STAFF profiles that had a live branch.
