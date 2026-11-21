@@ -15,62 +15,77 @@ export function isMemberRole(code: string): code is MemberRoleCode {
 export type RoleChangeDecision =
   'noop' | { branch: 'keep' | 'clear' | 'set'; checkOwnerCount: boolean };
 
+/** Staff ↔ manager: they stay where they work, and no owner is lost. */
+const KEEP_BRANCH: RoleChangeDecision = {
+  branch: 'keep',
+  checkOwnerCount: false,
+};
+/** To owner: owners have no branch, and the company gains an owner. */
+const CLEAR_BRANCH: RoleChangeDecision = {
+  branch: 'clear',
+  checkOwnerCount: false,
+};
+/** An owner demoted: they land in the branch sent (or none), and the company loses an owner. */
+const DEMOTE_OWNER: RoleChangeDecision = {
+  branch: 'set',
+  checkOwnerCount: true,
+};
+
 /**
- * The role-change rulebook: no database, no side effects. Throws 400/403
- * when the change isn't allowed; otherwise says what to do.
+ * The role-change rulebook ("Who may do what" in the piece-3 spec): no
+ * database, no side effects. Throws 400/403 when the change isn't allowed;
+ * otherwise says what to do. The checks run top to bottom and the first
+ * match wins, so their order is part of the rules.
  */
 export function decideRoleChange(input: {
   callerRole: string | null;
-  callerBranchId: string | null;
+  isSelf: boolean; // the caller is changing their own role
   targetRole: MemberRoleCode;
-  targetBranchId: string | null;
   requestedRole: MemberRoleCode;
   cornerIdSent: boolean;
 }): RoleChangeDecision {
-  const isAdmin = input.callerRole === 'ADMIN';
   const isOwnerDemotion =
     input.targetRole === 'OWNER' && input.requestedRole !== 'OWNER';
 
-  // Only the admin demoting an owner chooses a branch here; everyone else
-  // moves people with PUT /profiles/:id/branch.
-  if (input.cornerIdSent && !(isAdmin && isOwnerDemotion))
-    throw new BadRequestException(
-      'cornerId is only for the admin demoting an owner',
-    );
+  // 1. The shape of the request: a branch only makes sense for an owner
+  //    being demoted (it's where they land). Checked before who is asking,
+  //    so a malformed request gets the same 400 from anyone.
+  if (input.cornerIdSent && !isOwnerDemotion)
+    throw new BadRequestException('cornerId is only for demoting an owner');
+
+  // 2. Nothing to change.
   if (input.requestedRole === input.targetRole) return 'noop';
 
-  if (isAdmin || input.callerRole === 'OWNER') {
+  // 3. The platform admin: every change. Demoting an owner still counts owners.
+  if (input.callerRole === 'ADMIN') {
+    if (isOwnerDemotion) return DEMOTE_OWNER;
+    if (input.requestedRole === 'OWNER') return CLEAR_BRANCH;
+    return KEEP_BRANCH;
+  }
+
+  // 4. An owner: every change except to another owner. Stepping down
+  //    themselves goes through the same owner count as the admin's demotion.
+  if (input.callerRole === 'OWNER') {
     if (input.targetRole === 'OWNER') {
-      if (!isAdmin)
+      if (!input.isSelf)
         throw new ForbiddenException("Owners cannot change an owner's role");
-      if (!input.cornerIdSent)
-        throw new BadRequestException(
-          'Choose a branch (or null) for the demoted owner',
-        );
-      return { branch: 'set', checkOwnerCount: true };
+      return DEMOTE_OWNER;
     }
-    if (input.requestedRole === 'OWNER')
-      return { branch: 'clear', checkOwnerCount: false }; // owners have no branch
-    return { branch: 'keep', checkOwnerCount: false }; // staff <-> manager
+    if (input.requestedRole === 'OWNER') return CLEAR_BRANCH;
+    return KEEP_BRANCH;
   }
 
+  // 5. A manager: only stepping down. Only owners make managers, because a
+  //    manager's powers reach the company-wide catalog.
   if (input.callerRole === 'MANAGER') {
-    if (input.targetRole === 'OWNER')
-      throw new ForbiddenException("Managers cannot change an owner's role");
-    // null === null must not count as "the same branch"
-    const inOwnBranch =
-      input.callerBranchId !== null &&
-      input.targetBranchId === input.callerBranchId;
-    if (
-      input.targetRole === 'STAFF' &&
-      input.requestedRole === 'MANAGER' &&
-      inOwnBranch
-    )
-      return { branch: 'keep', checkOwnerCount: false };
-    throw new ForbiddenException(
-      'Managers can only promote staff of their own branch to manager',
-    );
+    const isSteppingDown =
+      input.isSelf &&
+      input.targetRole === 'MANAGER' &&
+      input.requestedRole === 'STAFF';
+    if (isSteppingDown) return KEEP_BRANCH;
+    throw new ForbiddenException('Managers can only step down themselves');
   }
 
+  // 6. Staff, or anyone else.
   throw new ForbiddenException('You cannot change member roles');
 }

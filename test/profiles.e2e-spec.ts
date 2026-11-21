@@ -77,6 +77,10 @@ describe('Members (e2e)', () => {
       // cornerId left undefined is dropped from the JSON: "not sent"
       .send({ role: role, cornerId: cornerId });
 
+  /** The error message Nest sent (supertest types every body as any). */
+  const messageOf = (response: { body: unknown }) =>
+    (response.body as { message: string }).message;
+
   const profileIdByEmail = async (email: string) =>
     (
       await prisma.profile.findFirstOrThrow({
@@ -535,12 +539,20 @@ describe('Members (e2e)', () => {
       promotedId = await profileIdByEmail('newcomer1@mbr.test');
     });
 
-    it('a manager promotes staff of their own branch to manager; they stay there', async () => {
-      const changed = await setRole(
+    it('a manager cannot promote anyone, even staff of their own branch (403): only owners make managers', async () => {
+      const refused = await setRole(
         managerAccess,
         promotedId,
         'MANAGER',
-      ).expect(200);
+      ).expect(403);
+
+      expect(messageOf(refused)).toBe('Managers can only step down themselves');
+    });
+
+    it('the owner promotes staff in Branch A to manager; they stay there', async () => {
+      const changed = await setRole(ownerAccess, promotedId, 'MANAGER').expect(
+        200,
+      );
 
       expect(changed.body).toMatchObject({
         role: { code: 'MANAGER' },
@@ -553,7 +565,7 @@ describe('Members (e2e)', () => {
         toRoleId: await roleIdOf('MANAGER'),
         fromCompanyStoreId: branchAId,
         toCompanyStoreId: branchAId, // a snapshot: the branch didn't change
-        changedByProfileId: managerProfileId,
+        changedByProfileId: ownerProfileId,
       });
     });
 
@@ -568,9 +580,9 @@ describe('Members (e2e)', () => {
       );
     });
 
-    it('a manager cannot promote outside their branch, demote a manager, or touch an owner (403)', async () => {
+    it('a manager cannot promote outside their branch, demote another manager, or touch an owner (403)', async () => {
       await setRole(managerAccess, staffProfileId, 'MANAGER').expect(403); // staff has no branch
-      await setRole(managerAccess, promotedId, 'STAFF').expect(403);
+      await setRole(managerAccess, promotedId, 'STAFF').expect(403); // now a manager too
       await setRole(managerAccess, ownerProfileId, 'STAFF').expect(403);
     });
 
@@ -589,7 +601,7 @@ describe('Members (e2e)', () => {
       });
     });
 
-    it('cornerId is refused unless the admin is demoting an owner (400)', async () => {
+    it('cornerId is refused unless an owner is being demoted (400)', async () => {
       await setRole(ownerAccess, promotedId, 'MANAGER', branchBId).expect(400);
       await setRole(ownerAccess, promotedId, 'MANAGER', null).expect(400);
     });
@@ -610,14 +622,17 @@ describe('Members (e2e)', () => {
       await moveTo(staff2Access, managerProfileId, branchAId).expect(200);
     });
 
-    it('owners cannot demote another owner, or themselves (403)', async () => {
-      await setRole(ownerAccess, staff2ProfileId, 'MANAGER').expect(403);
-      await setRole(ownerAccess, ownerProfileId, 'MANAGER').expect(403);
+    it('owners cannot demote another owner (403)', async () => {
+      const refused = await setRole(
+        ownerAccess,
+        staff2ProfileId,
+        'MANAGER',
+      ).expect(403);
+
+      expect(messageOf(refused)).toBe("Owners cannot change an owner's role");
     });
 
     it('the admin demotes one of two owners into Branch B; the last owner stays (409)', async () => {
-      await setRole(adminAccess, staff2ProfileId, 'STAFF').expect(400); // must say where they go
-
       const demoted = await setRole(
         adminAccess,
         staff2ProfileId,
@@ -722,6 +737,115 @@ describe('Members (e2e)', () => {
       }
 
       expect((await demotion).status).toBe(409);
+    });
+  });
+
+  // Company 4 of its own, so its owner count can't disturb companies 1 and 2.
+  describe('approving an owner, and stepping down', () => {
+    let owner4Access: string;
+    let owner4ProfileId: string;
+    let joinCode4: string;
+    let branch4Id: string;
+    let newOwnerId: string;
+    let newOwnerAccess: string; // signed in while waiting; kept through every change
+
+    beforeAll(async () => {
+      const company4 = await accounts.registerOwner(adminAccess, 4);
+      owner4Access = company4.access;
+      owner4ProfileId = company4.profileId;
+      joinCode4 = company4.joinCode;
+      branch4Id = await openBranch(owner4Access, storeId, 'Branch Four');
+    });
+
+    it('an owner approves a newcomer as an owner, with no branch; with a branch it is 400', async () => {
+      const newcomer = await accounts.pendingMember(joinCode4, 'newowner4');
+      newOwnerId = newcomer.profileId;
+      newOwnerAccess = newcomer.access;
+      const ownerRoleId = await roleIdOf('OWNER');
+
+      const refused = await approve(
+        owner4Access,
+        newOwnerId,
+        ownerRoleId,
+        branch4Id,
+      ).expect(400);
+      expect(messageOf(refused)).toBe('Owners work across the whole company');
+
+      const approved = await approve(
+        owner4Access,
+        newOwnerId,
+        ownerRoleId,
+        null,
+      ).expect(200);
+      expect(approved.body).toMatchObject({
+        status: 'ACTIVE',
+        role: { code: 'OWNER' },
+        branch: null,
+      });
+      const [firstRow] = await historyOf(newOwnerId);
+      expect(firstRow).toMatchObject({
+        reason: 'APPROVED',
+        fromRoleId: null,
+        toRoleId: ownerRoleId,
+        fromCompanyStoreId: null,
+        toCompanyStoreId: null,
+        changedByProfileId: owner4ProfileId,
+      });
+    });
+
+    it('the new owner steps down into a branch while the first owner remains', async () => {
+      const steppedDown = await setRole(
+        newOwnerAccess,
+        newOwnerId,
+        'MANAGER',
+        branch4Id,
+      ).expect(200);
+
+      expect(steppedDown.body).toMatchObject({
+        role: { code: 'MANAGER' },
+        branch: { id: branch4Id, name: 'Branch Four' },
+      });
+      const rows = await historyOf(newOwnerId);
+      expect(rows[rows.length - 1]).toMatchObject({
+        reason: 'ROLE_CHANGED',
+        fromRoleId: await roleIdOf('OWNER'),
+        toRoleId: await roleIdOf('MANAGER'),
+        fromCompanyStoreId: null,
+        toCompanyStoreId: branch4Id,
+        changedByProfileId: newOwnerId, // they did it themselves
+      });
+    });
+
+    it('the last owner cannot step down (409), and stays an owner', async () => {
+      const refused = await setRole(
+        owner4Access,
+        owner4ProfileId,
+        'STAFF',
+      ).expect(409);
+
+      expect(messageOf(refused)).toBe('A company needs at least one owner');
+      const owner4 = await prisma.profile.findUniqueOrThrow({
+        where: { id: owner4ProfileId },
+        include: { role: true },
+      });
+      expect(owner4.role!.code).toBe('OWNER');
+    });
+
+    it('a manager steps down to staff, and stays in their branch', async () => {
+      const steppedDown = await setRole(
+        newOwnerAccess,
+        newOwnerId,
+        'STAFF',
+      ).expect(200);
+
+      expect(steppedDown.body).toMatchObject({
+        role: { code: 'STAFF' },
+        branch: { id: branch4Id },
+      });
+    });
+
+    it('staff cannot step back up (403)', async () => {
+      await setRole(newOwnerAccess, newOwnerId, 'MANAGER').expect(403);
     });
   });
 
@@ -983,8 +1107,8 @@ describe('Members (e2e)', () => {
       pendingId = await profileIdByEmail('newcomer2@mbr.test');
     });
 
-    it("a manager's promotion in Branch A shows in Branch A's history, from A to A", async () => {
-      await setRole(managerAccess, promotedId, 'MANAGER').expect(200);
+    it("a promotion in Branch A shows in Branch A's history, from A to A; its manager reads it", async () => {
+      await setRole(ownerAccess, promotedId, 'MANAGER').expect(200);
 
       const branchHistory = await pageAs(
         managerAccess,
@@ -1002,8 +1126,8 @@ describe('Members (e2e)', () => {
       // Exactly an id and a name: no phone or email travels with history.
       expect(promotion.member).toEqual({ id: promotedId, name: 'newcomer1' });
       expect(promotion.changedBy).toEqual({
-        id: managerProfileId,
-        name: 'manager',
+        id: ownerProfileId,
+        name: 'Owner 1',
       });
     });
 

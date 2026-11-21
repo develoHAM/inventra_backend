@@ -132,8 +132,8 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'profiles.read',
     'profiles.update',
     'profiles.delete',
-    'profiles.approve', // own branch, as staff only (ProfilesService)
-    'profiles.changeRole', // staff → manager in their own branch only
+    'profiles.approve', // as staff only, into their own branch (ProfilesService)
+    'profiles.changeRole', // stepping down to staff only (decideRoleChange)
     'companies.read',
     'products.create',
     'products.read',

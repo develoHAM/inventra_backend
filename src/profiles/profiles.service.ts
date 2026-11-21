@@ -94,8 +94,8 @@ export class ProfilesService {
 
   /**
    * Approve someone who joined with the company code, choosing their role
-   * and branch in one step. Managers approve only as staff, into their own
-   * branch.
+   * and branch in one step. The admin and owners approve as any role (an
+   * owner never gets a branch); managers only as staff, into their own branch.
    */
   async approve(
     caller: AuthProfile,
@@ -129,8 +129,12 @@ export class ProfilesService {
         id: dto.roleId,
       },
     });
-    if (!role || (role.code !== 'MANAGER' && role.code !== 'STAFF'))
+    if (!role || !isMemberRole(role.code))
       throw new BadRequestException('Invalid role for a member');
+    // The shape before the permission: owners work across the whole
+    // company, so an owner with a branch is refused whoever asks.
+    if (role.code === 'OWNER' && dto.cornerId !== null)
+      throw new BadRequestException('Owners work across the whole company');
 
     // A guest list, not a blacklist: the admin and owners approve freely,
     // managers within their limits, and every other role is refused, even
@@ -292,13 +296,14 @@ export class ProfilesService {
     if (target.status !== ProfileStatus.ACTIVE)
       throw new BadRequestException('Only active members can be changed');
 
-    // "Not sent" (undefined) is not the same answer as null ("no branch").
+    // A null cornerId still counts as sent, so it's refused for anything but
+    // demoting an owner. For a demoted owner, not sent and null both mean
+    // "no branch".
     const cornerIdSent = dto.cornerId !== undefined;
     const decision = decideRoleChange({
       callerRole: caller.roleCode,
-      callerBranchId: caller.companyStoreId ?? null,
+      isSelf: target.id === caller.id,
       targetRole: target.roleCode,
-      targetBranchId: target.companyStoreId,
       requestedRole: dto.role,
       cornerIdSent: cornerIdSent,
     });
