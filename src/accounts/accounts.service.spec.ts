@@ -15,18 +15,6 @@ describe('AccountsService', () => {
     roleId: 4,
     ...changes,
   });
-  /** What "openable" means: this account's, not deleted, ACTIVE or PENDING_APPROVAL. */
-  const openableOf = (accountId: string) => ({
-    accountId: accountId,
-    deletedAt: null,
-    status: { in: [ProfileStatus.PENDING_APPROVAL, ProfileStatus.ACTIVE] },
-  });
-  const OPEN_PROFILE_SELECT = {
-    id: true,
-    status: true,
-    companyId: true,
-    roleId: true,
-  };
 
   beforeEach(() => {
     prisma = {
@@ -90,8 +78,16 @@ describe('AccountsService', () => {
 
       expect(prisma.profile.findFirst).toHaveBeenCalledTimes(1);
       expect(prisma.profile.findFirst).toHaveBeenCalledWith({
-        where: { id: 'profile-2', ...openableOf('account-1') },
-        select: OPEN_PROFILE_SELECT,
+        where: {
+          id: 'profile-2',
+          // openable: this account's, not deleted, ACTIVE or PENDING_APPROVAL
+          accountId: 'account-1',
+          deletedAt: null,
+          status: {
+            in: [ProfileStatus.PENDING_APPROVAL, ProfileStatus.ACTIVE],
+          },
+        },
+        select: { id: true, status: true, companyId: true, roleId: true },
       });
     });
 
@@ -105,9 +101,16 @@ describe('AccountsService', () => {
       ).resolves.toEqual(profile('profile-3'));
 
       expect(prisma.profile.findFirst).toHaveBeenLastCalledWith({
-        where: openableOf('account-1'),
+        where: {
+          // openable: this account's, not deleted, ACTIVE or PENDING_APPROVAL
+          accountId: 'account-1',
+          deletedAt: null,
+          status: {
+            in: [ProfileStatus.PENDING_APPROVAL, ProfileStatus.ACTIVE],
+          },
+        },
         orderBy: { createdAt: 'desc' },
-        select: OPEN_PROFILE_SELECT,
+        select: { id: true, status: true, companyId: true, roleId: true },
       });
     });
 
@@ -120,9 +123,16 @@ describe('AccountsService', () => {
 
       expect(prisma.profile.findFirst).toHaveBeenCalledTimes(1);
       expect(prisma.profile.findFirst).toHaveBeenCalledWith({
-        where: openableOf('account-1'),
+        where: {
+          // openable: this account's, not deleted, ACTIVE or PENDING_APPROVAL
+          accountId: 'account-1',
+          deletedAt: null,
+          status: {
+            in: [ProfileStatus.PENDING_APPROVAL, ProfileStatus.ACTIVE],
+          },
+        },
         orderBy: { createdAt: 'desc' },
-        select: OPEN_PROFILE_SELECT,
+        select: { id: true, status: true, companyId: true, roleId: true },
       });
     });
 
@@ -142,8 +152,16 @@ describe('AccountsService', () => {
 
       // one query: the id AND every "openable" rule, so a miss is a miss for any reason
       expect(prisma.profile.findFirst).toHaveBeenCalledWith({
-        where: { id: 'profile-2', ...openableOf('account-1') },
-        select: OPEN_PROFILE_SELECT,
+        where: {
+          id: 'profile-2',
+          // openable: this account's, not deleted, ACTIVE or PENDING_APPROVAL
+          accountId: 'account-1',
+          deletedAt: null,
+          status: {
+            in: [ProfileStatus.PENDING_APPROVAL, ProfileStatus.ACTIVE],
+          },
+        },
+        select: { id: true, status: true, companyId: true, roleId: true },
       });
     });
 
@@ -170,7 +188,14 @@ describe('AccountsService', () => {
       await service.listCompanies('account-1');
 
       expect(prisma.profile.findMany).toHaveBeenCalledWith({
-        where: openableOf('account-1'),
+        where: {
+          // openable: this account's, not deleted, ACTIVE or PENDING_APPROVAL
+          accountId: 'account-1',
+          deletedAt: null,
+          status: {
+            in: [ProfileStatus.PENDING_APPROVAL, ProfileStatus.ACTIVE],
+          },
+        },
         orderBy: { createdAt: 'asc' },
         select: {
           id: true,

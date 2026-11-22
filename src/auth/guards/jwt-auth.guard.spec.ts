@@ -22,12 +22,12 @@ describe('JwtAuthGuard', () => {
     id: 'profile-1',
     accountId: 'account-1',
     companyId: 'company-1',
-    companyStoreId: 'store-1',
     roleId: 2,
     status: ProfileStatus.ACTIVE,
     deletedAt: null,
     role: { code: 'OWNER' },
     account: { deletedAt: null },
+    branches: [], // an owner works everywhere: no assignments
   };
 
   /** What the access token says: the account, and the open profile (or none). */
@@ -130,10 +130,29 @@ describe('JwtAuthGuard', () => {
         id: 'profile-1',
         accountId: 'account-1',
         companyId: 'company-1',
-        companyStoreId: 'store-1',
         roleId: 2,
         roleCode: 'OWNER',
+        branchIds: [],
         status: ProfileStatus.ACTIVE,
+      });
+    });
+
+    it('lists the branches someone works in as branchIds, oldest assignment first', async () => {
+      prisma.profile.findUnique.mockResolvedValue({
+        ...activeProfile,
+        roleId: 4,
+        role: { code: 'STAFF' },
+        branches: [
+          { companyStoreId: 'corner-a' },
+          { companyStoreId: 'corner-b' },
+        ],
+      });
+      const request: any = bearer();
+
+      await guard.canActivate(contextWith(request));
+
+      expect(request).toMatchObject({
+        profile: { branchIds: ['corner-a', 'corner-b'] },
       });
     });
 
@@ -146,12 +165,17 @@ describe('JwtAuthGuard', () => {
           id: true,
           accountId: true,
           companyId: true,
-          companyStoreId: true,
           roleId: true,
           status: true,
           deletedAt: true,
           role: { select: { code: true } },
           account: { select: { deletedAt: true } },
+          // live assignments only: ended ones, and deleted branches, don't count
+          branches: {
+            where: { deletedAt: null, companyStore: { deletedAt: null } },
+            select: { companyStoreId: true },
+            orderBy: { createdAt: 'asc' },
+          },
         },
       });
       expect(prisma.account.findUnique).not.toHaveBeenCalled();

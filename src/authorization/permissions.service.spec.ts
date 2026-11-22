@@ -15,6 +15,7 @@ describe('PermissionsService', () => {
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
+    branchIds: [],
     status: ProfileStatus.ACTIVE,
   };
 

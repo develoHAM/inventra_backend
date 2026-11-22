@@ -19,7 +19,6 @@ import type {
 } from '../notifications/notification-events';
 import type { AuthAccount } from '../auth/types/auth-account';
 import { AccountsService } from './accounts.service';
-import { COMPANY_PROFILE_SELECT } from './company-profile-view';
 import type { CompanyProfileView } from './company-profile-view';
 import {
   JOIN_ATTEMPT_LIMIT,
@@ -98,7 +97,14 @@ export class AccountCompaniesService {
           },
         ],
         skipDuplicates: true,
-        select: COMPANY_PROFILE_SELECT,
+        select: {
+          id: true,
+          status: true,
+          name: true,
+          profileImageUrl: true,
+          role: { select: { code: true, name: true } },
+          company: { select: { id: true, name: true } },
+        },
       });
       if (!inserted) {
         // thrown inside, so a proof sent with a refused join stays unspent
@@ -205,7 +211,14 @@ export class AccountCompaniesService {
         const ownerProfile = await transaction.profile.update({
           where: { id: owner.id },
           data: { companyId: company.id },
-          select: COMPANY_PROFILE_SELECT,
+          select: {
+            id: true,
+            status: true,
+            name: true,
+            profileImageUrl: true,
+            role: { select: { code: true, name: true } },
+            company: { select: { id: true, name: true } },
+          },
         });
         return { profile: ownerProfile, companyId: company.id };
       },

@@ -75,7 +75,7 @@
 - **`leaveInTransaction` takes `actorProfileId`**: the leaver for leaving and deletion, the remover for removal. It's `changed_by` and `deleted_by`.
 - **The disconnect moves out of `LoginMethodsService`** into `ProviderDisconnectService`, which `SocialAuthModule` exports. `ProfilesModule` exports `LeavingService`.
 - **e2e helpers:** `registerJoinedMember` takes `options.cornerId` (passed to approve); new `addToBranch(ownerAccess, profileId, cornerId)`.
-- **One unit-test fixture**, `src/testing/auth-profile.ts` → `anAuthProfile(overrides: Partial<AuthProfile> = {}): AuthProfile`, replaces the inline `AuthProfile` literals in the specs.
+- **No shared fixture or helper files** (the user's call, 2026-11-22: a new file only to remove repetition harms readability). Every spec keeps its own full `AuthProfile` literals, now with `branchIds`; Prisma `select` / `where` objects are written inline at each query.
 - **Status codes:** `POST /profiles/me/leave` answers 200 with a `LeaveSummary`; `POST /profiles/:id/remove` answers 204.
 
 ## Review Focus
@@ -94,7 +94,6 @@
 |---|---|
 | `src/profiles/member-rules.ts` | `decideRoleChange` follows "Who may do what" (T1); `pickSuccessor` (T3) |
 | `prisma/schema.prisma`; migration `profile_branches` (T2) | `ProfileBranch`; enum values; `companies.deleted_by_profile_id`; drop `profiles.company_store_id` |
-| `src/profiles/live-branches.ts` (new) | `LIVE_BRANCHES`: the relation args shared by the guard, the views and the lookups |
 | `src/auth/types/auth-profile.ts`, `src/auth/guards/jwt-auth.guard.ts` | `AuthProfile.branchIds` |
 | `src/profiles/profiles.service.ts`, `profile-view.ts`, `profiles.controller.ts`, `dto/*` | approve, list, role, history; `ProfileView.branches`; the remove route (T4) |
 | `src/profiles/profile-branches.{service,controller}.ts` (new), `dto/add-branch.dto.ts` | add and remove assignments |
@@ -104,7 +103,6 @@
 | `prisma/seed.ts` | `profiles.remove` for OWNER (T4) |
 | `src/social-auth/provider-disconnect.service.ts` (new), `login-methods/login-methods.service.ts`, `social-auth.module.ts` | disconnect reused by deletion |
 | `src/account-deletion/*` (new), `src/app.module.ts` | `DELETE /me` |
-| `src/testing/auth-profile.ts` (new) | `anAuthProfile()` for specs |
 | `test/helpers/accounts.ts`, `test/profiles.e2e-spec.ts` + every suite using `PUT /profiles/:id/branch`, `test/leaving.e2e-spec.ts` (new, `testPhones(18)`) | e2e |
 
 ---
@@ -166,12 +164,12 @@
 
 **Files:**
 - Modify: `prisma/schema.prisma`; migration `profile_branches`
-- Create: `src/profiles/live-branches.ts`, `src/profiles/profile-branches.{service,controller}.ts`, `src/profiles/dto/add-branch.dto.ts`, `src/testing/auth-profile.ts`
+- Create: `src/profiles/profile-branches.{service,controller}.ts`, `src/profiles/dto/add-branch.dto.ts`
 - Modify: `src/auth/types/auth-profile.ts`, `src/auth/guards/jwt-auth.guard.ts`
 - Modify: `src/profiles/{profiles.service,profile-view,profiles.controller,profiles.module}.ts`; delete `src/profiles/dto/change-branch.dto.ts`
 - Modify: `src/corners/corners.service.ts`
 - Modify: `src/notifications/{notification-events,notification-templates,notifications.listener,notifications.service}.ts`
-- Test: the matching `*.spec.ts` (every spec that builds an `AuthProfile` moves to `anAuthProfile()`), `test/helpers/accounts.ts`, `test/profiles.e2e-spec.ts`, and every e2e suite using `PUT /profiles/:id/branch`: audits, inventory, notifications, orders, placements, reservations
+- Test: the matching `*.spec.ts` (every spec's `AuthProfile` literals gain `branchIds`), `test/helpers/accounts.ts`, `test/profiles.e2e-spec.ts`, and every e2e suite using `PUT /profiles/:id/branch`: audits, inventory, notifications, orders, placements, reservations
 
 **Interfaces:**
 - **Consumes:** Task 1's `decideRoleChange`.
@@ -185,7 +183,7 @@
   - **`Company`:** gains `deletedByProfileId String? @map("deleted_by_profile_id")` and `deletedByProfile Profile? @relation("CompanyDeletedBy")`; `Profile` gains `deletedCompanies Company[] @relation("CompanyDeletedBy")`.
   - **Enum values** (all of this piece's): `MembershipChangeReason` += `BRANCH_ADDED, BRANCH_REMOVED, LEFT_COMPANY, REMOVED, ACCOUNT_DELETED, COMPANY_CLOSED, AUTO_PROMOTED`; `PhoneVerificationPurpose` += `DELETE_ACCOUNT`.
   - **`AuthProfile`** = `{ id; accountId; companyId: string | null; roleId: number | null; roleCode: string | null; branchIds: string[]; status: ProfileStatus }`. `companyStoreId` is gone.
-  - **`LIVE_BRANCHES`** = `{ where: { deletedAt: null, companyStore: { deletedAt: null } }, select: { companyStore: { select: { id: true, name: true } } }, orderBy: { createdAt: 'asc' } }`, used by the guard and by `PROFILE_SELECT`.
+  - **Live assignments** are filtered with `{ deletedAt: null, companyStore: { deletedAt: null } }`, written inline at every query (the user's call, 2026-11-22: no shared select or where constants). `PROFILE_SELECT.branches` = that `where`, `select: { companyStore: { select: { id: true, name: true } } }`, `orderBy: { createdAt: 'asc' }`.
   - **`ProfileView`:** `branch` is replaced by `branches: { id: string; name: string }[]`.
   - **`ProfileBranchesService`:**
     - `add(caller: AuthProfile, profileId: string, dto: AddBranchDto): Promise<ProfileView>`;
@@ -193,12 +191,11 @@
     - `AddBranchDto { cornerId: string }` (`@IsUUID`).
   - **Routes:** `POST /profiles/:id/branches` (201, `profiles.move`), `DELETE /profiles/:id/branches/:cornerId` (200, `profiles.move`). `PUT /profiles/:id/branch` and `ProfilesService.changeBranch` are removed.
   - Events and templates as in "Decisions beyond the spec" and the Copy constraints.
-  - `anAuthProfile(overrides)` defaults: an ACTIVE STAFF with `branchIds: []` in company `'company-1'`.
   - **e2e helpers:** `registerJoinedMember(…, options: PersonOptions & { cornerId?: string })`; `addToBranch(ownerAccess: string, profileId: string, cornerId: string): Promise<void>` (both in `suiteAccounts`).
 
-- [ ] **Step 1 (Claude):** Add `src/testing/auth-profile.ts` and move every spec's inline `AuthProfile` to it. Run `npx tsc --noEmit -p tsconfig.json`. Expected: errors only where `companyStoreId` is read, which is the RED to come.
+- [ ] **Step 1 (Claude):** Give every spec's `AuthProfile` literal a `branchIds` (`companyStoreId: X` → `branchIds: [X]`, otherwise `branchIds: []`).
 - [ ] **Step 2 (Claude):** Write the unit tests.
-  - **Guard:** builds `branchIds` from the live assignments (the select carries `LIVE_BRANCHES`' `where`). A profile in A and B → `branchIds: [A, B]`.
+  - **Guard:** builds `branchIds` from the live assignments (the select filters live assignments). A profile in A and B → `branchIds: [A, B]`.
   - **`assertWorksCorner`:** owner or admin, any corner of the company; MANAGER or STAFF with the corner in `branchIds` → passes; without it → 403 `You can only work in your own branches`.
   - **`approve`:**
     - with a `cornerId`: lock the corner, the guarded `updateMany` (no branch column now), `createManyAndReturn` the assignment, one `APPROVED` row from `(null, null)` to `(R, X)`;
@@ -269,7 +266,7 @@
 - Test: `member-rules.spec.ts`, `leaving.service.spec.ts`, `my-profile.controller.spec.ts`, `profiles.service.spec.ts`, `notifications.listener.spec.ts`, `event-channels.spec.ts`, `test/leaving.e2e-spec.ts` (new, `testPhones(18)`)
 
 **Interfaces:**
-- **Consumes:** `LIVE_BRANCHES`, `MembershipHistoryService.record`, `MemberRoleChangedEvent`.
+- **Consumes:** the inline live-assignment filter, `MembershipHistoryService.record`, `MemberRoleChangedEvent`.
 - **Produces:**
   - **`pickSuccessor(candidates: { profileId: string; createdAt: Date; roleCode: string }[]): string | null`.** Order: MANAGER first, then `createdAt` ascending, then `profileId` ascending.
   - **`LeaveCompanyDto { ownerSuccessorProfileId?: string }`** (`@IsOptional @IsUUID`).

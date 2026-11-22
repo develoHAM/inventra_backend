@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { MyProfileService, PROFILE_SUMMARY_SELECT } from './my-profile.service';
+import { MyProfileService } from './my-profile.service';
 import { ProfileStatus } from '../generated/prisma/enums';
 import type { AuthProfile } from '../auth/types/auth-profile';
 
@@ -16,6 +16,7 @@ describe('MyProfileService', () => {
     companyId: 'company-1',
     roleId: null,
     roleCode: null,
+    branchIds: [],
     status: ProfileStatus.PENDING_APPROVAL,
   };
   const summary = (changes: Record<string, unknown> = {}) => ({
@@ -45,14 +46,6 @@ describe('MyProfileService', () => {
     service = new MyProfileService(prisma as any, emailVerification as any);
   });
 
-  it('a summary is the id, the name and the contact email', () => {
-    expect(PROFILE_SUMMARY_SELECT).toEqual({
-      id: true,
-      name: true,
-      contactEmail: true,
-    });
-  });
-
   describe('updateMyProfile', () => {
     it("renames only the caller's own profile: the id comes from the token", async () => {
       await service.updateMyProfile(caller, { name: 'Lee Ji-eun' });
@@ -60,7 +53,7 @@ describe('MyProfileService', () => {
       expect(prisma.profile.update).toHaveBeenCalledWith({
         where: { id: 'profile-1' },
         data: { name: 'Lee Ji-eun' },
-        select: PROFILE_SUMMARY_SELECT,
+        select: { id: true, name: true, contactEmail: true }, // the summary
       });
     });
 
@@ -92,7 +85,7 @@ describe('MyProfileService', () => {
       expect(transaction.profile.update).toHaveBeenCalledWith({
         where: { id: 'profile-1' },
         data: { contactEmail: 'lee@acme.com' },
-        select: PROFILE_SUMMARY_SELECT,
+        select: { id: true, name: true, contactEmail: true }, // the summary
       });
       expect(
         emailVerification.consume.mock.invocationCallOrder[0],

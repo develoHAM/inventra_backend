@@ -1,7 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { MembershipHistoryService } from './membership-history.service';
 import type { MembershipChangeInput } from './membership-change';
-import { MEMBERSHIP_CHANGE_SELECT } from './membership-change-view';
 import { MembershipChangeReason } from '../generated/prisma/enums';
 
 describe('MembershipHistoryService', () => {
@@ -91,7 +90,6 @@ describe('MembershipHistoryService', () => {
 
   describe('page', () => {
     const WHERE = { companyId: 'company-1' };
-    const NEWEST_FIRST = [{ createdAt: 'desc' }, { id: 'desc' }];
 
     /** A history row as page() selects it: a manager promoting staff in Branch A. */
     const changeRow = (
@@ -120,9 +118,19 @@ describe('MembershipHistoryService', () => {
 
       expect(prisma.membershipChange.findMany).toHaveBeenCalledWith({
         where: WHERE,
-        orderBy: NEWEST_FIRST,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], // newest first, ties by id
         take: 51,
-        select: MEMBERSHIP_CHANGE_SELECT,
+        select: {
+          id: true,
+          reason: true,
+          createdAt: true,
+          profile: { select: { id: true, name: true } },
+          changedByProfile: { select: { id: true, name: true } },
+          fromRole: { select: { code: true, name: true } },
+          toRole: { select: { code: true, name: true } },
+          fromCompanyStore: { select: { id: true, name: true } },
+          toCompanyStore: { select: { id: true, name: true } },
+        },
       });
     });
 
@@ -131,11 +139,21 @@ describe('MembershipHistoryService', () => {
 
       expect(prisma.membershipChange.findMany).toHaveBeenCalledWith({
         where: WHERE,
-        orderBy: NEWEST_FIRST,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], // newest first, ties by id
         take: 4,
         cursor: { id: 'change-3' },
         skip: 1,
-        select: MEMBERSHIP_CHANGE_SELECT,
+        select: {
+          id: true,
+          reason: true,
+          createdAt: true,
+          profile: { select: { id: true, name: true } },
+          changedByProfile: { select: { id: true, name: true } },
+          fromRole: { select: { code: true, name: true } },
+          toRole: { select: { code: true, name: true } },
+          fromCompanyStore: { select: { id: true, name: true } },
+          toCompanyStore: { select: { id: true, name: true } },
+        },
       });
     });
 
@@ -237,15 +255,25 @@ describe('MembershipHistoryService', () => {
       expect(change.changedBy).toBeNull();
     });
 
-    it('reads only the id and name of the people and branches involved, never phone or email', () => {
-      for (const relation of [
-        MEMBERSHIP_CHANGE_SELECT.profile,
-        MEMBERSHIP_CHANGE_SELECT.changedByProfile,
-        MEMBERSHIP_CHANGE_SELECT.fromCompanyStore,
-        MEMBERSHIP_CHANGE_SELECT.toCompanyStore,
-      ]) {
-        expect(relation).toEqual({ select: { id: true, name: true } });
-      }
+    it('reads only the id and name of the people and branches involved, never phone or email', async () => {
+      await service.page(WHERE, {});
+
+      expect(prisma.membershipChange.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: {
+            id: true,
+            reason: true,
+            createdAt: true,
+            // people and branches: their id and name, nothing else
+            profile: { select: { id: true, name: true } },
+            changedByProfile: { select: { id: true, name: true } },
+            fromRole: { select: { code: true, name: true } },
+            toRole: { select: { code: true, name: true } },
+            fromCompanyStore: { select: { id: true, name: true } },
+            toCompanyStore: { select: { id: true, name: true } },
+          },
+        }),
+      );
     });
   });
 });

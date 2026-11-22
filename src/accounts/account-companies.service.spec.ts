@@ -7,7 +7,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AccountCompaniesService } from './account-companies.service';
-import { COMPANY_PROFILE_SELECT } from './company-profile-view';
 import {
   JOIN_ATTEMPT_LIMIT,
   JOIN_ATTEMPT_WINDOW_MS,
@@ -42,7 +41,7 @@ describe('AccountCompaniesService', () => {
   const account: AuthAccount = { accountId: 'account-1', profileId: null };
   const NOW = new Date('2026-11-15T12:00:00.000Z').getTime();
 
-  /** A profile row as COMPANY_PROFILE_SELECT returns it. */
+  /** A profile row as the company-dropdown select returns it. */
   const profileRow = (changes: Record<string, unknown> = {}) => ({
     id: 'profile-new',
     status: ProfileStatus.PENDING_APPROVAL,
@@ -223,7 +222,14 @@ describe('AccountCompaniesService', () => {
           },
         ],
         skipDuplicates: true,
-        select: COMPANY_PROFILE_SELECT,
+        select: {
+          id: true,
+          status: true,
+          name: true,
+          profileImageUrl: true,
+          role: { select: { code: true, name: true } },
+          company: { select: { id: true, name: true } },
+        },
       });
     });
 
@@ -462,7 +468,14 @@ describe('AccountCompaniesService', () => {
       expect(transaction.profile.update).toHaveBeenCalledWith({
         where: { id: 'profile-new' },
         data: { companyId: 'company-new' },
-        select: COMPANY_PROFILE_SELECT,
+        select: {
+          id: true,
+          status: true,
+          name: true,
+          profileImageUrl: true,
+          role: { select: { code: true, name: true } },
+          company: { select: { id: true, name: true } },
+        },
       });
     });
 

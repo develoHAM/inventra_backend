@@ -24,6 +24,7 @@ describe('MyProfileController', () => {
     companyId: 'company-1',
     roleId: null,
     roleCode: null,
+    branchIds: [],
     status: ProfileStatus.PENDING_APPROVAL,
   };
 

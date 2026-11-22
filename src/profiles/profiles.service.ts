@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '../generated/prisma/client';
 import { OwnershipService } from '../authorization/ownership.service';
 import { PermissionsService } from '../authorization/permissions.service';
 import { CornersService } from '../corners/corners.service';
@@ -19,19 +20,20 @@ import {
 } from '../generated/prisma/enums';
 import { NotificationEvent } from '../notifications/notification-events';
 import type {
-  MemberMovedEvent,
   MemberApprovedEvent,
   MemberRoleChangedEvent,
 } from '../notifications/notification-events';
 import { decideRoleChange, isMemberRole } from './member-rules';
-import { PROFILE_SELECT } from './profile-view';
-import type { ProfileRow, ProfileView } from './profile-view';
-import { ChangeBranchDto } from './dto/change-branch.dto';
+import type { RoleChangeDecision } from './member-rules';
+import type { MemberRow, ProfileRow, ProfileView } from './profile-view';
 import { ApproveProfileDto } from './dto/approve-profile.dto';
 import { ChangeRoleDto } from './dto/change-role.dto';
 import { ListProfilesQueryDto } from './dto/list-profiles-query.dto';
 import { HistoryQueryDto } from '../membership-history/dto/history-query.dto';
 import type { MembershipHistoryPage } from '../membership-history/membership-change-view';
+
+/** One history row's branch, before and after: one per assignment a change touches. */
+type BranchChange = { fromCornerId: string | null; toCornerId: string | null };
 
 @Injectable()
 export class ProfilesService {
@@ -68,8 +70,7 @@ export class ProfilesService {
       callerPermissions.has('profiles.approve') &&
       (caller.roleCode === 'ADMIN' ||
         caller.roleCode === 'OWNER' ||
-        (caller.roleCode === 'MANAGER' &&
-          (caller.companyStoreId ?? null) !== null));
+        (caller.roleCode === 'MANAGER' && caller.branchIds.length > 0));
 
     const rows = await this.prisma.profile.findMany({
       where: {
@@ -79,14 +80,30 @@ export class ProfilesService {
           ? {}
           : { NOT: { status: ProfileStatus.PENDING_APPROVAL } }),
         ...(query.cornerId
-          ? {
-              companyStoreId: query.cornerId === 'none' ? null : query.cornerId,
-            }
+          ? { branches: this.branchFilter(query.cornerId) }
           : {}),
         ...(query.role ? { role: { code: query.role } } : {}),
         ...(query.status ? { status: query.status } : {}),
       },
-      select: PROFILE_SELECT,
+      select: {
+        id: true,
+        name: true,
+        profileImageUrl: true,
+        account: { select: { phone: true } }, // the sign-in's phone, shared by all their companies
+        contactEmail: true,
+        status: true,
+        createdAt: true,
+        companyId: true,
+        roleId: true,
+        role: { select: { code: true, name: true } },
+        // Where they work now, oldest assignment first. Live only: an ended
+        // assignment, or one in a deleted branch, stays out of the view.
+        branches: {
+          where: { deletedAt: null, companyStore: { deletedAt: null } },
+          select: { companyStore: { select: { id: true, name: true } } },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
       orderBy: { createdAt: 'asc' },
     });
     return Promise.all(rows.map((row) => this.toView(row)));
@@ -94,8 +111,9 @@ export class ProfilesService {
 
   /**
    * Approve someone who joined with the company code, choosing their role
-   * and branch in one step. The admin and owners approve as any role (an
-   * owner never gets a branch); managers only as staff, into their own branch.
+   * and their first branch (or none) in one step. The admin and owners
+   * approve as any role (an owner never gets a branch); managers only as
+   * staff, into a branch they work in.
    */
   async approve(
     caller: AuthProfile,
@@ -103,14 +121,14 @@ export class ProfilesService {
     dto: ApproveProfileDto,
   ): Promise<ProfileView> {
     // A pending member has no role yet, so this is the plain scoped lookup
-    // (findTarget would treat them as "not found").
+    // (findMember would treat them as "not found").
     const target = await this.prisma.profile.findFirst({
       where: {
         id: profileId,
         ...this.ownership.scopeToCompany(caller),
         deletedAt: null,
       },
-      select: PROFILE_SELECT,
+      select: { id: true, companyId: true, status: true, roleId: true },
     });
     if (!target || target.companyId === null)
       throw new NotFoundException('Member not found');
@@ -148,23 +166,23 @@ export class ProfilesService {
         );
       if (role.code !== 'STAFF')
         throw new ForbiddenException('Managers can approve only as staff');
-      // A manager with no branch has null, and so does cornerId: null.
-      // null === null must not count as "their own branch".
-      const callerBranchId = caller.companyStoreId ?? null;
-      const intoOwnBranch =
-        callerBranchId !== null && dto.cornerId === callerBranchId;
-      if (!intoOwnBranch)
+      // cornerId null is no branch at all, so never one of theirs.
+      const intoTheirBranch =
+        dto.cornerId !== null && caller.branchIds.includes(dto.cornerId);
+      if (!intoTheirBranch)
         throw new ForbiddenException(
           'Managers can approve only into their own branch',
         );
     }
 
     const companyId = target.companyId;
+    const cornerId = dto.cornerId;
     await this.prisma.$transaction(async (transaction) => {
-      if (dto.cornerId !== null) {
+      // Locks in the usual order: the branch, then the member.
+      if (cornerId !== null) {
         const isLive = await this.corners.lockLiveCorner(
           transaction,
-          dto.cornerId,
+          cornerId,
           companyId,
         );
         if (!isLive) throw new NotFoundException('Branch not found');
@@ -182,21 +200,33 @@ export class ProfilesService {
         data: {
           roleId: role.id,
           status: ProfileStatus.ACTIVE,
-          companyStoreId: dto.cornerId,
         },
       });
       if (approved.count === 0)
         throw new ConflictException('This member was just changed; reload');
+
+      if (cornerId !== null) {
+        // Their first assignment. The partial unique index allows one live
+        // row per person per branch: a second is skipped, not thrown, and
+        // the empty array that comes back is our 409.
+        const started = await transaction.profileBranch.createManyAndReturn({
+          data: [{ profileId: target.id, companyStoreId: cornerId }],
+          skipDuplicates: true,
+          select: { id: true },
+        });
+        if (started.length === 0)
+          throw new ConflictException('Already in this branch');
+      }
 
       await this.history.record(transaction, [
         {
           companyId: companyId,
           profileId: target.id,
           reason: MembershipChangeReason.APPROVED,
-          fromRoleId: target.roleId,
+          fromRoleId: null,
           toRoleId: role.id,
-          fromCornerId: target.companyStoreId,
-          toCornerId: dto.cornerId,
+          fromCornerId: null,
+          toCornerId: cornerId,
           changedByProfileId: caller.id,
         },
       ]);
@@ -208,84 +238,13 @@ export class ProfilesService {
     };
     this.eventEmitter.emit(NotificationEvent.MEMBER_APPROVED, event);
 
-    return this.toView(await this.findRow(target.id));
-  }
-
-  /** Move a manager or staff member to another branch, or off theirs (null). */
-  async changeBranch(
-    caller: AuthProfile,
-    profileId: string,
-    dto: ChangeBranchDto,
-  ): Promise<ProfileView> {
-    if (caller.roleCode !== 'ADMIN' && caller.roleCode !== 'OWNER')
-      throw new ForbiddenException(
-        'Only an owner can move members between branches',
-      );
-
-    const target = await this.findTarget(caller, profileId);
-    if (target.status !== ProfileStatus.ACTIVE)
-      throw new BadRequestException('Only active members can be changed');
-    if (target.roleCode !== 'MANAGER' && target.roleCode !== 'STAFF')
-      throw new BadRequestException(
-        'Only managers and staff belong to a branch',
-      );
-    if (target.companyStoreId === dto.cornerId) return this.toView(target);
-
-    await this.prisma.$transaction(async (transaction) => {
-      if (dto.cornerId !== null) {
-        const isLive = await this.corners.lockLiveCorner(
-          transaction,
-          dto.cornerId,
-          target.companyId,
-        );
-        if (!isLive) throw new NotFoundException('Branch not found');
-      }
-
-      // The where repeats what we read: if anyone changed this member in
-      // between, nothing matches and count is 0.
-      const moved = await transaction.profile.updateMany({
-        where: {
-          id: target.id,
-          companyId: target.companyId,
-          roleId: target.roleId,
-          companyStoreId: target.companyStoreId,
-          status: ProfileStatus.ACTIVE,
-          deletedAt: null,
-        },
-        data: { companyStoreId: dto.cornerId },
-      });
-      if (moved.count === 0)
-        throw new ConflictException('This member was just changed; reload');
-
-      await this.history.record(transaction, [
-        {
-          companyId: target.companyId,
-          profileId: target.id,
-          reason: MembershipChangeReason.MOVED,
-          fromRoleId: target.roleId,
-          toRoleId: target.roleId,
-          fromCornerId: target.companyStoreId,
-          toCornerId: dto.cornerId,
-          changedByProfileId: caller.id,
-        },
-      ]);
-    });
-
-    const event: MemberMovedEvent = {
-      memberProfileId: target.id,
-      changedByProfileId: caller.id,
-      fromCornerId: target.companyStoreId,
-      toCornerId: dto.cornerId,
-      reason: 'MOVED',
-    };
-    this.eventEmitter.emit(NotificationEvent.MEMBER_MOVED, event);
-
-    return this.toView(await this.findRow(target.id));
+    return this.viewOf(target.id);
   }
 
   /**
    * Promote or demote a member, following decideRoleChange. Takes effect at
-   * once; the person is notified.
+   * once; the person is notified. Their branches follow the decision: kept
+   * (staff ↔ manager), all ended (to owner), or one chosen (an owner demoted).
    */
   async changeRole(
     caller: AuthProfile,
@@ -313,12 +272,8 @@ export class ProfilesService {
     const role = await this.prisma.role.findUniqueOrThrow({
       where: { code: dto.role },
     });
-    const branchAfter =
-      decision.branch === 'keep'
-        ? target.companyStoreId
-        : decision.branch === 'clear'
-          ? null
-          : (dto.cornerId ?? null);
+    const landingCornerId =
+      decision.branch === 'set' ? (dto.cornerId ?? null) : null;
 
     await this.prisma.$transaction(async (transaction) => {
       // Locks always in this order: company, then branch, then member.
@@ -341,41 +296,53 @@ export class ProfilesService {
           throw new ConflictException('A company needs at least one owner');
       }
 
-      if (decision.branch === 'set' && branchAfter !== null) {
+      if (landingCornerId !== null) {
         const isLive = await this.corners.lockLiveCorner(
           transaction,
-          branchAfter,
+          landingCornerId,
           target.companyId,
         );
         if (!isLive) throw new NotFoundException('Branch not found');
       }
 
+      // The where repeats what we read: if anyone changed this member in
+      // between, nothing matches and count is 0. Writing the row also locks
+      // it, and adding or removing a branch writes it first too, so the
+      // assignments below can't change under us.
       const changed = await transaction.profile.updateMany({
         where: {
           id: target.id,
           companyId: target.companyId,
           roleId: target.roleId,
-          companyStoreId: target.companyStoreId,
           status: ProfileStatus.ACTIVE,
           deletedAt: null,
         },
-        data: { roleId: role.id, companyStoreId: branchAfter },
+        data: { roleId: role.id },
       });
       if (changed.count === 0)
         throw new ConflictException('This member was just changed; reload');
 
-      await this.history.record(transaction, [
-        {
+      const branchChanges = await this.applyBranchDecision(
+        transaction,
+        decision.branch,
+        target.id,
+        caller.id,
+        landingCornerId,
+      );
+
+      await this.history.record(
+        transaction,
+        branchChanges.map((branchChange) => ({
           companyId: target.companyId,
           profileId: target.id,
           reason: MembershipChangeReason.ROLE_CHANGED,
           fromRoleId: target.roleId,
           toRoleId: role.id,
-          fromCornerId: target.companyStoreId,
-          toCornerId: branchAfter,
+          fromCornerId: branchChange.fromCornerId,
+          toCornerId: branchChange.toCornerId,
           changedByProfileId: caller.id,
-        },
-      ]);
+        })),
+      );
     });
 
     const event: MemberRoleChangedEvent = {
@@ -385,19 +352,20 @@ export class ProfilesService {
     };
     this.eventEmitter.emit(NotificationEvent.MEMBER_ROLE_CHANGED, event);
 
-    return this.toView(await this.findRow(target.id));
+    return this.viewOf(target.id);
   }
 
   /**
    * One person's history, newest first. Readable by the person themselves,
-   * the admin, an owner, or a manager whose branch the person is in now.
+   * the admin, an owner, or a manager who works in a branch the person
+   * works in now.
    */
   async listHistory(
     caller: AuthProfile,
     profileId: string,
     query: HistoryQueryDto,
   ): Promise<MembershipHistoryPage> {
-    // A plain scoped lookup, not findTarget: someone still waiting for
+    // A plain scoped lookup, not findMember: someone still waiting for
     // approval has no role yet, but their (empty) history is theirs to read.
     const person = await this.prisma.profile.findFirst({
       where: {
@@ -405,55 +373,195 @@ export class ProfilesService {
         ...this.ownership.scopeToCompany(caller),
         deletedAt: null,
       },
-      select: { id: true, companyStoreId: true },
+      select: {
+        id: true,
+        branches: {
+          where: { deletedAt: null, companyStore: { deletedAt: null } },
+          select: { companyStoreId: true },
+        },
+      },
     });
     if (!person) throw new NotFoundException('Member not found');
 
     const isSelf = person.id === caller.id;
     const isAdminOrOwner =
       caller.roleCode === 'ADMIN' || caller.roleCode === 'OWNER';
-    // The manager's branch must be set: a manager with no branch manages
-    // nobody, not everyone else with no branch (null === null is true).
-    const callerBranchId = caller.companyStoreId ?? null;
-    const managesPersonsBranch =
+    // One branch in common is enough. A manager with no branch shares none,
+    // so they read nobody's, not everyone else with no branch.
+    const sharesABranch =
       caller.roleCode === 'MANAGER' &&
-      callerBranchId !== null &&
-      callerBranchId === person.companyStoreId;
-    if (!isSelf && !isAdminOrOwner && !managesPersonsBranch)
+      person.branches.some((assignment) =>
+        caller.branchIds.includes(assignment.companyStoreId),
+      );
+    if (!isSelf && !isAdminOrOwner && !sharesABranch)
       throw new ForbiddenException("You cannot read this member's history");
 
     return this.history.page({ profileId: person.id }, query);
   }
 
   /**
-   * A member of the caller's company (the admin: of any company) who can be
-   * moved or re-roled. Everyone else is "not found": the admin's scope is {},
-   * so this also rules out the platform admin and members with no role yet.
+   * A member of the caller's company (the admin: of any company) with a
+   * member role, or null; the caller decides the 404. The admin's scope is
+   * {}, so this also rules out the platform admin and members with no role yet.
    */
-  private async findTarget(caller: AuthProfile, profileId: string) {
-    const target = await this.prisma.profile.findFirst({
+  async findMember(
+    caller: AuthProfile,
+    profileId: string,
+  ): Promise<MemberRow | null> {
+    const row = await this.prisma.profile.findFirst({
       where: {
         id: profileId,
         ...this.ownership.scopeToCompany(caller),
         deletedAt: null,
       },
-      select: PROFILE_SELECT,
+      select: {
+        id: true,
+        name: true,
+        profileImageUrl: true,
+        account: { select: { phone: true } }, // the sign-in's phone, shared by all their companies
+        contactEmail: true,
+        status: true,
+        createdAt: true,
+        companyId: true,
+        roleId: true,
+        role: { select: { code: true, name: true } },
+        // Where they work now, oldest assignment first. Live only: an ended
+        // assignment, or one in a deleted branch, stays out of the view.
+        branches: {
+          where: { deletedAt: null, companyStore: { deletedAt: null } },
+          select: { companyStore: { select: { id: true, name: true } } },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
     });
-    const roleCode = target?.role?.code;
+    const roleCode = row?.role?.code;
     if (
-      !target ||
-      target.companyId === null ||
+      !row ||
+      row.companyId === null ||
       roleCode === undefined ||
       !isMemberRole(roleCode)
     )
-      throw new NotFoundException('Member not found');
-    return { ...target, companyId: target.companyId, roleCode: roleCode };
+      return null;
+    return { ...row, companyId: row.companyId, roleCode: roleCode };
+  }
+
+  /** The member as the API returns them, read fresh (after a change). */
+  async viewOf(profileId: string): Promise<ProfileView> {
+    return this.toView(await this.findRow(profileId));
+  }
+
+  private async findTarget(
+    caller: AuthProfile,
+    profileId: string,
+  ): Promise<MemberRow> {
+    const target = await this.findMember(caller, profileId);
+    if (!target) throw new NotFoundException('Member not found');
+    return target;
+  }
+
+  /**
+   * ?cornerId= as a relation filter: "works in X" or, for "none", "works
+   * in no branch". Both say live, since ended assignments stay as history:
+   * someone whose only Gangnam row has ended has no branch.
+   */
+  private branchFilter(
+    cornerId: string,
+  ): Prisma.ProfileBranchListRelationFilter {
+    if (cornerId === 'none')
+      return { none: { deletedAt: null, companyStore: { deletedAt: null } } };
+    return {
+      some: {
+        companyStoreId: cornerId,
+        deletedAt: null,
+        companyStore: { deletedAt: null },
+      },
+    };
+  }
+
+  /**
+   * Inside changeRole's transaction, after the member's row is locked: what
+   * the new role does to their branches, as one (from, to) pair per
+   * assignment it touches. Someone with no branch still gets one pair,
+   * (none, none), so every role change has a history row.
+   */
+  private async applyBranchDecision(
+    transaction: Prisma.TransactionClient,
+    branch: Exclude<RoleChangeDecision, 'noop'>['branch'],
+    profileId: string,
+    callerId: string,
+    landingCornerId: string | null,
+  ): Promise<BranchChange[]> {
+    let branchChanges: BranchChange[];
+    if (branch === 'clear') {
+      // Promoted to owner: owners work everywhere, so every assignment ends.
+      // One statement ends them AND reports which, one history row each.
+      const ended = await transaction.profileBranch.updateManyAndReturn({
+        where: { profileId: profileId, deletedAt: null },
+        data: { deletedAt: new Date(), deletedByProfileId: callerId },
+        select: { companyStoreId: true },
+      });
+      branchChanges = ended.map((assignment) => ({
+        fromCornerId: assignment.companyStoreId,
+        toCornerId: null,
+      }));
+    } else if (branch === 'keep') {
+      // Staff ↔ manager: the same branches, a new role in each.
+      const live = await transaction.profileBranch.findMany({
+        where: {
+          profileId: profileId,
+          deletedAt: null,
+          companyStore: { deletedAt: null },
+        },
+        select: { companyStoreId: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      branchChanges = live.map((assignment) => ({
+        fromCornerId: assignment.companyStoreId,
+        toCornerId: assignment.companyStoreId,
+      }));
+    } else {
+      // An owner demoted: they had no assignments, and land in the branch
+      // they were given, or none.
+      if (landingCornerId !== null) {
+        // One live row per person per branch: a duplicate is skipped and
+        // the empty array is our 409.
+        const started = await transaction.profileBranch.createManyAndReturn({
+          data: [{ profileId: profileId, companyStoreId: landingCornerId }],
+          skipDuplicates: true,
+          select: { id: true },
+        });
+        if (started.length === 0)
+          throw new ConflictException('Already in this branch');
+      }
+      branchChanges = [{ fromCornerId: null, toCornerId: landingCornerId }];
+    }
+    if (branchChanges.length === 0)
+      return [{ fromCornerId: null, toCornerId: null }];
+    return branchChanges;
   }
 
   private findRow(profileId: string): Promise<ProfileRow> {
     return this.prisma.profile.findUniqueOrThrow({
       where: { id: profileId },
-      select: PROFILE_SELECT,
+      select: {
+        id: true,
+        name: true,
+        profileImageUrl: true,
+        account: { select: { phone: true } }, // the sign-in's phone, shared by all their companies
+        contactEmail: true,
+        status: true,
+        createdAt: true,
+        companyId: true,
+        roleId: true,
+        role: { select: { code: true, name: true } },
+        // Where they work now, oldest assignment first. Live only: an ended
+        // assignment, or one in a deleted branch, stays out of the view.
+        branches: {
+          where: { deletedAt: null, companyStore: { deletedAt: null } },
+          select: { companyStore: { select: { id: true, name: true } } },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
     });
   }
 
@@ -468,7 +576,7 @@ export class ProfilesService {
       contactEmail: row.contactEmail,
       status: row.status,
       role: row.role,
-      branch: row.companyStore,
+      branches: row.branches.map((assignment) => assignment.companyStore),
       createdAt: row.createdAt,
     };
   }

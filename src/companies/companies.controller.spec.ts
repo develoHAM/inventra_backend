@@ -20,6 +20,7 @@ describe('CompaniesController', () => {
     companyId: 'company-1',
     roleId: 3,
     roleCode: 'MANAGER',
+    branchIds: [],
     status: ProfileStatus.ACTIVE,
   };
 

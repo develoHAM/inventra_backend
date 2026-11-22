@@ -32,12 +32,12 @@ export interface MemberApprovedEvent {
   approvedByProfileId: string;
 }
 
+/** Someone's branches changed: one event per assignment started or ended. */
 export interface MemberMovedEvent {
   memberProfileId: string;
-  changedByProfileId: string | null; // null = moved by the system
-  fromCornerId: string | null;
-  toCornerId: string | null; // null = no branch now
-  reason: 'MOVED' | 'BRANCH_DELETED';
+  changedByProfileId: string | null; // null = changed by the system
+  cornerId: string; // the branch they were added to, or that they left
+  change: 'ADDED' | 'REMOVED' | 'BRANCH_DELETED';
 }
 
 export interface MemberRoleChangedEvent {

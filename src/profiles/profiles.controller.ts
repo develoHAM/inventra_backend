@@ -12,7 +12,6 @@ import { ProfilesService } from './profiles.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { AuthProfile } from '../auth/types/auth-profile';
-import { ChangeBranchDto } from './dto/change-branch.dto';
 import { ApproveProfileDto } from './dto/approve-profile.dto';
 import { ChangeRoleDto } from './dto/change-role.dto';
 import { ListProfilesQueryDto } from './dto/list-profiles-query.dto';
@@ -50,16 +49,6 @@ export class ProfilesController {
     @Body() dto: ApproveProfileDto,
   ) {
     return this.profiles.approve(caller, id, dto);
-  }
-
-  @RequirePermissions('profiles.move')
-  @Put(':id/branch')
-  changeBranch(
-    @CurrentProfile() caller: AuthProfile,
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: ChangeBranchDto,
-  ) {
-    return this.profiles.changeBranch(caller, id, dto);
   }
 
   @RequirePermissions('profiles.changeRole')

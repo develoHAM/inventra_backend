@@ -7,7 +7,8 @@ import { suiteAccounts } from './helpers/accounts';
 
 describe('Stores & Corners (e2e)', () => {
   let app: INestApplication;
-  let http: any;
+  // Nest types its HTTP server as any; supertest wants its own type
+  let http: Parameters<typeof request>[0];
 
   let adminAccess: string;
   let ownerAccess: string;
@@ -41,7 +42,7 @@ describe('Stores & Corners (e2e)', () => {
       }),
     );
     await app.init();
-    http = app.getHttpServer();
+    http = app.getHttpServer() as Parameters<typeof request>[0];
     const accounts = suiteAccounts(app, {
       nextPhone: nextPhone,
       emailDomain: 'sc.test',
@@ -125,12 +126,6 @@ describe('Stores & Corners (e2e)', () => {
       .expect(400);
   });
 
-  const moveTo = (profileId: string, toCornerId: string | null) =>
-    request(http)
-      .put(`/profiles/${profileId}/branch`)
-      .set('Authorization', `Bearer ${ownerAccess}`)
-      .send({ cornerId: toCornerId });
-
   // Reads are company-wide; writes check the branch (assertWorksCorner).
   // A made-up product passes the branch check (→ 400 Invalid product) only
   // for someone who works in that branch; anyone else is stopped first (403).
@@ -140,11 +135,22 @@ describe('Stores & Corners (e2e)', () => {
       .set('Authorization', `Bearer ${access}`)
       .send({ productId: MISSING_UUID });
 
-  it('OWNER puts the manager and the staff member in the corner', async () => {
-    const manager = await moveTo(managerProfileId, cornerId).expect(200);
-    expect(manager.body.branch).toEqual({ id: cornerId, name: 'A-1' });
+  it('OWNER adds the manager and the staff member to the corner', async () => {
+    const manager = await request(http)
+      .post(`/profiles/${managerProfileId}/branches`)
+      .set('Authorization', `Bearer ${ownerAccess}`)
+      .send({ cornerId: cornerId })
+      .expect(201);
+    const managerView = manager.body as {
+      branches: { id: string; name: string }[];
+    };
+    expect(managerView.branches).toEqual([{ id: cornerId, name: 'A-1' }]);
 
-    await moveTo(staffProfileId, cornerId).expect(200);
+    await request(http)
+      .post(`/profiles/${staffProfileId}/branches`)
+      .set('Authorization', `Bearer ${ownerAccess}`)
+      .send({ cornerId: cornerId })
+      .expect(201);
   });
 
   it("the corner's MANAGER works it; a manager of no branch is 403", async () => {
@@ -152,21 +158,31 @@ describe('Stores & Corners (e2e)', () => {
     await placeMissingProduct(otherManagerAccess, cornerId).expect(403);
   });
 
-  it('a manager moved to another branch is judged by the new one, with the same token', async () => {
-    const otherCornerId = (
+  it('a manager added to a second branch works both, and removed from it works one again, with the same token', async () => {
+    const otherCorner = (
       await request(http)
         .post('/corners')
         .set('Authorization', `Bearer ${ownerAccess}`)
         .send({ storeId: storeId, name: 'A-2' })
         .expect(201)
-    ).body.id;
+    ).body as { id: string };
+    const otherCornerId = otherCorner.id;
 
-    await moveTo(managerProfileId, otherCornerId).expect(200);
-
-    await placeMissingProduct(managerAccess, cornerId).expect(403);
+    await request(http)
+      .post(`/profiles/${managerProfileId}/branches`)
+      .set('Authorization', `Bearer ${ownerAccess}`)
+      .send({ cornerId: otherCornerId })
+      .expect(201);
+    // the guard reads the branches on every request: no new token needed
+    await placeMissingProduct(managerAccess, cornerId).expect(400);
     await placeMissingProduct(managerAccess, otherCornerId).expect(400);
 
-    await moveTo(managerProfileId, cornerId).expect(200); // back, for the rest of the suite
+    await request(http)
+      .delete(`/profiles/${managerProfileId}/branches/${otherCornerId}`)
+      .set('Authorization', `Bearer ${ownerAccess}`)
+      .expect(200);
+    await placeMissingProduct(managerAccess, otherCornerId).expect(403);
+    await placeMissingProduct(managerAccess, cornerId).expect(400);
   });
 
   it('a corner no longer takes a manager (400: managerProfileId is not a field)', async () => {
@@ -191,6 +207,12 @@ describe('Stores & Corners (e2e)', () => {
     await request(http)
       .delete(`/corners/${cornerId}/staff/${staffProfileId}`)
       .set('Authorization', `Bearer ${ownerAccess}`)
+      .expect(404);
+    // one branch per person is gone too: branches are added and removed
+    await request(http)
+      .put(`/profiles/${staffProfileId}/branch`)
+      .set('Authorization', `Bearer ${ownerAccess}`)
+      .send({ cornerId: cornerId })
       .expect(404);
   });
 

@@ -1,21 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma } from '../generated/prisma/client';
 import { EmailVerificationService } from '../email-verification/email-verification.service';
 import type { AuthProfile } from '../auth/types/auth-profile';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { SetContactEmailDto } from './dto/set-contact-email.dto';
 
 /** What /profiles/me answers: who you are in this company. */
-export const PROFILE_SUMMARY_SELECT = {
-  id: true,
-  name: true,
-  contactEmail: true,
-} satisfies Prisma.ProfileSelect;
-
-export type ProfileSummary = Prisma.ProfileGetPayload<{
-  select: typeof PROFILE_SUMMARY_SELECT;
-}>;
+export interface ProfileSummary {
+  id: string;
+  name: string;
+  contactEmail: string | null;
+}
 
 /**
  * The open profile edits itself: its name and its contact email in this
@@ -37,7 +32,7 @@ export class MyProfileService {
     return this.prisma.profile.update({
       where: { id: caller.id },
       data: { name: dto.name },
-      select: PROFILE_SUMMARY_SELECT,
+      select: { id: true, name: true, contactEmail: true },
     });
   }
 
@@ -59,7 +54,7 @@ export class MyProfileService {
       return transaction.profile.update({
         where: { id: caller.id },
         data: { contactEmail: dto.email },
-        select: PROFILE_SUMMARY_SELECT,
+        select: { id: true, name: true, contactEmail: true },
       });
     });
   }

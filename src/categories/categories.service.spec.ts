@@ -20,6 +20,7 @@ describe('CategoriesService', () => {
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',
+    branchIds: [],
     status: ProfileStatus.ACTIVE,
   };
 

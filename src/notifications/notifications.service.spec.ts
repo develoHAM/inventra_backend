@@ -236,7 +236,7 @@ describe('NotificationsService', () => {
       });
     });
 
-    it('findCornerRecipientIds returns every active manager of the branch first, then the owners', async () => {
+    it('findCornerRecipientIds returns every active manager working in the branch first, then the owners', async () => {
       prisma.companyStore.findUnique.mockResolvedValue({
         companyId: 'company-1',
       });
@@ -255,7 +255,14 @@ describe('NotificationsService', () => {
       });
       expect(prisma.profile.findMany).toHaveBeenNthCalledWith(1, {
         where: {
-          companyStoreId: 'corner-1',
+          // works there now: a live assignment, in a live branch
+          branches: {
+            some: {
+              companyStoreId: 'corner-1',
+              deletedAt: null,
+              companyStore: { deletedAt: null },
+            },
+          },
           role: { code: 'MANAGER' },
           status: ProfileStatus.ACTIVE,
           deletedAt: null,

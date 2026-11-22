@@ -1,32 +1,25 @@
-import type { Prisma } from '../generated/prisma/client';
 import type { ProfileStatus } from '../generated/prisma/enums';
 
-/** What sign-in needs to know about the profile it opens. */
-export const OPEN_PROFILE_SELECT = {
-  id: true,
-  status: true,
-  companyId: true,
-  roleId: true,
-} satisfies Prisma.ProfileSelect;
+/**
+ * The company profile a session has open, as auth responses show it: what
+ * sign-in needs to know about the profile it opens.
+ */
+export interface OpenProfileSummary {
+  id: string;
+  status: ProfileStatus;
+  companyId: string | null;
+  roleId: number | null;
+}
 
-/** The company profile a session has open, as auth responses show it. */
-export type OpenProfileSummary = Prisma.ProfileGetPayload<{
-  select: typeof OPEN_PROFILE_SELECT;
-}>;
-
-/** What one entry of the company dropdown needs. */
-export const COMPANY_PROFILE_SELECT = {
-  id: true,
-  status: true,
-  name: true,
-  profileImageUrl: true,
-  role: { select: { code: true, name: true } },
-  company: { select: { id: true, name: true } },
-} satisfies Prisma.ProfileSelect;
-
-export type CompanyProfileRow = Prisma.ProfileGetPayload<{
-  select: typeof COMPANY_PROFILE_SELECT;
-}>;
+/** What one entry of the company dropdown needs, as the queries select it. */
+export interface CompanyProfileRow {
+  id: string;
+  status: ProfileStatus;
+  name: string;
+  profileImageUrl: string | null; // a storage key, presigned for the view
+  role: { code: string; name: string } | null;
+  company: { id: string; name: string } | null;
+}
 
 /** One company the account can open: who they are there, and as what. */
 export interface CompanyProfileView {

@@ -1,25 +1,31 @@
-import type { Prisma } from '../generated/prisma/client';
 import type { ProfileStatus } from '../generated/prisma/enums';
+import type { MemberRoleCode } from './member-rules';
 
-/** The columns every member read selects: what the screen shows + what the rules need. */
-export const PROFILE_SELECT = {
-  id: true,
-  name: true,
-  profileImageUrl: true,
-  account: { select: { phone: true } }, // the sign-in's phone, shared by all their companies
-  contactEmail: true,
-  status: true,
-  createdAt: true,
-  companyId: true,
-  companyStoreId: true,
-  roleId: true,
-  role: { select: { code: true, name: true } },
-  companyStore: { select: { id: true, name: true } },
-} satisfies Prisma.ProfileSelect;
+/**
+ * A member as ProfilesService's queries select them: what the screen shows
+ * and what the rules need. Each query writes its select out in full;
+ * TypeScript checks every result against this shape, so a field left out of
+ * a select is a compile error.
+ */
+export interface ProfileRow {
+  id: string;
+  name: string;
+  profileImageUrl: string | null; // a storage key, presigned by toView
+  account: { phone: string | null };
+  contactEmail: string | null;
+  status: ProfileStatus;
+  createdAt: Date;
+  companyId: string | null;
+  roleId: number | null;
+  role: { code: string; name: string } | null;
+  branches: { companyStore: { id: string; name: string } }[];
+}
 
-export type ProfileRow = Prisma.ProfileGetPayload<{
-  select: typeof PROFILE_SELECT;
-}>;
+/** A member the rules can act on: in a company, with a member role. */
+export type MemberRow = ProfileRow & {
+  companyId: string;
+  roleCode: MemberRoleCode;
+};
 
 /** One member as the API returns it. */
 export interface ProfileView {
@@ -30,6 +36,6 @@ export interface ProfileView {
   contactEmail: string | null;
   status: ProfileStatus;
   role: { code: string; name: string } | null;
-  branch: { id: string; name: string } | null;
+  branches: { id: string; name: string }[]; // none for owners, or no branch yet
   createdAt: Date;
 }

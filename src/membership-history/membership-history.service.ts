@@ -2,10 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '../generated/prisma/client';
 import type { MembershipChangeInput } from './membership-change';
-import {
-  MEMBERSHIP_CHANGE_SELECT,
-  toMembershipChangeView,
-} from './membership-change-view';
+import { toMembershipChangeView } from './membership-change-view';
 import type { MembershipHistoryPage } from './membership-change-view';
 import { DEFAULT_HISTORY_LIMIT } from './dto/history-query.dto';
 import type { HistoryQueryDto } from './dto/history-query.dto';
@@ -69,7 +66,21 @@ export class MembershipHistoryService {
       take: limit + 1,
       // Start at the bookmarked entry, then step over it.
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
-      select: MEMBERSHIP_CHANGE_SELECT,
+      // The change, plus only the id and name of the people and branches in
+      // it (never a phone or an email). Relations are read with no deletedAt
+      // filter, so a closed branch or a deleted person keeps their name on
+      // old entries.
+      select: {
+        id: true,
+        reason: true,
+        createdAt: true,
+        profile: { select: { id: true, name: true } },
+        changedByProfile: { select: { id: true, name: true } },
+        fromRole: { select: { code: true, name: true } },
+        toRole: { select: { code: true, name: true } },
+        fromCompanyStore: { select: { id: true, name: true } },
+        toCompanyStore: { select: { id: true, name: true } },
+      },
     });
 
     const hasMore = rows.length > limit;

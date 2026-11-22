@@ -151,15 +151,15 @@ describe('Product Placement (e2e)', () => {
         .expect(201)
     ).body.id;
     await request(http)
-      .put(`/profiles/${managerProfileId}/branch`)
+      .post(`/profiles/${managerProfileId}/branches`)
       .set(...auth(ownerAccess))
       .send({ cornerId: cornerId })
-      .expect(200);
+      .expect(201);
     await request(http)
-      .put(`/profiles/${staffProfileId}/branch`)
+      .post(`/profiles/${staffProfileId}/branches`)
       .set(...auth(ownerAccess))
       .send({ cornerId: cornerId })
-      .expect(200);
+      .expect(201);
 
     // company 2: its own brand + product (for the cross-company rejection)
     const c2 = await accounts.registerOwner(adminAccess, 2);

@@ -770,7 +770,7 @@ describe('AuthService', () => {
       id: 'profile-1',
       accountId: 'account-1',
       companyId: 'company-1',
-      companyStoreId: null,
+      branchIds: [],
       roleId: 2,
       roleCode: 'OWNER',
       status: ProfileStatus.ACTIVE,

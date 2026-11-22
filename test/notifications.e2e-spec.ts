@@ -295,10 +295,10 @@ describe('Notifications (e2e)', () => {
           .expect(201)
       ).body.id;
       await request(http)
-        .put(`/profiles/${managerProfileId}/branch`)
+        .post(`/profiles/${managerProfileId}/branches`)
         .set(...auth(ownerAccess))
         .send({ cornerId: cornerId })
-        .expect(200);
+        .expect(201);
       const categoryId = (
         await request(http)
           .post('/categories')

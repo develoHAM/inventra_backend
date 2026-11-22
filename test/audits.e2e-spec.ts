@@ -156,15 +156,15 @@ describe('Inventory Audits (e2e)', () => {
         .expect(201)
     ).body.id;
     await request(http)
-      .put(`/profiles/${managerProfileId}/branch`)
+      .post(`/profiles/${managerProfileId}/branches`)
       .set(...auth(ownerAccess))
       .send({ cornerId: cornerId })
-      .expect(200);
+      .expect(201);
     await request(http)
-      .put(`/profiles/${staffProfileId}/branch`)
+      .post(`/profiles/${staffProfileId}/branches`)
       .set(...auth(ownerAccess))
       .send({ cornerId: cornerId })
-      .expect(200);
+      .expect(201);
 
     placementAId = await placeProduct('AUD-BC-A', 5);
     placementBId = await placeProduct('AUD-BC-B', 5);

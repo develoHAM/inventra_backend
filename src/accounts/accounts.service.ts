@@ -1,29 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '../generated/prisma/client';
-import { CAN_AUTHENTICATE } from '../auth/auth.constants';
+import { ProfileStatus } from '../generated/prisma/enums';
 import { StorageService } from '../storage/storage.service';
-import {
-  COMPANY_PROFILE_SELECT,
-  OPEN_PROFILE_SELECT,
-} from './company-profile-view';
 import type {
   CompanyProfileRow,
   CompanyProfileView,
   OpenProfileSummary,
 } from './company-profile-view';
-
-/**
- * "Openable": this account's profile, not deleted, ACTIVE or
- * PENDING_APPROVAL. The only profiles a session may open, list or switch to.
- */
-function openableProfilesOf(accountId: string) {
-  return {
-    accountId: accountId,
-    deletedAt: null,
-    status: { in: [...CAN_AUTHENTICATE] },
-  } satisfies Prisma.ProfileWhereInput;
-}
 
 /** Sign-ins (accounts) and which of their company profiles to open. */
 @Injectable()
@@ -69,9 +53,14 @@ export class AccountsService {
       if (preferred) return preferred;
     }
     return this.prisma.profile.findFirst({
-      where: openableProfilesOf(accountId),
+      where: {
+        // openable: this account's, not deleted, ACTIVE or PENDING_APPROVAL
+        accountId: accountId,
+        deletedAt: null,
+        status: { in: [ProfileStatus.PENDING_APPROVAL, ProfileStatus.ACTIVE] },
+      },
       orderBy: { createdAt: 'desc' },
-      select: OPEN_PROFILE_SELECT,
+      select: { id: true, status: true, companyId: true, roleId: true },
     });
   }
 
@@ -86,17 +75,35 @@ export class AccountsService {
     profileId: string,
   ): Promise<OpenProfileSummary | null> {
     return this.prisma.profile.findFirst({
-      where: { id: profileId, ...openableProfilesOf(accountId) },
-      select: OPEN_PROFILE_SELECT,
+      where: {
+        id: profileId,
+        // openable: this account's, not deleted, ACTIVE or PENDING_APPROVAL
+        accountId: accountId,
+        deletedAt: null,
+        status: { in: [ProfileStatus.PENDING_APPROVAL, ProfileStatus.ACTIVE] },
+      },
+      select: { id: true, status: true, companyId: true, roleId: true },
     });
   }
 
   /** The company dropdown: every profile the account can open, oldest first. */
   async listCompanies(accountId: string): Promise<CompanyProfileView[]> {
     const rows = await this.prisma.profile.findMany({
-      where: openableProfilesOf(accountId),
+      where: {
+        // openable: this account's, not deleted, ACTIVE or PENDING_APPROVAL
+        accountId: accountId,
+        deletedAt: null,
+        status: { in: [ProfileStatus.PENDING_APPROVAL, ProfileStatus.ACTIVE] },
+      },
       orderBy: { createdAt: 'asc' },
-      select: COMPANY_PROFILE_SELECT,
+      select: {
+        id: true,
+        status: true,
+        name: true,
+        profileImageUrl: true,
+        role: { select: { code: true, name: true } },
+        company: { select: { id: true, name: true } },
+      },
     });
     return Promise.all(rows.map((row) => this.toCompanyProfileView(row)));
   }
@@ -117,7 +124,7 @@ export class AccountsService {
     return adminProfile !== null;
   }
 
-  /** One dropdown entry from a COMPANY_PROFILE_SELECT row (join and create answer with it too). */
+  /** One dropdown entry from a CompanyProfileRow (join and create answer with it too). */
   async toCompanyProfileView(
     row: CompanyProfileRow,
   ): Promise<CompanyProfileView> {

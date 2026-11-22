@@ -18,7 +18,8 @@ jest.setTimeout(30_000);
 describe('Members (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
-  let http: any;
+  // Nest types its HTTP server as any; supertest wants its own type
+  let http: Parameters<typeof request>[0];
   let accounts: ReturnType<typeof suiteAccounts>;
 
   let adminAccess: string;
@@ -35,6 +36,8 @@ describe('Members (e2e)', () => {
 
   let branchAId: string;
   let branchBId: string;
+  let branchDId: string; // nobody works here: the "third branch" for refusals
+  let twoBranchManagerId: string; // manager2: works in A and B
   let storeId: string;
   let company2BranchId: string;
   let joinCode1: string;
@@ -77,6 +80,13 @@ describe('Members (e2e)', () => {
       // cornerId left undefined is dropped from the JSON: "not sent"
       .send({ role: role, cornerId: cornerId });
 
+  /** A member view as the API sends it (supertest types every body as any). */
+  type MemberBody = {
+    id: string;
+    role: { code: string; name: string } | null;
+    branches: { id: string; name: string }[];
+  };
+
   /** The error message Nest sent (supertest types every body as any). */
   const messageOf = (response: { body: unknown }) =>
     (response.body as { message: string }).message;
@@ -97,11 +107,25 @@ describe('Members (e2e)', () => {
     return response.body.id as string;
   };
 
-  const moveTo = (access: string, profileId: string, cornerId: string | null) =>
+  const addBranch = (access: string, profileId: string, cornerId: string) =>
     request(http)
-      .put(`/profiles/${profileId}/branch`)
+      .post(`/profiles/${profileId}/branches`)
       .set('Authorization', `Bearer ${access}`)
       .send({ cornerId: cornerId });
+
+  const removeBranch = (access: string, profileId: string, cornerId: string) =>
+    request(http)
+      .delete(`/profiles/${profileId}/branches/${cornerId}`)
+      .set('Authorization', `Bearer ${access}`);
+
+  /** The branches someone works in now, oldest first, straight from the database. */
+  const liveBranchIdsOf = async (profileId: string) =>
+    (
+      await prisma.profileBranch.findMany({
+        where: { profileId: profileId, deletedAt: null },
+        orderBy: { createdAt: 'asc' },
+      })
+    ).map((assignment) => assignment.companyStoreId);
 
   const historyOf = (profileId: string) =>
     prisma.membershipChange.findMany({
@@ -136,7 +160,7 @@ describe('Members (e2e)', () => {
     );
     await app.init();
     prisma = app.get(PrismaService);
-    http = app.getHttpServer();
+    http = app.getHttpServer() as Parameters<typeof request>[0];
     accounts = suiteAccounts(app, {
       nextPhone: nextPhone,
       emailDomain: 'mbr.test',
@@ -171,10 +195,11 @@ describe('Members (e2e)', () => {
     storeId = store.body.id;
     branchAId = await openBranch(ownerAccess, store.body.id, 'Branch A');
     branchBId = await openBranch(ownerAccess, store.body.id, 'Branch B');
+    branchDId = await openBranch(ownerAccess, storeId, 'Branch D');
     company2BranchId = await openBranch(owner2Access, store.body.id, 'Other');
 
     // contact emails: the suite checks the manager's in the member list and
-    // the emails the staff are sent when moved
+    // the emails the staff are sent when their branches change
     const manager = await accounts.registerJoinedMember(
       ownerAccess,
       company1.joinCode,
@@ -219,24 +244,7 @@ describe('Members (e2e)', () => {
     await app.close();
   });
 
-  describe('moving members between branches', () => {
-    it('the owner puts the manager and the staff into Branch A', async () => {
-      const managerMoved = await moveTo(
-        ownerAccess,
-        managerProfileId,
-        branchAId,
-      ).expect(200);
-      expect(managerMoved.body).toMatchObject({
-        id: managerProfileId,
-        role: { code: 'MANAGER' },
-        branch: { id: branchAId, name: 'Branch A' },
-      });
-
-      for (const profileId of [staffProfileId, staff2ProfileId]) {
-        await moveTo(ownerAccess, profileId, branchAId).expect(200);
-      }
-    });
-
+  describe('adding and removing branches', () => {
     // Reads are company-wide; only writes check the branch (assertWorksCorner).
     // A made-up product gets past the branch check (→ 400 Invalid product)
     // only for someone who works in that branch; anyone else gets 403 first.
@@ -246,91 +254,181 @@ describe('Members (e2e)', () => {
         .set('Authorization', `Bearer ${staffAccess}`)
         .send({ productId: '11111111-1111-4111-8111-111111111111' });
 
+    it('the owner adds the manager and the staff to Branch A', async () => {
+      const managerAdded = await addBranch(
+        ownerAccess,
+        managerProfileId,
+        branchAId,
+      ).expect(201);
+      expect(managerAdded.body).toMatchObject({
+        id: managerProfileId,
+        role: { code: 'MANAGER' },
+        branches: [{ id: branchAId, name: 'Branch A' }],
+      });
+
+      for (const profileId of [staffProfileId, staff2ProfileId]) {
+        await addBranch(ownerAccess, profileId, branchAId).expect(201);
+      }
+    });
+
     it('staff in Branch A pass its branch check with the token they already had', async () => {
       await placeMissingProductIn(branchAId).expect(400);
     });
 
-    it('the owner moves staff A → B → no branch; each move is one history row', async () => {
-      await moveTo(ownerAccess, staffProfileId, branchBId).expect(200);
-      const offBranch = await moveTo(ownerAccess, staffProfileId, null).expect(
-        200,
-      );
-      expect(offBranch.body.branch).toBeNull();
-
-      const moves = (await historyOf(staffProfileId)).filter(
-        (row) => row.reason === 'MOVED',
-      );
-      expect(
-        moves.map((row) => [row.fromCompanyStoreId, row.toCompanyStoreId]),
-      ).toEqual([
-        [null, branchAId],
-        [branchAId, branchBId],
-        [branchBId, null],
+    it('staff added to Branch B too work in both, oldest first, and in no other branch (Review Focus 1)', async () => {
+      const added = await addBranch(
+        ownerAccess,
+        staffProfileId,
+        branchBId,
+      ).expect(201);
+      expect((added.body as MemberBody).branches).toEqual([
+        { id: branchAId, name: 'Branch A' },
+        { id: branchBId, name: 'Branch B' },
       ]);
-      for (const row of moves) {
+
+      await placeMissingProductIn(branchAId).expect(400);
+      await placeMissingProductIn(branchBId).expect(400);
+      const refused = await placeMissingProductIn(branchDId).expect(403);
+      expect(messageOf(refused)).toBe('You can only work in your own branches');
+    });
+
+    it('adding someone to a branch they already work in is 409, and writes nothing', async () => {
+      const before = (await historyOf(staffProfileId)).length;
+
+      const refused = await addBranch(
+        ownerAccess,
+        staffProfileId,
+        branchAId,
+      ).expect(409);
+
+      expect(messageOf(refused)).toBe('Already in this branch');
+      expect(await historyOf(staffProfileId)).toHaveLength(before);
+    });
+
+    it('the owner removes staff from Branch A; removing them again is 404', async () => {
+      const removed = await removeBranch(
+        ownerAccess,
+        staffProfileId,
+        branchAId,
+      ).expect(200);
+      expect((removed.body as MemberBody).branches).toEqual([
+        { id: branchBId, name: 'Branch B' },
+      ]);
+
+      const again = await removeBranch(
+        ownerAccess,
+        staffProfileId,
+        branchAId,
+      ).expect(404);
+      expect(messageOf(again)).toBe('Not in this branch');
+    });
+
+    it('the same token now gets 403 on Branch A: access follows the database, not the token', async () => {
+      await placeMissingProductIn(branchAId).expect(403);
+      await placeMissingProductIn(branchBId).expect(400);
+    });
+
+    it('removing their last branch is allowed: no branch now, the same role', async () => {
+      const removed = await removeBranch(
+        ownerAccess,
+        staffProfileId,
+        branchBId,
+      ).expect(200);
+
+      expect(removed.body).toMatchObject({
+        role: { code: 'STAFF' },
+        branches: [],
+      });
+    });
+
+    it('each assignment started or ended is one history row, the role unchanged', async () => {
+      const rows = (await historyOf(staffProfileId)).filter(
+        (row) =>
+          row.reason === 'BRANCH_ADDED' || row.reason === 'BRANCH_REMOVED',
+      );
+
+      expect(
+        rows.map((row) => [
+          row.reason,
+          row.fromCompanyStoreId,
+          row.toCompanyStoreId,
+        ]),
+      ).toEqual([
+        ['BRANCH_ADDED', null, branchAId],
+        ['BRANCH_ADDED', null, branchBId],
+        ['BRANCH_REMOVED', branchAId, null],
+        ['BRANCH_REMOVED', branchBId, null],
+      ]);
+      for (const row of rows) {
         expect(row.fromRoleId).toBe(row.toRoleId); // a snapshot: role unchanged
         expect(row.changedByProfileId).toBe(ownerProfileId);
       }
     });
 
-    it('the same token now gets 403 on Branch A: access follows the database, not the token', async () => {
-      await placeMissingProductIn(branchAId).expect(403);
+    it('the member is told when a branch is added, and when one is removed', async () => {
+      // memberBranchAdded / memberBranchRemoved
+      for (const words of [
+        '지점에 배정되었습니다',
+        '지점 배정이 해제되었습니다',
+      ]) {
+        await waitFor(() =>
+          prisma.notification.findFirst({
+            where: {
+              recipientProfileId: staffProfileId,
+              eventType: 'member.moved',
+              body: { contains: words },
+            },
+          }),
+        );
+      }
     });
 
-    it('the moved member is notified', async () => {
-      const notification = await waitFor(() =>
-        prisma.notification.findFirst({
-          where: {
-            recipientProfileId: staffProfileId,
-            eventType: 'member.moved',
-          },
-        }),
-      );
-      expect(notification.channel).toBe('EMAIL');
-    });
-
-    it('moving someone to the branch they are already in changes nothing', async () => {
-      const before = (await historyOf(staff2ProfileId)).length;
-
-      await moveTo(ownerAccess, staff2ProfileId, branchAId).expect(200);
-
-      expect(await historyOf(staff2ProfileId)).toHaveLength(before);
-    });
-
-    it('managers and staff cannot move anyone (403)', async () => {
-      await moveTo(managerAccess, staff2ProfileId, branchBId).expect(403);
-      await moveTo(staffAccess, staff2ProfileId, branchBId).expect(403);
+    it('managers and staff cannot add or remove branches (403)', async () => {
+      await addBranch(managerAccess, staff2ProfileId, branchBId).expect(403);
+      await addBranch(staffAccess, staff2ProfileId, branchBId).expect(403);
+      await removeBranch(managerAccess, staff2ProfileId, branchAId).expect(403);
     });
 
     it("another company's owner cannot see the member (404)", async () => {
-      await moveTo(owner2Access, staff2ProfileId, company2BranchId).expect(404);
+      await addBranch(owner2Access, staff2ProfileId, company2BranchId).expect(
+        404,
+      );
     });
 
     it('a branch of another company is not found (404) and nothing changes', async () => {
-      await moveTo(ownerAccess, staff2ProfileId, company2BranchId).expect(404);
+      const refused = await addBranch(
+        ownerAccess,
+        staff2ProfileId,
+        company2BranchId,
+      ).expect(404);
 
-      const staff2 = await prisma.profile.findUnique({
-        where: { id: staff2ProfileId },
-      });
-      expect(staff2!.companyStoreId).toBe(branchAId);
+      expect(messageOf(refused)).toBe('Branch not found');
+      expect(await liveBranchIdsOf(staff2ProfileId)).toEqual([branchAId]);
     });
 
-    it('owners have no branch (400); cornerId is required (400)', async () => {
-      await moveTo(ownerAccess, ownerProfileId, branchAId).expect(400);
+    it('an owner gets no branch (400); cornerId is required (400)', async () => {
+      const refused = await addBranch(
+        ownerAccess,
+        ownerProfileId,
+        branchAId,
+      ).expect(400);
+      expect(messageOf(refused)).toBe('Owners work across the whole company');
+
       await request(http)
-        .put(`/profiles/${staff2ProfileId}/branch`)
+        .post(`/profiles/${staff2ProfileId}/branches`)
         .set('Authorization', `Bearer ${ownerAccess}`)
         .send({})
         .expect(400);
     });
 
-    it('the admin can move a member of any company', async () => {
-      await moveTo(adminAccess, staff2ProfileId, branchBId).expect(200);
-      await moveTo(adminAccess, staff2ProfileId, branchAId).expect(200);
+    it('the admin can add and remove branches for a member of any company', async () => {
+      await addBranch(adminAccess, staff2ProfileId, branchBId).expect(201);
+      await removeBranch(adminAccess, staff2ProfileId, branchBId).expect(200);
+      expect(await liveBranchIdsOf(staff2ProfileId)).toEqual([branchAId]);
 
-      // staff2 was moved 3 times (owner → A, admin → B, admin → A). Wait for
-      // all 3 emails to be sent, so the app isn't closed while the
-      // notification pipeline is still queueing them.
+      // staff2 got 3 branch emails (the owner added A, the admin added and
+      // removed B). Wait for all 3 to be sent, so the app isn't closed while
+      // the notification pipeline is still queueing them.
       await waitFor(async () => {
         const sent = await prisma.notification.count({
           where: {
@@ -359,7 +457,7 @@ describe('Members (e2e)', () => {
         id: newcomerId,
         status: 'ACTIVE',
         role: { code: 'STAFF' },
-        branch: { id: branchAId, name: 'Branch A' },
+        branches: [{ id: branchAId, name: 'Branch A' }],
       });
       const [firstRow] = await historyOf(newcomerId);
       expect(firstRow).toMatchObject({
@@ -412,7 +510,7 @@ describe('Members (e2e)', () => {
 
       expect(approved.body).toMatchObject({
         role: { code: 'MANAGER' },
-        branch: null,
+        branches: [],
       });
     });
 
@@ -532,6 +630,61 @@ describe('Members (e2e)', () => {
     });
   });
 
+  describe('a manager in two branches (Review Focus 1)', () => {
+    let twoBranchManagerAccess: string;
+
+    beforeAll(async () => {
+      const manager2 = await accounts.registerJoinedMember(
+        ownerAccess,
+        joinCode1,
+        'MANAGER',
+        'manager2',
+      );
+      twoBranchManagerAccess = manager2.access;
+      twoBranchManagerId = manager2.profileId;
+      await addBranch(ownerAccess, twoBranchManagerId, branchAId).expect(201);
+      await addBranch(ownerAccess, twoBranchManagerId, branchBId).expect(201);
+    });
+
+    it('approves a newcomer into either of their branches, never into another (403)', async () => {
+      const newcomerId = await registerPending('newcomer8');
+      const staffRoleId = await roleIdOf('STAFF');
+
+      const refused = await approve(
+        twoBranchManagerAccess,
+        newcomerId,
+        staffRoleId,
+        branchDId,
+      ).expect(403);
+      expect(messageOf(refused)).toBe(
+        'Managers can approve only into their own branch',
+      );
+
+      const approved = await approve(
+        twoBranchManagerAccess,
+        newcomerId,
+        staffRoleId,
+        branchBId,
+      ).expect(200);
+      expect((approved.body as MemberBody).branches).toEqual([
+        { id: branchBId, name: 'Branch B' },
+      ]);
+    });
+
+    it("reads both branches' histories, but not a third branch's (403)", async () => {
+      for (const cornerId of [branchAId, branchBId]) {
+        await request(http)
+          .get(`/corners/${cornerId}/history`)
+          .set('Authorization', `Bearer ${twoBranchManagerAccess}`)
+          .expect(200);
+      }
+      await request(http)
+        .get(`/corners/${branchDId}/history`)
+        .set('Authorization', `Bearer ${twoBranchManagerAccess}`)
+        .expect(403);
+    });
+  });
+
   describe('changing roles', () => {
     let promotedId: string; // newcomer1: STAFF in Branch A, approved by the manager
 
@@ -556,7 +709,7 @@ describe('Members (e2e)', () => {
 
       expect(changed.body).toMatchObject({
         role: { code: 'MANAGER' },
-        branch: { id: branchAId },
+        branches: [{ id: branchAId }],
       });
       const rows = await historyOf(promotedId);
       expect(rows[rows.length - 1]).toMatchObject({
@@ -597,7 +750,7 @@ describe('Members (e2e)', () => {
 
       expect(changed.body).toMatchObject({
         role: { code: 'STAFF' },
-        branch: { id: branchAId },
+        branches: [{ id: branchAId }],
       });
     });
 
@@ -606,7 +759,11 @@ describe('Members (e2e)', () => {
       await setRole(ownerAccess, promotedId, 'MANAGER', null).expect(400);
     });
 
-    it('the owner promotes staff to owner; they leave their branch', async () => {
+    it('the owner promotes staff in Branches A and B to owner: both assignments end, one history row each', async () => {
+      await addBranch(ownerAccess, staff2ProfileId, branchBId).expect(201);
+      const staffRoleId = await roleIdOf('STAFF');
+      const ownerRoleId = await roleIdOf('OWNER');
+
       const changed = await setRole(
         ownerAccess,
         staff2ProfileId,
@@ -615,11 +772,32 @@ describe('Members (e2e)', () => {
 
       expect(changed.body).toMatchObject({
         role: { code: 'OWNER' },
-        branch: null,
+        branches: [],
       });
-      // The token staff2 signed in with as staff now opens owner-only routes:
-      // a move (owners only) of the manager into the branch they're already in.
-      await moveTo(staff2Access, managerProfileId, branchAId).expect(200);
+      expect(await liveBranchIdsOf(staff2ProfileId)).toEqual([]);
+      const promotionRows = (await historyOf(staff2ProfileId)).filter(
+        (row) => row.reason === 'ROLE_CHANGED',
+      );
+      // written in one statement: same timestamp, so compare without order
+      expect(
+        promotionRows.map((row) => [
+          row.fromRoleId,
+          row.fromCompanyStoreId,
+          row.toRoleId,
+          row.toCompanyStoreId,
+        ]),
+      ).toEqual(
+        expect.arrayContaining([
+          [staffRoleId, branchAId, ownerRoleId, null],
+          [staffRoleId, branchBId, ownerRoleId, null],
+        ]),
+      );
+      expect(promotionRows).toHaveLength(2);
+
+      // The token staff2 signed in with as staff now passes owner-only routes:
+      // adding the manager to Branch A gets past the permission check and is
+      // refused only for the data (409: already there), not with a 403.
+      await addBranch(staff2Access, managerProfileId, branchAId).expect(409);
     });
 
     it('owners cannot demote another owner (403)', async () => {
@@ -641,7 +819,7 @@ describe('Members (e2e)', () => {
       ).expect(200);
       expect(demoted.body).toMatchObject({
         role: { code: 'STAFF' },
-        branch: { id: branchBId },
+        branches: [{ id: branchBId }],
       });
 
       await setRole(adminAccess, ownerProfileId, 'STAFF', null).expect(409);
@@ -655,7 +833,7 @@ describe('Members (e2e)', () => {
     it("the demoted owner's existing token loses owner-only routes (403)", async () => {
       // Same token as before the demotion: the guard reads the role from the
       // database on every request.
-      await moveTo(staff2Access, managerProfileId, branchAId).expect(403);
+      await addBranch(staff2Access, managerProfileId, branchAId).expect(403);
     });
 
     it('two admin demotions of the last two owners at once leave exactly one owner', async () => {
@@ -780,7 +958,7 @@ describe('Members (e2e)', () => {
       expect(approved.body).toMatchObject({
         status: 'ACTIVE',
         role: { code: 'OWNER' },
-        branch: null,
+        branches: [],
       });
       const [firstRow] = await historyOf(newOwnerId);
       expect(firstRow).toMatchObject({
@@ -803,7 +981,7 @@ describe('Members (e2e)', () => {
 
       expect(steppedDown.body).toMatchObject({
         role: { code: 'MANAGER' },
-        branch: { id: branch4Id, name: 'Branch Four' },
+        branches: [{ id: branch4Id, name: 'Branch Four' }],
       });
       const rows = await historyOf(newOwnerId);
       expect(rows[rows.length - 1]).toMatchObject({
@@ -840,7 +1018,7 @@ describe('Members (e2e)', () => {
 
       expect(steppedDown.body).toMatchObject({
         role: { code: 'STAFF' },
-        branch: { id: branch4Id },
+        branches: [{ id: branch4Id }],
       });
     });
 
@@ -849,38 +1027,42 @@ describe('Members (e2e)', () => {
     });
   });
 
-  describe('deleting a branch releases its people', () => {
+  describe('deleting a branch ends its assignments', () => {
     let branchCId: string;
     let releasedManagerId: string; // newcomer3: MANAGER, no branch until now
 
     beforeAll(async () => {
       branchCId = await openBranch(ownerAccess, storeId, 'Branch C');
       releasedManagerId = await profileIdByEmail('newcomer3@mbr.test');
-      await moveTo(ownerAccess, releasedManagerId, branchCId).expect(200);
-      await moveTo(ownerAccess, staffProfileId, branchCId).expect(200);
+      await addBranch(ownerAccess, releasedManagerId, branchCId).expect(201);
+      await addBranch(ownerAccess, staffProfileId, branchCId).expect(201);
+      // staff2 works in Branch B as well
+      await addBranch(ownerAccess, staff2ProfileId, branchCId).expect(201);
     });
 
-    it('the owner deletes Branch C: its manager and staff now have no branch', async () => {
+    it("the owner deletes Branch C: only C's assignments end, and nobody's role changes", async () => {
       await request(http)
         .delete(`/corners/${branchCId}`)
         .set('Authorization', `Bearer ${ownerAccess}`)
         .expect(200);
 
-      for (const profileId of [releasedManagerId, staffProfileId]) {
-        const member = await prisma.profile.findUniqueOrThrow({
-          where: { id: profileId },
-        });
-        expect(member.companyStoreId).toBeNull();
-      }
+      expect(await liveBranchIdsOf(releasedManagerId)).toEqual([]);
+      expect(await liveBranchIdsOf(staffProfileId)).toEqual([]);
+      expect(await liveBranchIdsOf(staff2ProfileId)).toEqual([branchBId]); // B untouched
+      const releasedManager = await prisma.profile.findUniqueOrThrow({
+        where: { id: releasedManagerId },
+        include: { role: true },
+      });
+      expect(releasedManager.role!.code).toBe('MANAGER'); // now a manager with no branch
     });
 
-    it('each released person gets one BRANCH_DELETED history row', async () => {
+    it('each ended assignment gets one BRANCH_DELETED history row', async () => {
       const rows = await prisma.membershipChange.findMany({
         where: { reason: 'BRANCH_DELETED', fromCompanyStoreId: branchCId },
       });
 
       expect(rows.map((row) => row.profileId).sort()).toEqual(
-        [releasedManagerId, staffProfileId].sort(),
+        [releasedManagerId, staffProfileId, staff2ProfileId].sort(),
       );
       for (const row of rows) {
         expect(row.toCompanyStoreId).toBeNull();
@@ -889,8 +1071,12 @@ describe('Members (e2e)', () => {
       }
     });
 
-    it('each released person is told their branch was closed', async () => {
-      for (const profileId of [releasedManagerId, staffProfileId]) {
+    it('each person whose assignment ended is told the branch was closed', async () => {
+      for (const profileId of [
+        releasedManagerId,
+        staffProfileId,
+        staff2ProfileId,
+      ]) {
         await waitFor(() =>
           prisma.notification.findFirst({
             where: {
@@ -906,8 +1092,8 @@ describe('Members (e2e)', () => {
       }
     });
 
-    it('nobody can be moved into the deleted branch (404)', async () => {
-      await moveTo(ownerAccess, staff2ProfileId, branchCId).expect(404);
+    it('nobody can be added to the deleted branch (404)', async () => {
+      await addBranch(ownerAccess, staffProfileId, branchCId).expect(404);
     });
 
     it('deleting it again is 404, and writes no more history', async () => {
@@ -920,7 +1106,7 @@ describe('Members (e2e)', () => {
         await prisma.membershipChange.count({
           where: { reason: 'BRANCH_DELETED', fromCompanyStoreId: branchCId },
         }),
-      ).toBe(2);
+      ).toBe(3);
     });
   });
 
@@ -942,7 +1128,7 @@ describe('Members (e2e)', () => {
         contactEmail: 'manager@mbr.test',
         status: 'ACTIVE',
         role: { code: 'MANAGER' },
-        branch: { id: branchAId, name: 'Branch A' },
+        branches: [{ id: branchAId, name: 'Branch A' }],
       });
       expect(manager.phone).toEqual(expect.any(String));
     });
@@ -971,7 +1157,7 @@ describe('Members (e2e)', () => {
         expect(member).toMatchObject({
           status: 'PENDING_APPROVAL',
           role: null,
-          branch: null,
+          branches: [],
         });
       }
     });
@@ -1000,7 +1186,7 @@ describe('Members (e2e)', () => {
       expect(askedDirectly.body).toEqual([]);
     });
 
-    it('filters by branch', async () => {
+    it('filters by branch: everyone listed works in it, among their branches', async () => {
       const inBranchA = await listAs(ownerAccess, {
         cornerId: branchAId,
       }).expect(200);
@@ -1008,9 +1194,24 @@ describe('Members (e2e)', () => {
       expect(
         inBranchA.body.map((member: { id: string }) => member.id),
       ).toContain(managerProfileId);
-      for (const member of inBranchA.body) {
-        expect(member.branch.id).toBe(branchAId);
+      for (const member of inBranchA.body as MemberBody[]) {
+        expect(member.branches.map((branch) => branch.id)).toContain(branchAId);
       }
+    });
+
+    it('cornerId and role together: exactly the managers who work in Branch A', async () => {
+      const managersInA = await listAs(ownerAccess, {
+        cornerId: branchAId,
+        role: 'MANAGER',
+      }).expect(200);
+
+      // not newcomer3, a manager with no branch since Branch C closed
+      const managerIds = (managersInA.body as MemberBody[]).map(
+        (member) => member.id,
+      );
+      expect(managerIds.sort()).toEqual(
+        [managerProfileId, twoBranchManagerId].sort(),
+      );
     });
 
     it('cornerId=none lists the people with no branch', async () => {
@@ -1019,10 +1220,12 @@ describe('Members (e2e)', () => {
       );
 
       const ids = noBranch.body.map((member: { id: string }) => member.id);
-      expect(ids).toContain(staffProfileId); // released with Branch C
+      expect(ids).toContain(staffProfileId); // their last branch was Branch C
+      expect(ids).toContain(await profileIdByEmail('newcomer3@mbr.test')); // a manager, no branch
+      expect(ids).toContain(ownerProfileId); // owners have no assignments
       expect(ids).not.toContain(managerProfileId); // in Branch A
-      for (const member of noBranch.body) {
-        expect(member.branch).toBeNull();
+      for (const member of noBranch.body as MemberBody[]) {
+        expect(member.branches).toEqual([]);
       }
     });
 

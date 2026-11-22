@@ -5,12 +5,15 @@ import {
 } from '@nestjs/common';
 import { CornersService } from './corners.service';
 import { OwnershipService } from '../authorization/ownership.service';
-import { AuthProfile } from '../auth/types/auth-profile';
+import type { AuthProfile } from '../auth/types/auth-profile';
 import {
   MembershipChangeReason,
   ProfileStatus,
 } from '../generated/prisma/enums';
 import { NotificationEvent } from '../notifications/notification-events';
+
+/** "Some Date": the moment a row was stamped isn't what these tests check. */
+const ANY_DATE: unknown = expect.any(Date);
 
 describe('CornersService', () => {
   let service: CornersService;
@@ -26,7 +29,8 @@ describe('CornersService', () => {
   };
   let tx: {
     companyStore: { updateMany: jest.Mock };
-    profile: { updateManyAndReturn: jest.Mock };
+    profileBranch: { updateManyAndReturn: jest.Mock };
+    profile: { findMany: jest.Mock };
   };
   let stores: { findActive: jest.Mock };
   let history: { record: jest.Mock; page: jest.Mock };
@@ -40,6 +44,7 @@ describe('CornersService', () => {
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
+    branchIds: [],
     status: ProfileStatus.ACTIVE,
   };
   const admin: AuthProfile = {
@@ -48,24 +53,25 @@ describe('CornersService', () => {
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',
+    branchIds: [],
     status: ProfileStatus.ACTIVE,
   };
   const manager: AuthProfile = {
     id: 'mgr-1',
     accountId: 'account-of-mgr-1',
     companyId: 'company-1',
-    companyStoreId: 'c1', // the manager's branch
     roleId: 3,
     roleCode: 'MANAGER',
+    branchIds: ['c1'], // the manager works in c1
     status: ProfileStatus.ACTIVE,
   };
   const staff: AuthProfile = {
     id: 'staff-1',
     accountId: 'account-of-staff-1',
     companyId: 'company-1',
-    companyStoreId: 'c1',
     roleId: 4,
     roleCode: 'STAFF',
+    branchIds: ['c1'],
     status: ProfileStatus.ACTIVE,
   };
 
@@ -87,7 +93,8 @@ describe('CornersService', () => {
     timeline = [];
     tx = {
       companyStore: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-      profile: { updateManyAndReturn: jest.fn().mockResolvedValue([]) },
+      profileBranch: { updateManyAndReturn: jest.fn().mockResolvedValue([]) },
+      profile: { findMany: jest.fn().mockResolvedValue([]) },
     };
     stores = { findActive: jest.fn().mockResolvedValue({ id: 'store-1' }) };
     history = {
@@ -167,8 +174,9 @@ describe('CornersService', () => {
 
   describe('remove', () => {
     const branchA = { id: 'corner-a', companyId: 'company-1' };
-    const lee = { id: 'lee', roleId: 3 }; // a manager
-    const park = { id: 'park', roleId: 4 }; // staff
+    // Lee (a manager) and Park (staff) work in Branch A
+    const leeInA = { profileId: 'lee' };
+    const parkInA = { profileId: 'park' };
 
     beforeEach(() => {
       prisma.companyStore.findFirst.mockResolvedValue(branchA);
@@ -176,7 +184,11 @@ describe('CornersService', () => {
         ...branchA,
         deletedAt: new Date('2026-11-09T00:00:00.000Z'),
       });
-      tx.profile.updateManyAndReturn.mockResolvedValue([lee, park]);
+      tx.profileBranch.updateManyAndReturn.mockResolvedValue([leeInA, parkInA]);
+      tx.profile.findMany.mockResolvedValue([
+        { id: 'lee', roleId: 3 },
+        { id: 'park', roleId: 4 },
+      ]);
     });
 
     it('soft-deletes the branch with a guarded write that stamps the deleter', async () => {
@@ -192,17 +204,27 @@ describe('CornersService', () => {
       });
     });
 
-    it('releases its people in the same statement that reports who was released', async () => {
+    it('ends its live assignments in the same statement that reports which it ended', async () => {
       await service.remove(owner, 'corner-a');
 
-      expect(tx.profile.updateManyAndReturn).toHaveBeenCalledWith({
+      expect(tx.profileBranch.updateManyAndReturn).toHaveBeenCalledWith({
         where: { companyStoreId: 'corner-a', deletedAt: null },
-        data: { companyStoreId: null },
-        select: { id: true, roleId: true },
+        data: { deletedAt: ANY_DATE, deletedByProfileId: 'owner-1' },
+        select: { profileId: true },
       });
     });
 
-    it('writes one BRANCH_DELETED snapshot row per released person, and only for them', async () => {
+    it("reads the people's roles for the history, and never writes a profile: nobody's role changes", async () => {
+      await service.remove(owner, 'corner-a');
+
+      expect(tx.profile.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ['lee', 'park'] } },
+        select: { id: true, roleId: true },
+      });
+      // tx.profile has only findMany: any profile write would throw here
+    });
+
+    it('writes one BRANCH_DELETED snapshot row per ended assignment: (role, A) → (same role, no branch)', async () => {
       await service.remove(owner, 'corner-a');
 
       expect(history.record).toHaveBeenCalledWith(tx, [
@@ -229,7 +251,7 @@ describe('CornersService', () => {
       ]);
     });
 
-    it('notifies each released person, only after the transaction commits', async () => {
+    it('notifies each person whose assignment ended, only after the transaction commits', async () => {
       await service.remove(owner, 'corner-a');
 
       for (const memberProfileId of ['lee', 'park']) {
@@ -238,18 +260,18 @@ describe('CornersService', () => {
           {
             memberProfileId: memberProfileId,
             changedByProfileId: 'owner-1',
-            fromCornerId: 'corner-a',
-            toCornerId: null,
-            reason: 'BRANCH_DELETED',
+            cornerId: 'corner-a',
+            change: 'BRANCH_DELETED',
           },
         );
       }
       expect(timeline).toEqual(['commit', 'emit', 'emit']);
     });
 
-    it('someone who left a moment earlier is not in the receipt: no history row, no message', async () => {
-      // Lee was moved to another branch before the release statement ran
-      tx.profile.updateManyAndReturn.mockResolvedValue([park]);
+    it('someone removed from the branch a moment earlier is not in the receipt: no history row, no message', async () => {
+      // Lee's assignment was ended before the statement ran
+      tx.profileBranch.updateManyAndReturn.mockResolvedValue([parkInA]);
+      tx.profile.findMany.mockResolvedValue([{ id: 'park', roleId: 4 }]);
 
       await service.remove(owner, 'corner-a');
 
@@ -261,7 +283,8 @@ describe('CornersService', () => {
     });
 
     it('an empty branch: no history rows, no notifications', async () => {
-      tx.profile.updateManyAndReturn.mockResolvedValue([]);
+      tx.profileBranch.updateManyAndReturn.mockResolvedValue([]);
+      tx.profile.findMany.mockResolvedValue([]);
 
       await service.remove(owner, 'corner-a');
 
@@ -283,13 +306,13 @@ describe('CornersService', () => {
       });
     });
 
-    it('404 when someone deleted it a moment ago: nobody released, nothing sent', async () => {
+    it('404 when someone deleted it a moment ago: no assignment ended, nothing sent', async () => {
       tx.companyStore.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(service.remove(owner, 'corner-a')).rejects.toThrow(
         new NotFoundException('Corner not found'),
       );
-      expect(tx.profile.updateManyAndReturn).not.toHaveBeenCalled();
+      expect(tx.profileBranch.updateManyAndReturn).not.toHaveBeenCalled();
       expect(history.record).not.toHaveBeenCalled();
       expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
@@ -306,48 +329,83 @@ describe('CornersService', () => {
 
   describe('assertWorksCorner', () => {
     const cornerRow = (id: string) => ({ id: id, companyId: 'company-1' });
+    const NOT_YOURS = new ForbiddenException(
+      'You can only work in your own branches',
+    );
 
-    it('lets a MANAGER through their own branch', async () => {
+    it('lets a MANAGER through a branch they work in', async () => {
       prisma.companyStore.findFirst.mockResolvedValue(cornerRow('c1'));
       await expect(service.assertWorksCorner(manager, 'c1')).resolves.toEqual(
         expect.objectContaining({ id: 'c1' }),
       );
     });
 
-    it('403s a MANAGER on a branch that is not theirs', async () => {
+    it('403s a MANAGER on a branch they do not work in', async () => {
       prisma.companyStore.findFirst.mockResolvedValue(cornerRow('c2'));
       await expect(service.assertWorksCorner(manager, 'c2')).rejects.toThrow(
-        ForbiddenException,
+        NOT_YOURS,
       );
     });
 
     it('403s a MANAGER who has no branch, on every branch', async () => {
       prisma.companyStore.findFirst.mockResolvedValue(cornerRow('c1'));
       await expect(
-        service.assertWorksCorner({ ...manager, companyStoreId: null }, 'c1'),
-      ).rejects.toThrow(ForbiddenException);
+        service.assertWorksCorner({ ...manager, branchIds: [] }, 'c1'),
+      ).rejects.toThrow(NOT_YOURS);
     });
 
-    it('lets the STAFF member assigned to the corner through', async () => {
+    it('lets the STAFF member who works in the corner through', async () => {
       prisma.companyStore.findFirst.mockResolvedValue(cornerRow('c1'));
       await expect(service.assertWorksCorner(staff, 'c1')).resolves.toEqual(
         expect.objectContaining({ id: 'c1' }),
       );
     });
 
-    it('403s a STAFF member not assigned to the corner', async () => {
+    it('403s a STAFF member who does not work in the corner', async () => {
       prisma.companyStore.findFirst.mockResolvedValue(cornerRow('c2'));
       await expect(service.assertWorksCorner(staff, 'c2')).rejects.toThrow(
-        ForbiddenException,
+        NOT_YOURS,
       );
     });
 
-    it('lets an OWNER through any corner', async () => {
-      prisma.companyStore.findFirst.mockResolvedValue(cornerRow('c9'));
-      await expect(service.assertWorksCorner(owner, 'c9')).resolves.toEqual(
-        expect.objectContaining({ id: 'c9' }),
-      );
+    describe('someone in two branches (Review Focus 1)', () => {
+      const staffInTwoBranches: AuthProfile = {
+        id: 'staff-1',
+        accountId: 'account-of-staff-1',
+        companyId: 'company-1',
+        roleId: 4,
+        roleCode: 'STAFF',
+        branchIds: ['c1', 'c2'],
+        status: ProfileStatus.ACTIVE,
+      };
+
+      it.each(['c1', 'c2'])('works in %s', async (cornerId) => {
+        prisma.companyStore.findFirst.mockResolvedValue(cornerRow(cornerId));
+        await expect(
+          service.assertWorksCorner(staffInTwoBranches, cornerId),
+        ).resolves.toEqual(expect.objectContaining({ id: cornerId }));
+      });
+
+      it('is refused a third one', async () => {
+        prisma.companyStore.findFirst.mockResolvedValue(cornerRow('c3'));
+        await expect(
+          service.assertWorksCorner(staffInTwoBranches, 'c3'),
+        ).rejects.toThrow(NOT_YOURS);
+      });
     });
+
+    it.each([
+      ['an OWNER', owner],
+      ['the ADMIN', admin],
+    ])(
+      'lets %s through any corner, with no assignments',
+      async (_label, caller) => {
+        prisma.companyStore.findFirst.mockResolvedValue(cornerRow('c9'));
+        await expect(service.assertWorksCorner(caller, 'c9')).resolves.toEqual(
+          expect.objectContaining({ id: 'c9' }),
+        );
+      },
+    );
 
     it('404s a cross-tenant / absent corner before any role check', async () => {
       prisma.companyStore.findFirst.mockResolvedValue(null);
@@ -419,17 +477,22 @@ describe('CornersService', () => {
       expect(history.page).toHaveBeenCalledWith(BRANCH_ROWS, QUERY);
     });
 
-    it("a manager reads their own branch's history", async () => {
+    it('a manager reads the history of a branch they work in', async () => {
       await service.listHistory(manager, 'c1', QUERY);
 
       expect(history.page).toHaveBeenCalledWith(BRANCH_ROWS, QUERY);
     });
 
+    it('a manager in two branches reads either one', async () => {
+      const managerOfTwoBranches = { ...manager, branchIds: ['c2', 'c1'] };
+
+      await service.listHistory(managerOfTwoBranches, 'c1', QUERY);
+
+      expect(history.page).toHaveBeenCalledWith(BRANCH_ROWS, QUERY);
+    });
+
     it("a manager cannot read another branch's history (403)", async () => {
-      const managerOfOtherBranch: AuthProfile = {
-        ...manager,
-        companyStoreId: 'c2',
-      };
+      const managerOfOtherBranch = { ...manager, branchIds: ['c2'] };
 
       await expect(
         service.listHistory(managerOfOtherBranch, 'c1', QUERY),
@@ -438,10 +501,7 @@ describe('CornersService', () => {
     });
 
     it('a manager with no branch reads no branch (403)', async () => {
-      const managerWithoutBranch: AuthProfile = {
-        ...manager,
-        companyStoreId: null,
-      };
+      const managerWithoutBranch = { ...manager, branchIds: [] };
 
       await expect(
         service.listHistory(managerWithoutBranch, 'c1', QUERY),

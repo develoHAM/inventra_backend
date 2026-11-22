@@ -26,6 +26,7 @@ describe('AuthController', () => {
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
+    branchIds: [],
     status: ProfileStatus.ACTIVE,
   };
   const metadata = (key: string, method: keyof AuthController) =>

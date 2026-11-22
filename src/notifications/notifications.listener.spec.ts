@@ -331,9 +331,8 @@ describe('NotificationsListener', () => {
     const event = {
       memberProfileId: 'member-1',
       changedByProfileId: 'owner-1',
-      fromCornerId: 'corner-a',
-      toCornerId: 'corner-b',
-      reason: 'MOVED' as const,
+      cornerId: 'corner-b',
+      change: 'ADDED' as const,
     };
 
     beforeEach(() => {
@@ -343,7 +342,7 @@ describe('NotificationsListener', () => {
       prisma.companyStore.findUnique.mockResolvedValue({ name: 'Branch B' });
     });
 
-    it('tells the member their new branch, excluding whoever moved them', async () => {
+    it('tells the member the branch they were added to, excluding whoever added them', async () => {
       await listener.handleMemberMoved(event);
 
       expect(prisma.companyStore.findUnique).toHaveBeenCalledWith({
@@ -354,25 +353,67 @@ describe('NotificationsListener', () => {
         profileIds: ['member-1'],
         excludeProfileId: 'owner-1',
         eventType: NotificationEvent.MEMBER_MOVED,
-        message: notificationTemplates.memberMoved('UPL Co', 'Branch B'),
+        message: notificationTemplates.memberBranchAdded('UPL Co', 'Branch B'),
+        // a branch they now work in: the push can open it
         data: { companyId: 'company-1', cornerId: 'corner-b' },
       });
     });
 
-    it('says they have no branch when moved off it (no cornerId in the push)', async () => {
-      await listener.handleMemberMoved({ ...event, toCornerId: null });
+    it('tells the member the branch they were removed from (no cornerId in the push)', async () => {
+      await listener.handleMemberMoved({ ...event, change: 'REMOVED' });
 
-      expect(prisma.companyStore.findUnique).not.toHaveBeenCalled();
       expect(notifications.notifyProfiles).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: notificationTemplates.memberMoved('UPL Co', null),
+          message: notificationTemplates.memberBranchRemoved(
+            'UPL Co',
+            'Branch B',
+          ),
           data: { companyId: 'company-1' },
         }),
       );
     });
 
+    it('names a deleted branch, read by id with no deletedAt filter', async () => {
+      prisma.companyStore.findUnique.mockResolvedValue({ name: 'Branch A' });
+
+      await listener.handleMemberMoved({
+        ...event,
+        cornerId: 'corner-a',
+        change: 'BRANCH_DELETED',
+      });
+
+      // by id only: the row is soft-deleted by now
+      expect(prisma.companyStore.findUnique).toHaveBeenCalledWith({
+        where: { id: 'corner-a' },
+        select: { name: true },
+      });
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith({
+        profileIds: ['member-1'],
+        excludeProfileId: 'owner-1',
+        eventType: NotificationEvent.MEMBER_MOVED,
+        message: notificationTemplates.memberBranchClosed('UPL Co', 'Branch A'),
+        data: { companyId: 'company-1' },
+      });
+    });
+
+    it('excludes nobody when the system made the change', async () => {
+      await listener.handleMemberMoved({ ...event, changedByProfileId: null });
+
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith(
+        expect.objectContaining({ excludeProfileId: undefined }),
+      );
+    });
+
     it('sends nothing when the member is gone or has no company', async () => {
       prisma.profile.findUnique.mockResolvedValue(null);
+
+      await listener.handleMemberMoved(event);
+
+      expect(notifications.notifyProfiles).not.toHaveBeenCalled();
+    });
+
+    it('sends nothing when the branch row cannot be read', async () => {
+      prisma.companyStore.findUnique.mockResolvedValue(null);
 
       await listener.handleMemberMoved(event);
 
@@ -432,73 +473,32 @@ describe('NotificationsListener', () => {
     });
   });
 
-  describe('member.moved because the branch was deleted', () => {
-    const event = {
-      memberProfileId: 'member-1',
-      changedByProfileId: 'owner-1',
-      fromCornerId: 'corner-a',
-      toCornerId: null,
-      reason: 'BRANCH_DELETED' as const,
-    };
-
-    beforeEach(() => {
-      prisma.profile.findUnique.mockResolvedValue({
-        company: { id: 'company-1', name: 'UPL Co' },
+  describe('branch templates', () => {
+    it('memberBranchAdded names the company and the branch', () => {
+      expect(
+        notificationTemplates.memberBranchAdded('UPL Co', 'Branch B'),
+      ).toEqual({
+        subject: '[Inventra] 새 지점에 배정되었습니다',
+        body: 'UPL Co의 Branch B 지점에 배정되었습니다.',
       });
     });
 
-    it('names the closed branch, read even though it is soft-deleted', async () => {
-      prisma.companyStore.findUnique.mockResolvedValue({ name: 'Branch A' });
-
-      await listener.handleMemberMoved(event);
-
-      // by id only: no deletedAt filter, the row is deleted by now
-      expect(prisma.companyStore.findUnique).toHaveBeenCalledWith({
-        where: { id: 'corner-a' },
-        select: { name: true },
-      });
-      expect(notifications.notifyProfiles).toHaveBeenCalledWith({
-        profileIds: ['member-1'],
-        excludeProfileId: 'owner-1',
-        eventType: NotificationEvent.MEMBER_MOVED,
-        message: notificationTemplates.memberBranchClosed('UPL Co', 'Branch A'),
-        data: { companyId: 'company-1' },
+    it('memberBranchRemoved names the company and the branch', () => {
+      expect(
+        notificationTemplates.memberBranchRemoved('UPL Co', 'Branch B'),
+      ).toEqual({
+        subject: '[Inventra] 지점 배정이 해제되었습니다',
+        body: 'UPL Co의 Branch B 지점 배정이 해제되었습니다.',
       });
     });
 
-    it('still tells them they have no branch if the branch row cannot be read', async () => {
-      prisma.companyStore.findUnique.mockResolvedValue(null);
-
-      await listener.handleMemberMoved(event);
-
-      expect(notifications.notifyProfiles).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: notificationTemplates.memberMoved('UPL Co', null),
-        }),
-      );
-    });
-  });
-
-  describe('memberBranchClosed template', () => {
-    it('names the company and the closed branch', () => {
-      const message = notificationTemplates.memberBranchClosed(
-        'UPL Co',
-        'Branch A',
-      );
-      expect(message.body).toContain('UPL Co');
-      expect(message.body).toContain('Branch A');
-    });
-  });
-
-  describe('memberMoved template', () => {
-    it('names the company and the new branch, or says there is none', () => {
-      const moved = notificationTemplates.memberMoved('UPL Co', 'Branch B');
-      expect(moved.body).toContain('UPL Co');
-      expect(moved.body).toContain('Branch B');
-
-      const released = notificationTemplates.memberMoved('UPL Co', null);
-      expect(released.body).toContain('UPL Co');
-      expect(released.body).not.toContain('null');
+    it('memberBranchClosed says the assignment ended because the branch was deleted', () => {
+      expect(
+        notificationTemplates.memberBranchClosed('UPL Co', 'Branch A'),
+      ).toEqual({
+        subject: '[Inventra] 소속 지점이 삭제되었습니다',
+        body: 'UPL Co의 Branch A 지점이 삭제되어 해당 지점 배정이 해제되었습니다.',
+      });
     });
   });
 });

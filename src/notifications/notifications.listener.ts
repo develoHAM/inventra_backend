@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { notificationTemplates } from './notification-templates';
+import type { RenderedMessage } from './notification-templates';
 import { NotificationsService } from './notifications.service';
 import { NotificationEvent } from './notification-events';
 import type {
@@ -16,6 +17,20 @@ import type {
   StockBelowTargetEvent,
   AccountPasswordResetEvent,
 } from './notification-events';
+
+/**
+ * The message for each kind of branch change. A Record over the union: a
+ * new kind of change won't compile until it has a message.
+ */
+const BRANCH_TEMPLATES: Record<
+  MemberMovedEvent['change'],
+  (companyName: string, cornerName: string) => RenderedMessage
+> = {
+  ADDED: notificationTemplates.memberBranchAdded,
+  REMOVED: notificationTemplates.memberBranchRemoved,
+  BRANCH_DELETED: notificationTemplates.memberBranchClosed,
+};
+
 @Injectable()
 export class NotificationsListener {
   constructor(
@@ -108,48 +123,23 @@ export class NotificationsListener {
       select: { company: { select: { id: true, name: true } } },
     });
     if (!member?.company) return;
+    // By id only, with no deletedAt filter: a deleted branch is still named.
+    const corner = await this.prisma.companyStore.findUnique({
+      where: { id: event.cornerId },
+      select: { name: true },
+    });
+    if (!corner) return;
 
-    if (event.reason === 'BRANCH_DELETED') {
-      // The branch is soft-deleted by now: read it by id, with no deletedAt
-      // filter, to name it in the message.
-      const closedBranch = event.fromCornerId
-        ? await this.prisma.companyStore.findUnique({
-            where: { id: event.fromCornerId },
-            select: { name: true },
-          })
-        : null;
-      await this.notifications.notifyProfiles({
-        profileIds: [event.memberProfileId],
-        excludeProfileId: event.changedByProfileId ?? undefined,
-        eventType: NotificationEvent.MEMBER_MOVED,
-        message: closedBranch
-          ? notificationTemplates.memberBranchClosed(
-              member.company.name,
-              closedBranch.name,
-            )
-          : notificationTemplates.memberMoved(member.company.name, null),
-        data: { companyId: member.company.id },
-      });
-      return;
-    }
-
-    const toCorner = event.toCornerId
-      ? await this.prisma.companyStore.findUnique({
-          where: { id: event.toCornerId },
-          select: { name: true },
-        })
-      : null;
     await this.notifications.notifyProfiles({
       profileIds: [event.memberProfileId],
       excludeProfileId: event.changedByProfileId ?? undefined,
       eventType: NotificationEvent.MEMBER_MOVED,
-      message: notificationTemplates.memberMoved(
-        member.company.name,
-        toCorner?.name ?? null,
-      ),
-      data: event.toCornerId
-        ? { companyId: member.company.id, cornerId: event.toCornerId }
-        : { companyId: member.company.id },
+      message: BRANCH_TEMPLATES[event.change](member.company.name, corner.name),
+      // Only a branch they now work in is worth opening from the push.
+      data:
+        event.change === 'ADDED'
+          ? { companyId: member.company.id, cornerId: event.cornerId }
+          : { companyId: member.company.id },
     });
   }
 

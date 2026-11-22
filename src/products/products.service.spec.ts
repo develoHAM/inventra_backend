@@ -35,6 +35,7 @@ describe('ProductsService', () => {
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
+    branchIds: [],
     status: ProfileStatus.ACTIVE,
   };
   const manager: AuthProfile = {
@@ -43,6 +44,7 @@ describe('ProductsService', () => {
     companyId: 'company-1',
     roleId: 3,
     roleCode: 'MANAGER',
+    branchIds: [],
     status: ProfileStatus.ACTIVE,
   };
   const admin: AuthProfile = {
@@ -51,6 +53,7 @@ describe('ProductsService', () => {
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',
+    branchIds: [],
     status: ProfileStatus.ACTIVE,
   };
 

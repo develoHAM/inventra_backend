@@ -10,7 +10,7 @@ import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { ACCOUNT_ROUTE_KEY } from '../decorators/account-route.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TokenService } from '../token.service';
-import { CAN_AUTHENTICATE } from '../auth.constants';
+import { ProfileStatus } from '../../generated/prisma/enums';
 import { AuthProfile } from '../types/auth-profile';
 import { AuthAccount } from '../types/auth-account';
 
@@ -80,7 +80,6 @@ export class JwtAuthGuard implements CanActivate {
         id: true,
         accountId: true,
         companyId: true,
-        companyStoreId: true,
         roleId: true,
         status: true,
         deletedAt: true,
@@ -94,6 +93,14 @@ export class JwtAuthGuard implements CanActivate {
             deletedAt: true,
           },
         },
+        // Where they work, read fresh like the role: adding or removing a
+        // branch takes effect on their very next request. Live only: an
+        // ended assignment, or one in a deleted branch, doesn't count.
+        branches: {
+          where: { deletedAt: null, companyStore: { deletedAt: null } },
+          select: { companyStoreId: true },
+          orderBy: { createdAt: 'asc' },
+        },
       },
     });
 
@@ -105,7 +112,11 @@ export class JwtAuthGuard implements CanActivate {
       profile.accountId !== session.accountId ||
       profile.account.deletedAt ||
       profile.deletedAt ||
-      !CAN_AUTHENTICATE.includes(profile.status)
+      // Only these statuses keep a session (login checks the same two):
+      // a pending member may wait for approval; suspended, rejected and
+      // left profiles may not.
+      (profile.status !== ProfileStatus.PENDING_APPROVAL &&
+        profile.status !== ProfileStatus.ACTIVE)
     )
       throw new UnauthorizedException();
 
@@ -113,9 +124,11 @@ export class JwtAuthGuard implements CanActivate {
       id: profile.id,
       accountId: profile.accountId,
       companyId: profile.companyId,
-      companyStoreId: profile.companyStoreId,
       roleId: profile.roleId,
       roleCode: profile.role?.code ?? null,
+      branchIds: profile.branches.map(
+        (assignment) => assignment.companyStoreId,
+      ),
       status: profile.status,
     };
 

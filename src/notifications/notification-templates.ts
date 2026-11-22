@@ -38,21 +38,26 @@ export const notificationTemplates = {
     subject: '[Inventra] 가입이 승인되었습니다',
     body: `${companyName}의 구성원으로 승인되었습니다. 이제 Inventra에 로그인할 수 있습니다.`,
   }),
-  memberMoved: (
+  memberBranchAdded: (
     companyName: string,
-    cornerName: string | null,
+    cornerName: string,
   ): RenderedMessage => ({
-    subject: '[Inventra] 소속 지점이 변경되었습니다',
-    body: cornerName
-      ? `${companyName}에서 소속 지점이 ${cornerName}(으)로 변경되었습니다.`
-      : `${companyName}에서 소속 지점 배정이 해제되었습니다. 새 지점이 배정되면 다시 알려 드립니다.`,
+    subject: '[Inventra] 새 지점에 배정되었습니다',
+    body: `${companyName}의 ${cornerName} 지점에 배정되었습니다.`,
+  }),
+  memberBranchRemoved: (
+    companyName: string,
+    cornerName: string,
+  ): RenderedMessage => ({
+    subject: '[Inventra] 지점 배정이 해제되었습니다',
+    body: `${companyName}의 ${cornerName} 지점 배정이 해제되었습니다.`,
   }),
   memberBranchClosed: (
     companyName: string,
     cornerName: string,
   ): RenderedMessage => ({
     subject: '[Inventra] 소속 지점이 삭제되었습니다',
-    body: `${companyName}의 ${cornerName} 지점이 삭제되어 현재 소속 지점이 없습니다. 새 지점이 배정되면 다시 알려 드립니다.`,
+    body: `${companyName}의 ${cornerName} 지점이 삭제되어 해당 지점 배정이 해제되었습니다.`,
   }),
   memberRoleChanged: (
     companyName: string,

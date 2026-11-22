@@ -26,6 +26,7 @@ describe('AuditsService', () => {
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
+    branchIds: [],
     status: ProfileStatus.ACTIVE,
   };
   const cornerId = '11111111-1111-1111-1111-111111111111';

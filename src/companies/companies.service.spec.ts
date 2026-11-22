@@ -27,6 +27,7 @@ describe('CompaniesService', () => {
     companyId: 'company-1',
     roleId: 2,
     roleCode: 'OWNER',
+    branchIds: [],
     status: ProfileStatus.ACTIVE,
   };
   // the platform admin belongs to no company
@@ -36,6 +37,7 @@ describe('CompaniesService', () => {
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',
+    branchIds: [],
     status: ProfileStatus.ACTIVE,
   };
 
@@ -216,7 +218,7 @@ describe('CompaniesService', () => {
       id: 'manager-1',
       accountId: 'account-of-manager-1',
       companyId: 'company-1',
-      companyStoreId: 'corner-a',
+      branchIds: ['corner-a'],
       roleId: 3,
       roleCode: 'MANAGER',
       status: ProfileStatus.ACTIVE,
@@ -225,7 +227,7 @@ describe('CompaniesService', () => {
       id: 'staff-1',
       accountId: 'account-of-staff-1',
       companyId: 'company-1',
-      companyStoreId: 'corner-a',
+      branchIds: ['corner-a'],
       roleId: 4,
       roleCode: 'STAFF',
       status: ProfileStatus.ACTIVE,

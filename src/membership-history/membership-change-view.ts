@@ -1,27 +1,17 @@
-import type { Prisma } from '../generated/prisma/client';
 import type { MembershipChangeReason } from '../generated/prisma/enums';
 
-/**
- * What a history read selects: the change, plus only the id and name of the
- * people and branches in it (never a phone or an email). Relations are read
- * with no deletedAt filter, so a closed branch or a deleted person keeps
- * their name on old entries.
- */
-export const MEMBERSHIP_CHANGE_SELECT = {
-  id: true,
-  reason: true,
-  createdAt: true,
-  profile: { select: { id: true, name: true } },
-  changedByProfile: { select: { id: true, name: true } },
-  fromRole: { select: { code: true, name: true } },
-  toRole: { select: { code: true, name: true } },
-  fromCompanyStore: { select: { id: true, name: true } },
-  toCompanyStore: { select: { id: true, name: true } },
-} satisfies Prisma.MembershipChangeSelect;
-
-export type MembershipChangeRow = Prisma.MembershipChangeGetPayload<{
-  select: typeof MEMBERSHIP_CHANGE_SELECT;
-}>;
+/** One history row as MembershipHistoryService.page selects it. */
+export interface MembershipChangeRow {
+  id: string;
+  reason: MembershipChangeReason;
+  createdAt: Date;
+  profile: { id: string; name: string };
+  changedByProfile: { id: string; name: string } | null;
+  fromRole: { code: string; name: string } | null;
+  toRole: { code: string; name: string } | null;
+  fromCompanyStore: { id: string; name: string } | null;
+  toCompanyStore: { id: string; name: string } | null;
+}
 
 /** One history entry as the API returns it. */
 export interface MembershipChangeView {

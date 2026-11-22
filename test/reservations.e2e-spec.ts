@@ -106,10 +106,10 @@ describe('Purchase Reservations (e2e)', () => {
         .expect(201)
     ).body.id;
     await request(http)
-      .put(`/profiles/${staffProfileId}/branch`)
+      .post(`/profiles/${staffProfileId}/branches`)
       .set(...auth(ownerAccess))
       .send({ cornerId: cornerId })
-      .expect(200);
+      .expect(201);
 
     const categoryId = (
       await request(http)

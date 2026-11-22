@@ -30,18 +30,17 @@ export class CornersService {
   ) {}
 
   /**
-   * May the caller work in this corner? Managers and staff only in their
-   * own branch (`caller.companyStoreId`, reloaded from the database on every
-   * request); owners and the admin anywhere in scope.
+   * May the caller work in this corner? Owners and the admin anywhere in
+   * scope; everyone else only in a branch they work in (`caller.branchIds`,
+   * reloaded from the database on every request). Managers and staff pass
+   * the same check: what differs between them is what permissions allow.
    */
   async assertWorksCorner(caller: AuthProfile, cornerId: string) {
     const corner = await this.findOne(caller, cornerId); // company-scoped → 404
-    if (caller.roleCode === 'MANAGER' && caller.companyStoreId !== cornerId)
-      throw new ForbiddenException('You can only manage corners you manage');
-    if (caller.roleCode === 'STAFF' && caller.companyStoreId !== cornerId)
-      throw new ForbiddenException(
-        'You can only manage the corner you are assigned to',
-      );
+    const worksAcrossCompany =
+      caller.roleCode === 'OWNER' || caller.roleCode === 'ADMIN';
+    if (!worksAcrossCompany && !caller.branchIds.includes(cornerId))
+      throw new ForbiddenException('You can only work in your own branches');
     return corner;
   }
 
@@ -95,7 +94,7 @@ export class CornersService {
 
   /**
    * A branch's history, newest first: everyone who arrived, left, or changed
-   * role while in it. For the admin, owners, and the branch's own managers.
+   * role while in it. For the admin, owners, and the managers who work there.
    */
   async listHistory(
     caller: AuthProfile,
@@ -106,14 +105,14 @@ export class CornersService {
     const isAdminOrOwner =
       caller.roleCode === 'ADMIN' || caller.roleCode === 'OWNER';
     const managesThisBranch =
-      caller.roleCode === 'MANAGER' && caller.companyStoreId === corner.id;
+      caller.roleCode === 'MANAGER' && caller.branchIds.includes(corner.id);
     if (!isAdminOrOwner && !managesThisBranch)
       throw new ForbiddenException(
         "Only the owners and this branch's managers can read its history",
       );
 
-    // Departures and arrivals: a move from A to B shows in both branches,
-    // and a promotion inside A (stored "from A to A") shows in A.
+    // Arrivals and departures: rows where the branch is the "from" or the
+    // "to". A promotion inside A (stored "from A to A") shows in A.
     return this.history.page(
       {
         OR: [
@@ -131,55 +130,72 @@ export class CornersService {
   }
 
   /**
-   * Soft-delete a branch and move everyone in it to "no branch", with a
-   * history row and a notification each. A soft delete is an UPDATE, so no
-   * foreign key clears the members for us: we do it in the same transaction.
+   * Soft-delete a branch and end every assignment to it, with a history
+   * row and a notification each. Never blocked by the people in it, and
+   * nobody's role changes: someone whose only branch this was keeps their
+   * role and waits for an owner to add them to another. A soft delete is an
+   * UPDATE, so no foreign key ends the assignments for us: we do it in the
+   * same transaction.
    */
   async remove(caller: AuthProfile, id: string) {
     const corner = await this.findOne(caller, id); // company-scoped → 404
 
     const released = await this.prisma.$transaction(async (transaction) => {
       // The guarded soft delete: a second delete finds deletedAt already set
-      // (count 0 → 404), and writing the row locks it, so moves and approvals
-      // into this branch wait and then see it deleted.
+      // (count 0 → 404), and writing the row locks it, so additions and
+      // approvals into this branch wait and then see it deleted.
       const deleted = await transaction.companyStore.updateMany({
         where: { id: id, deletedAt: null },
         data: { deletedAt: new Date(), deletedByProfileId: caller.id },
       });
       if (deleted.count === 0) throw new NotFoundException('Corner not found');
 
-      // One statement clears the branch AND reports exactly who it changed,
-      // so the history and the notifications can't include someone who was
-      // moved out a moment earlier.
-      const releasedMembers = await transaction.profile.updateManyAndReturn({
-        where: { companyStoreId: id, deletedAt: null },
-        data: { companyStoreId: null },
+      // One statement ends the assignments AND reports exactly which it
+      // ended, so the history and the notifications can't include someone
+      // removed from this branch a moment earlier.
+      const endedAssignments =
+        await transaction.profileBranch.updateManyAndReturn({
+          where: { companyStoreId: id, deletedAt: null },
+          data: { deletedAt: new Date(), deletedByProfileId: caller.id },
+          select: { profileId: true },
+        });
+
+      // History rows are full snapshots: each names the person's role,
+      // which this doesn't change. One read for all of them.
+      const people = await transaction.profile.findMany({
+        where: {
+          id: {
+            in: endedAssignments.map((assignment) => assignment.profileId),
+          },
+        },
         select: { id: true, roleId: true },
       });
+      const roleIdOf = new Map(
+        people.map((person) => [person.id, person.roleId]),
+      );
 
       await this.history.record(
         transaction,
-        releasedMembers.map((member) => ({
+        endedAssignments.map((assignment) => ({
           companyId: corner.companyId,
-          profileId: member.id,
+          profileId: assignment.profileId,
           reason: MembershipChangeReason.BRANCH_DELETED,
-          fromRoleId: member.roleId,
-          toRoleId: member.roleId,
+          fromRoleId: roleIdOf.get(assignment.profileId) ?? null,
+          toRoleId: roleIdOf.get(assignment.profileId) ?? null,
           fromCornerId: id,
           toCornerId: null,
           changedByProfileId: caller.id,
         })),
       );
-      return releasedMembers;
+      return endedAssignments;
     });
 
-    for (const member of released) {
+    for (const assignment of released) {
       const event: MemberMovedEvent = {
-        memberProfileId: member.id,
+        memberProfileId: assignment.profileId,
         changedByProfileId: caller.id,
-        fromCornerId: id,
-        toCornerId: null,
-        reason: 'BRANCH_DELETED',
+        cornerId: id,
+        change: 'BRANCH_DELETED',
       };
       this.eventEmitter.emit(NotificationEvent.MEMBER_MOVED, event);
     }

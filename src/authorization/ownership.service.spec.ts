@@ -16,6 +16,7 @@ describe('OwnershipService', () => {
     companyId: 'company-1',
     roleId: 3,
     roleCode: 'MANAGER',
+    branchIds: [],
     status: ProfileStatus.ACTIVE,
   };
   const admin: AuthProfile = {
@@ -24,6 +25,7 @@ describe('OwnershipService', () => {
     companyId: null,
     roleId: 1,
     roleCode: 'ADMIN',
+    branchIds: [],
     status: ProfileStatus.ACTIVE,
   };
 

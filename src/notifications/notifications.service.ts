@@ -96,7 +96,7 @@ export class NotificationsService {
     return owners.map((owner) => owner.id);
   }
 
-  /** Every active manager whose branch is this corner, then the company's owner(s). */
+  /** Every active manager working in this corner, then the company's owner(s). */
   async findCornerRecipientIds(cornerId: string): Promise<string[]> {
     const corner = await this.prisma.companyStore.findUnique({
       where: { id: cornerId },
@@ -105,7 +105,14 @@ export class NotificationsService {
     if (!corner) return [];
     const managers = await this.prisma.profile.findMany({
       where: {
-        companyStoreId: cornerId,
+        // works there now: a live assignment, in a branch that isn't deleted
+        branches: {
+          some: {
+            companyStoreId: cornerId,
+            deletedAt: null,
+            companyStore: { deletedAt: null },
+          },
+        },
         role: { code: 'MANAGER' },
         status: ProfileStatus.ACTIVE,
         deletedAt: null,

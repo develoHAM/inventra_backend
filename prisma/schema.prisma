@@ -51,6 +51,7 @@ enum PhoneVerificationPurpose {
   SIGNUP
   FIND_ID
   RESET_PASSWORD
+  DELETE_ACCOUNT
 
   @@map("phone_verification_purpose")
 }
@@ -93,7 +94,6 @@ model Profile {
   name            String     @db.VarChar(100)
   companyId       String?    @map("company_id") @db.Uuid
   roleId          Int?       @map("role_id")
-  companyStoreId  String?    @map("company_store_id") @db.Uuid
   profileImageUrl String?    @map("profile_image_url") @db.VarChar(2048)
   contactEmail    String?    @map("contact_email") @db.VarChar(255) // where this company's notifications go
   biography       String?    @db.Text
@@ -105,11 +105,13 @@ model Profile {
   account      Account       @relation("AccountProfiles", fields: [accountId], references: [id])
   company      Company?      @relation("CompanyEmployees", fields: [companyId], references: [id])
   role         Role?         @relation(fields: [roleId], references: [id])
-  companyStore CompanyStore? @relation("CompanyStoreMembers", fields: [companyStoreId], references: [id]) // a manager's or staff member's branch
 
   lastProfileOf           Account[]             @relation("AccountLastProfile")
   openSessions            RefreshToken[]        @relation("RefreshTokenProfile")
   createdCompanies        Company[]             @relation("CompanyCreator")
+  deletedCompanies        Company[]             @relation("CompanyDeletedBy")
+  branches                ProfileBranch[]       @relation("ProfileBranches") // where they work (a manager or staff member)
+  deletedProfileBranches  ProfileBranch[]       @relation("ProfileBranchDeletedBy") // assignments they ended
   permissions             ProfilePermission[]
   createdProducts         Product[]             @relation("ProductCreatedBy")
   deletedProducts         Product[]             @relation("ProductDeletedBy")
@@ -331,8 +333,10 @@ model Company {
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedByProfileId   String?   @map("deleted_by_profile_id") @db.Uuid // who closed it
 
   createdByProfile Profile           @relation("CompanyCreator", fields: [createdByProfileId], references: [id])
+  deletedByProfile Profile?          @relation("CompanyDeletedBy", fields: [deletedByProfileId], references: [id])
   profiles          Profile[]          @relation("CompanyEmployees")
   brands            Brand[]
   products          Product[]
@@ -359,7 +363,7 @@ model CompanyStore {
   store   Store         @relation(fields: [storeId], references: [id])
   deletedByProfile Profile?   @relation("CompanyStoreDeletedBy", fields: [deletedByProfileId], references: [id])
 
-  profiles             Profile[]             @relation("CompanyStoreMembers") // its managers and staff
+  assignments          ProfileBranch[]       @relation("CompanyStoreAssignments") // who works here, and who did
   companyStoreProducts CompanyStoreProduct[]
   orders               Order[]
   inventoryAudits      InventoryAudit[]
@@ -369,11 +373,43 @@ model CompanyStore {
   @@map("company_stores")
 }
 
+// Where a manager or staff member works: one live row per person per
+// branch. Ending an assignment soft-deletes its row, which stays as history.
+// There's no role column: the role is the person's (profiles.role_id), the
+// same in every branch. Owners have no rows: they work in every branch.
+model ProfileBranch {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  profileId          String    @map("profile_id") @db.Uuid
+  companyStoreId     String    @map("company_store_id") @db.Uuid // the branch
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6) // when they started there
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime? @map("deleted_at") @db.Timestamptz(6) // the assignment ended
+  deletedByProfileId String?   @map("deleted_by_profile_id") @db.Uuid // who ended it (null = the system)
+
+  profile          Profile      @relation("ProfileBranches", fields: [profileId], references: [id])
+  companyStore     CompanyStore @relation("CompanyStoreAssignments", fields: [companyStoreId], references: [id])
+  deletedByProfile Profile?     @relation("ProfileBranchDeletedBy", fields: [deletedByProfileId], references: [id])
+
+  // One live assignment per person per branch; ended ones may repeat, so
+  // someone can leave a branch and come back. Written as Postgres stores
+  // the condition (see UQ_accounts_phone).
+  @@unique([profileId, companyStoreId], map: "UQ_profile_branches_profile_branch", where: raw("(deleted_at IS NULL)"))
+  @@index([companyStoreId], map: "IDX_profile_branches_branch") // who works in this branch
+  @@map("profile_branches")
+}
+
 enum MembershipChangeReason {
   APPROVED
-  MOVED
+  MOVED // old rows only: moving is now adding and removing branches
   ROLE_CHANGED
   BRANCH_DELETED
+  BRANCH_ADDED
+  BRANCH_REMOVED
+  LEFT_COMPANY
+  REMOVED
+  ACCOUNT_DELETED
+  COMPANY_CLOSED
+  AUTO_PROMOTED
 
   @@map("membership_change_reason")
 }

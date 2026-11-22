@@ -5,6 +5,8 @@ import { EmailVerificationModule } from '../email-verification/email-verificatio
 import { MembershipHistoryModule } from '../membership-history/membership-history.module';
 import { MyProfileController } from './my-profile.controller';
 import { MyProfileService } from './my-profile.service';
+import { ProfileBranchesController } from './profile-branches.controller';
+import { ProfileBranchesService } from './profile-branches.service';
 import { ProfilePhotosController } from './profile-photos.controller';
 import { ProfilePhotosService } from './profile-photos.service';
 import { ProfilesController } from './profiles.controller';
@@ -23,8 +25,14 @@ import { ProfilesService } from './profiles.service';
   controllers: [
     MyProfileController,
     ProfilesController,
+    ProfileBranchesController,
     ProfilePhotosController,
   ],
-  providers: [ProfilesService, ProfilePhotosService, MyProfileService],
+  providers: [
+    ProfilesService,
+    ProfileBranchesService,
+    ProfilePhotosService,
+    MyProfileService,
+  ],
 })
 export class ProfilesModule {}
