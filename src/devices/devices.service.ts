@@ -39,7 +39,9 @@ export class DevicesService {
         'Could not validate a device token (push provider unreachable); storing it anyway',
       );
     }
-    if (!isValid) throw new BadRequestException('Invalid device token');
+    if (!isValid) {
+      throw new BadRequestException('Invalid device token');
+    }
 
     await this.prisma.deviceToken.upsert({
       where: { token: input.token },
@@ -68,7 +70,9 @@ export class DevicesService {
   async findTokens(
     accountIds: string[],
   ): Promise<{ accountId: string; token: string }[]> {
-    if (accountIds.length === 0) return [];
+    if (accountIds.length === 0) {
+      return [];
+    }
     return this.prisma.deviceToken.findMany({
       where: { accountId: { in: accountIds } },
       select: { accountId: true, token: true },

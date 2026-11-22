@@ -53,8 +53,12 @@ describe('JwtAuthGuard', () => {
     isAccountRoute?: boolean;
   }) {
     reflector.getAllAndOverride.mockImplementation((key: string) => {
-      if (key === IS_PUBLIC_KEY) return marks.isPublic;
-      if (key === ACCOUNT_ROUTE_KEY) return marks.isAccountRoute;
+      if (key === IS_PUBLIC_KEY) {
+        return marks.isPublic;
+      }
+      if (key === ACCOUNT_ROUTE_KEY) {
+        return marks.isAccountRoute;
+      }
       return undefined;
     });
   }

@@ -57,15 +57,21 @@ export class AuditsService {
   ): Promise<CreateAuditDto> {
     const ext = file.originalname.split('.').pop()?.toLowerCase();
     const format = ext === 'csv' ? 'csv' : ext === 'xlsx' ? 'xlsx' : null;
-    if (!format) throw new BadRequestException('File must be .csv or .xlsx');
+    if (!format) {
+      throw new BadRequestException('File must be .csv or .xlsx');
+    }
 
     const rows = await this.spreadsheet.parse(format, file.buffer);
-    if (rows.length === 0) throw new BadRequestException('The file is empty');
-    if (rows[0].length !== this.AUDIT_EXPORT_COLUMNS.length)
+    if (rows.length === 0) {
+      throw new BadRequestException('The file is empty');
+    }
+    if (rows[0].length !== this.AUDIT_EXPORT_COLUMNS.length) {
       throw new BadRequestException('Unexpected column layout');
+    }
     const dataRows = rows.slice(1);
-    if (dataRows.length === 0)
+    if (dataRows.length === 0) {
       throw new BadRequestException('The file has no data rows');
+    }
 
     const titleIdx = this.auditColIndex('title');
     const descIdx = this.auditColIndex('description');
@@ -76,32 +82,38 @@ export class AuditsService {
     const errors: { row: number; error: string }[] = [];
 
     const title = (dataRows[0][titleIdx] ?? '').trim();
-    if (!title) errors.push({ row: 2, error: 'Title is required' });
-    else if (title.length > 255)
+    if (!title) {
+      errors.push({ row: 2, error: 'Title is required' });
+    } else if (title.length > 255) {
       errors.push({ row: 2, error: 'Title exceeds 255 characters' });
+    }
     const descriptionRaw = (dataRows[0][descIdx] ?? '').trim();
     const auditedDate = (dataRows[0][dateIdx] ?? '').trim();
-    if (!auditedDate || Number.isNaN(Date.parse(auditedDate)))
+    if (!auditedDate || Number.isNaN(Date.parse(auditedDate))) {
       errors.push({ row: 2, error: 'Invalid audit date' });
+    }
 
     // one file = one audit: every later data row must repeat the same header cells
     dataRows.slice(1).forEach((dataRow, index) => {
       const line = index + 3;
-      if ((dataRow[titleIdx] ?? '').trim() !== title)
+      if ((dataRow[titleIdx] ?? '').trim() !== title) {
         errors.push({
           row: line,
           error: 'Title differs from the first data row',
         });
-      if ((dataRow[descIdx] ?? '').trim() !== descriptionRaw)
+      }
+      if ((dataRow[descIdx] ?? '').trim() !== descriptionRaw) {
         errors.push({
           row: line,
           error: 'Description differs from the first data row',
         });
-      if ((dataRow[dateIdx] ?? '').trim() !== auditedDate)
+      }
+      if ((dataRow[dateIdx] ?? '').trim() !== auditedDate) {
         errors.push({
           row: line,
           error: 'Audit Date differs from the first data row',
         });
+      }
     });
 
     const barcodes = dataRows.map((dataRow) =>
@@ -171,18 +183,21 @@ export class AuditsService {
       });
     });
 
-    if (errors.length > 0)
+    if (errors.length > 0) {
       throw new BadRequestException({
         message: 'Import failed',
         errors: errors,
       });
+    }
 
     const dto: CreateAuditDto = {
       title: title,
       auditedDate: auditedDate,
       items: items,
     } as CreateAuditDto;
-    if (descriptionRaw) dto.description = descriptionRaw;
+    if (descriptionRaw) {
+      dto.description = descriptionRaw;
+    }
     return dto;
   }
 
@@ -192,8 +207,9 @@ export class AuditsService {
   ) {
     const placementIds = items.map((item) => item.companyStoreProductId);
     const uniquePlacementIds = new Set(placementIds);
-    if (uniquePlacementIds.size !== placementIds.length)
+    if (uniquePlacementIds.size !== placementIds.length) {
       throw new BadRequestException('Duplicate product in audit items');
+    }
 
     const livePlacements = await this.prisma.companyStoreProduct.findMany({
       where: {
@@ -203,10 +219,11 @@ export class AuditsService {
       },
       select: { id: true },
     });
-    if (livePlacements.length !== uniquePlacementIds.size)
+    if (livePlacements.length !== uniquePlacementIds.size) {
       throw new BadRequestException(
         'One or more items are not placements on this corner',
       );
+    }
   }
 
   private async getAudit(cornerId: string, auditId: string) {
@@ -214,7 +231,9 @@ export class AuditsService {
       where: { id: auditId, companyStoreId: cornerId, deletedAt: null },
       include: { inventoryAuditItems: true },
     });
-    if (!audit) throw new NotFoundException('Audit not found');
+    if (!audit) {
+      throw new NotFoundException('Audit not found');
+    }
     return audit;
   }
 
@@ -275,8 +294,12 @@ export class AuditsService {
   ) {
     await this.corners.assertWorksCorner(caller, cornerId);
     const audit = await this.getAudit(cornerId, auditId);
-    if (audit.appliedAt) throw new ConflictException('Audit already applied');
-    if (dto.items) await this.validateItems(cornerId, dto.items);
+    if (audit.appliedAt) {
+      throw new ConflictException('Audit already applied');
+    }
+    if (dto.items) {
+      await this.validateItems(cornerId, dto.items);
+    }
 
     return this.prisma.$transaction(async (tx) => {
       await tx.inventoryAudit.update({
@@ -322,7 +345,9 @@ export class AuditsService {
   async remove(caller: AuthProfile, cornerId: string, auditId: string) {
     await this.corners.assertWorksCorner(caller, cornerId);
     const audit = await this.getAudit(cornerId, auditId);
-    if (audit.appliedAt) throw new ConflictException('Audit already applied');
+    if (audit.appliedAt) {
+      throw new ConflictException('Audit already applied');
+    }
     return this.prisma.inventoryAudit.update({
       where: { id_companyStoreId: { id: auditId, companyStoreId: cornerId } },
       data: {
@@ -335,7 +360,9 @@ export class AuditsService {
   async apply(caller: AuthProfile, cornerId: string, auditId: string) {
     await this.corners.assertWorksCorner(caller, cornerId);
     const audit = await this.getAudit(cornerId, auditId);
-    if (audit.appliedAt) throw new ConflictException('Audit already applied');
+    if (audit.appliedAt) {
+      throw new ConflictException('Audit already applied');
+    }
     await this.validateItems(cornerId, audit.inventoryAuditItems);
 
     const { appliedAudit, stockChanges } = await this.prisma.$transaction(
@@ -402,7 +429,9 @@ export class AuditsService {
         },
       },
     });
-    if (!audit) throw new NotFoundException('Audit not found');
+    if (!audit) {
+      throw new NotFoundException('Audit not found');
+    }
 
     const rows = audit.inventoryAuditItems.map((item) => ({
       auditId: audit.id,

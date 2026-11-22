@@ -42,10 +42,12 @@ export class ProfileBranchesService {
   ): Promise<ProfileView> {
     this.assertCanAssign(caller);
     const target = await this.findTarget(caller, profileId);
-    if (target.status !== ProfileStatus.ACTIVE)
+    if (target.status !== ProfileStatus.ACTIVE) {
       throw new BadRequestException('Only active members can be changed');
-    if (target.roleCode === 'OWNER')
+    }
+    if (target.roleCode === 'OWNER') {
       throw new BadRequestException('Owners work across the whole company');
+    }
 
     await this.prisma.$transaction(async (transaction) => {
       // Locks in the usual order: the branch, then the member. The branch
@@ -55,7 +57,9 @@ export class ProfileBranchesService {
         dto.cornerId,
         target.companyId,
       );
-      if (!isLive) throw new NotFoundException('Branch not found');
+      if (!isLive) {
+        throw new NotFoundException('Branch not found');
+      }
       await this.lockMember(transaction, target);
 
       // One live row per person per branch (the partial unique index): if
@@ -66,8 +70,9 @@ export class ProfileBranchesService {
         skipDuplicates: true,
         select: { id: true },
       });
-      if (started.length === 0)
+      if (started.length === 0) {
         throw new ConflictException('Already in this branch');
+      }
 
       await this.history.record(transaction, [
         {
@@ -116,7 +121,9 @@ export class ProfileBranchesService {
         data: { deletedAt: new Date(), deletedByProfileId: caller.id },
         select: { id: true },
       });
-      if (ended.length === 0) throw new NotFoundException('Not in this branch');
+      if (ended.length === 0) {
+        throw new NotFoundException('Not in this branch');
+      }
 
       await this.history.record(transaction, [
         {
@@ -148,10 +155,11 @@ export class ProfileBranchesService {
    * profiles.move personally. Company-wide powers come from company-wide roles.
    */
   private assertCanAssign(caller: AuthProfile): void {
-    if (caller.roleCode !== 'ADMIN' && caller.roleCode !== 'OWNER')
+    if (caller.roleCode !== 'ADMIN' && caller.roleCode !== 'OWNER') {
       throw new ForbiddenException(
         'Only an owner can change branch assignments',
       );
+    }
   }
 
   private async findTarget(
@@ -159,7 +167,9 @@ export class ProfileBranchesService {
     profileId: string,
   ): Promise<MemberRow> {
     const target = await this.profiles.findMember(caller, profileId);
-    if (!target) throw new NotFoundException('Member not found');
+    if (!target) {
+      throw new NotFoundException('Member not found');
+    }
     return target;
   }
 
@@ -183,7 +193,8 @@ export class ProfileBranchesService {
       },
       data: { updatedAt: new Date() },
     });
-    if (locked.count === 0)
+    if (locked.count === 0) {
       throw new ConflictException('This member was just changed; reload');
+    }
   }
 }

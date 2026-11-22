@@ -121,7 +121,9 @@ export class EmailVerificationService {
       where: { email: email, verifiedAt: null, expiresAt: { gt: now } },
       orderBy: { createdAt: 'desc' },
     });
-    if (!verification) throw new BadRequestException('Invalid or expired code');
+    if (!verification) {
+      throw new BadRequestException('Invalid or expired code');
+    }
 
     // Claim an attempt BEFORE comparing, in one conditional write, so
     // parallel guesses can't exceed the cap.
@@ -141,7 +143,9 @@ export class EmailVerificationService {
       Buffer.from(verification.codeHash, 'hex'),
       Buffer.from(this.hashCode(code), 'hex'),
     );
-    if (!matches) throw new BadRequestException('Invalid or expired code');
+    if (!matches) {
+      throw new BadRequestException('Invalid or expired code');
+    }
 
     // Issue the token conditionally: two parallel correct guesses can't both mint one.
     const emailVerificationToken = randomBytes(32).toString('base64url');

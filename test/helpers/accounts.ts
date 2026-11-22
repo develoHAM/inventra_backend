@@ -172,7 +172,9 @@ export function suiteAccounts(app: INestApplication, naming: SuiteNaming) {
       ownerName: `Owner ${n}`,
     });
     const opened = await switchTo(app, session, created.profileId);
-    if (options.contactEmail) await setContactEmail(app, opened, email);
+    if (options.contactEmail) {
+      await setContactEmail(app, opened, email);
+    }
     return {
       access: opened.accessToken,
       refreshToken: opened.refreshToken,
@@ -210,7 +212,9 @@ export function suiteAccounts(app: INestApplication, naming: SuiteNaming) {
     });
     const joined = await joinCompany(app, session, joinCode, tag);
     const opened = await switchTo(app, session, joined.profileId);
-    if (options.contactEmail) await setContactEmail(app, opened, email);
+    if (options.contactEmail) {
+      await setContactEmail(app, opened, email);
+    }
     return {
       access: opened.accessToken,
       refreshToken: opened.refreshToken,

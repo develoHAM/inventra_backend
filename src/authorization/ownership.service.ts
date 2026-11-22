@@ -18,8 +18,9 @@ export class OwnershipService {
       return {};
     }
 
-    if (!profile.companyId)
+    if (!profile.companyId) {
       throw new ForbiddenException('User must have a company');
+    }
 
     return { [field]: profile.companyId };
   }
@@ -29,7 +30,9 @@ export class OwnershipService {
       return;
     }
 
-    if (resourceCompanyId !== profile.companyId) throw new NotFoundException();
+    if (resourceCompanyId !== profile.companyId) {
+      throw new NotFoundException();
+    }
   }
 
   resolveTargetCompany(
@@ -38,7 +41,9 @@ export class OwnershipService {
   ): string {
     const companyId =
       caller.roleCode === 'ADMIN' ? requestedCompanyId : caller.companyId;
-    if (!companyId) throw new BadRequestException('companyId is required');
+    if (!companyId) {
+      throw new BadRequestException('companyId is required');
+    }
     return companyId;
   }
 }

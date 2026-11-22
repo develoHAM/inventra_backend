@@ -31,7 +31,9 @@ export async function exchangeCodeForRefreshToken(exchange: {
       refresh_token?: unknown;
       id_token?: unknown;
     };
-    if (typeof body.refresh_token !== 'string') return null; // e.g. Google after first consent
+    if (typeof body.refresh_token !== 'string') {
+      return null; // e.g. Google after first consent
+    }
 
     // The code must be this user's: never attach someone else's grant to the account.
     // Decoding without a signature check is fine here: this id_token came straight

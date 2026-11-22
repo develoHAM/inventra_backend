@@ -44,7 +44,9 @@ export class NotificationsListener {
       where: { id: event.companyId },
       select: { name: true },
     });
-    if (!company) return;
+    if (!company) {
+      return;
+    }
 
     // Approved by the platform admin, so there is no actor to exclude.
     await this.notifications.notifyProfiles({
@@ -61,7 +63,9 @@ export class NotificationsListener {
       where: { id: event.companyId },
       select: { name: true },
     });
-    if (!company) return;
+    if (!company) {
+      return;
+    }
     await this.notifications.notifyProfiles({
       profileIds: await this.notifications.findPlatformAdminIds(),
       eventType: NotificationEvent.COMPANY_REGISTERED,
@@ -84,7 +88,9 @@ export class NotificationsListener {
         select: { name: true },
       }),
     ]);
-    if (!company || !member) return;
+    if (!company || !member) {
+      return;
+    }
     await this.notifications.notifyProfiles({
       profileIds: await this.notifications.findCompanyOwnerIds(event.companyId),
       excludeProfileId: event.memberProfileId,
@@ -106,7 +112,9 @@ export class NotificationsListener {
       where: { id: event.memberProfileId },
       select: { company: { select: { id: true, name: true } } },
     });
-    if (!member?.company) return;
+    if (!member?.company) {
+      return;
+    }
     await this.notifications.notifyProfiles({
       profileIds: [event.memberProfileId],
       excludeProfileId: event.approvedByProfileId,
@@ -122,13 +130,17 @@ export class NotificationsListener {
       where: { id: event.memberProfileId },
       select: { company: { select: { id: true, name: true } } },
     });
-    if (!member?.company) return;
+    if (!member?.company) {
+      return;
+    }
     // By id only, with no deletedAt filter: a deleted branch is still named.
     const corner = await this.prisma.companyStore.findUnique({
       where: { id: event.cornerId },
       select: { name: true },
     });
-    if (!corner) return;
+    if (!corner) {
+      return;
+    }
 
     await this.notifications.notifyProfiles({
       profileIds: [event.memberProfileId],
@@ -149,7 +161,9 @@ export class NotificationsListener {
       where: { id: event.memberProfileId },
       select: { company: { select: { id: true, name: true } } },
     });
-    if (!member?.company) return;
+    if (!member?.company) {
+      return;
+    }
     await this.notifications.notifyProfiles({
       profileIds: [event.memberProfileId],
       excludeProfileId: event.changedByProfileId ?? undefined,
@@ -172,7 +186,9 @@ export class NotificationsListener {
         _count: { select: { orderItems: true } },
       },
     });
-    if (!order) return;
+    if (!order) {
+      return;
+    }
     await this.notifications.notifyProfiles({
       profileIds: await this.notifications.findCornerRecipientIds(
         event.cornerId,
@@ -198,7 +214,9 @@ export class NotificationsListener {
         _count: { select: { inventoryAuditItems: true } },
       },
     });
-    if (!audit) return;
+    if (!audit) {
+      return;
+    }
     await this.notifications.notifyProfiles({
       profileIds: await this.notifications.findCornerRecipientIds(
         event.cornerId,
@@ -224,7 +242,9 @@ export class NotificationsListener {
         product: { select: { name: true } },
       },
     });
-    if (!placement) return;
+    if (!placement) {
+      return;
+    }
     // A state warning, not an action receipt: nobody is excluded.
     await this.notifications.notifyProfiles({
       profileIds: await this.notifications.findCornerRecipientIds(

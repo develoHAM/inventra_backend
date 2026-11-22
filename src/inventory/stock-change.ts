@@ -21,8 +21,11 @@ export function stockAlertsFrom(
   >();
   for (const change of changes) {
     const seen = byPlacement.get(change.placementId);
-    if (seen) seen.last = change;
-    else byPlacement.set(change.placementId, { first: change, last: change });
+    if (seen) {
+      seen.last = change;
+    } else {
+      byPlacement.set(change.placementId, { first: change, last: change });
+    }
   }
 
   const alerts: StockBelowTargetEvent[] = [];

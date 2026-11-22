@@ -102,7 +102,9 @@ export class NotificationsService {
       where: { id: cornerId },
       select: { companyId: true },
     });
-    if (!corner) return [];
+    if (!corner) {
+      return [];
+    }
     const managers = await this.prisma.profile.findMany({
       where: {
         // works there now: a live assignment, in a branch that isn't deleted
@@ -138,14 +140,18 @@ export class NotificationsService {
     const recipientIds = [...new Set(input.profileIds)].filter(
       (profileId) => profileId !== input.excludeProfileId,
     );
-    if (recipientIds.length === 0) return;
+    if (recipientIds.length === 0) {
+      return;
+    }
 
     const channels = EVENT_CHANNELS[input.eventType];
 
     if (channels.includes(NotificationChannel.EMAIL)) {
       for (const profileId of recipientIds) {
         const email = await this.findProfileEmail(profileId);
-        if (!email) continue;
+        if (!email) {
+          continue;
+        }
         await this.dispatch({
           eventType: input.eventType,
           channel: NotificationChannel.EMAIL,

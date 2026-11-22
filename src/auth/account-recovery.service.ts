@@ -52,7 +52,9 @@ export class AccountRecoveryService {
       });
     });
 
-    if (!account) throw new NotFoundException('No account uses this phone');
+    if (!account) {
+      throw new NotFoundException('No account uses this phone');
+    }
     const passwordLogin = account.loginMethods.find(
       (loginMethod) => loginMethod.method === 'local',
     );
@@ -93,7 +95,9 @@ export class AccountRecoveryService {
         },
         select: { id: true, accountId: true },
       });
-      if (!loginMethod) return null; // commit: the token stays spent
+      if (!loginMethod) {
+        return null; // commit: the token stays spent
+      }
 
       await transaction.accountLoginMethod.update({
         where: { id: loginMethod.id },

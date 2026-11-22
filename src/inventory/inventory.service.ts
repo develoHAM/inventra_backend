@@ -40,7 +40,9 @@ export class InventoryService {
     const placement = await this.prisma.companyStoreProduct.findFirst({
       where: { id: placementId, companyStoreId: cornerId, deletedAt: null },
     });
-    if (!placement) throw new NotFoundException('Placement not found');
+    if (!placement) {
+      throw new NotFoundException('Placement not found');
+    }
 
     const { ledgerEntry, stockChange } = await this.prisma.$transaction((tx) =>
       this.recordWithinTransaction(tx, placementId, dto, caller.id, source),
@@ -65,13 +67,16 @@ export class InventoryService {
   ) {
     const effect = EFFECTS[dto.transactionType];
     const q = dto.quantity;
-    if (effect.kind !== 'set' && q < 1)
+    if (effect.kind !== 'set' && q < 1) {
       throw new BadRequestException('Quantity must be at least 1');
+    }
 
     const stock = await tx.companyStoreProductStock.findUnique({
       where: { companyStoreProductId: placementId },
     });
-    if (!stock) throw new NotFoundException('Stock not found');
+    if (!stock) {
+      throw new NotFoundException('Stock not found');
+    }
 
     let quantityBefore: number;
     let quantityAfter: number;
@@ -95,7 +100,9 @@ export class InventoryService {
             },
             data: { [field]: { decrement: q } },
           });
-          if (count === 0) throw new ConflictException('Insufficient stock');
+          if (count === 0) {
+            throw new ConflictException('Insufficient stock');
+          }
         } else {
           await tx.companyStoreProductStock.update({
             where: { companyStoreProductId: placementId },
@@ -152,7 +159,9 @@ export class InventoryService {
     const placement = await this.prisma.companyStoreProduct.findFirst({
       where: { id: placementId, companyStoreId: cornerId, deletedAt: null },
     });
-    if (!placement) throw new NotFoundException('Placement not found');
+    if (!placement) {
+      throw new NotFoundException('Placement not found');
+    }
     return this.prisma.inventoryTransaction.findMany({
       where: { companyStoreProductId: placementId },
       orderBy: { createdAt: 'desc' },

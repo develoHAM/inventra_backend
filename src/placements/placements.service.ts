@@ -24,7 +24,9 @@ export class PlacementsService {
       where: { id: placementId, companyStoreId: cornerId, deletedAt: null },
       include: { stock: true },
     });
-    if (!placement) throw new NotFoundException('Placement not found');
+    if (!placement) {
+      throw new NotFoundException('Placement not found');
+    }
     return placement;
   }
 
@@ -36,14 +38,17 @@ export class PlacementsService {
       productId,
       corner.companyId,
     );
-    if (!product) throw new BadRequestException('Invalid product');
+    if (!product) {
+      throw new BadRequestException('Invalid product');
+    }
 
     const existing = await this.prisma.companyStoreProduct.findFirst({
       where: { productId: productId, companyStoreId: cornerId }, // includes soft-deleted
     });
-    if (existing && !existing.deletedAt)
+    if (existing && !existing.deletedAt) {
       throw new ConflictException('Product already placed on this corner');
-    if (existing)
+    }
+    if (existing) {
       return this.prisma.companyStoreProduct.update({
         where: { id: existing.id },
         data: {
@@ -57,6 +62,7 @@ export class PlacementsService {
           },
         },
       });
+    }
 
     return this.prisma.companyStoreProduct.create({
       data: {

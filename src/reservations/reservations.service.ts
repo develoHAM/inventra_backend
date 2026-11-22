@@ -28,7 +28,9 @@ export class ReservationsService {
     const placement = await this.prisma.companyStoreProduct.findFirst({
       where: { id: placementId, companyStoreId: cornerId, deletedAt: null },
     });
-    if (!placement) throw new NotFoundException('Placement not found');
+    if (!placement) {
+      throw new NotFoundException('Placement not found');
+    }
     return placement;
   }
 
@@ -36,7 +38,9 @@ export class ReservationsService {
     const reservation = await this.prisma.purchaseReservation.findFirst({
       where: { id: reservationId, companyStoreId: cornerId },
     });
-    if (!reservation) throw new NotFoundException('Reservation not found');
+    if (!reservation) {
+      throw new NotFoundException('Reservation not found');
+    }
     return reservation;
   }
 
@@ -109,8 +113,9 @@ export class ReservationsService {
   async fulfill(caller: AuthProfile, cornerId: string, reservationId: string) {
     await this.corners.assertWorksCorner(caller, cornerId);
     const reservation = await this.getReservation(cornerId, reservationId);
-    if (reservation.status !== ReservationStatus.RESERVED)
+    if (reservation.status !== ReservationStatus.RESERVED) {
       throw new ConflictException('Reservation is not active');
+    }
 
     const { fulfilled, stockChanges } = await this.prisma.$transaction(
       async (tx) => {
@@ -161,8 +166,9 @@ export class ReservationsService {
   ) {
     await this.corners.assertWorksCorner(caller, cornerId);
     const reservation = await this.getReservation(cornerId, reservationId);
-    if (reservation.status !== ReservationStatus.RESERVED)
+    if (reservation.status !== ReservationStatus.RESERVED) {
       throw new ConflictException('Reservation is not active');
+    }
 
     return this.prisma.$transaction(async (tx) => {
       // RELEASE only raises available stock, so it can never cross below

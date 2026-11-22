@@ -29,10 +29,13 @@ export class CompaniesService {
       where: { companyId: companyId, role: { code: 'OWNER' } },
     });
 
-    if (!owner) throw new NotFoundException('Company owner not found');
+    if (!owner) {
+      throw new NotFoundException('Company owner not found');
+    }
 
-    if (owner.status !== ProfileStatus.PENDING_APPROVAL)
+    if (owner.status !== ProfileStatus.PENDING_APPROVAL) {
       throw new BadRequestException('Owner is not pending approval');
+    }
 
     const approvedOwner = await this.prisma.profile.update({
       where: { id: owner.id },
@@ -55,7 +58,9 @@ export class CompaniesService {
       where: { id: companyId, deletedAt: null },
       select: { joinCode: true },
     });
-    if (!company) throw new NotFoundException('Company not found');
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
     return { joinCode: company.joinCode };
   }
 
@@ -70,7 +75,9 @@ export class CompaniesService {
       where: { id: companyId, deletedAt: null },
       data: { joinCode: joinCode },
     });
-    if (result.count === 0) throw new NotFoundException('Company not found');
+    if (result.count === 0) {
+      throw new NotFoundException('Company not found');
+    }
     return { joinCode: joinCode };
   }
 
@@ -85,15 +92,19 @@ export class CompaniesService {
     query: HistoryQueryDto,
   ): Promise<MembershipHistoryPage> {
     const isAdmin = caller.roleCode === 'ADMIN';
-    if (!isAdmin && caller.companyId !== companyId)
+    if (!isAdmin && caller.companyId !== companyId) {
       throw new NotFoundException('Company not found');
+    }
     const company = await this.prisma.company.findFirst({
       where: { id: companyId, deletedAt: null },
       select: { id: true },
     });
-    if (!company) throw new NotFoundException('Company not found');
-    if (!isAdmin && caller.roleCode !== 'OWNER')
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
+    if (!isAdmin && caller.roleCode !== 'OWNER') {
       throw new ForbiddenException('Only owners can read the company history');
+    }
 
     return this.history.page({ companyId: company.id }, query);
   }

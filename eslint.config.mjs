@@ -31,6 +31,8 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-argument': 'warn',
       // Verbose object literals everywhere: `{ id: id }`, never `{ id }`.
       'object-shorthand': ['error', 'never'],
+      // Braces on every if, else and loop body, even a one-line return.
+      curly: ['error', 'all'],
       "prettier/prettier": ["error", { endOfLine: "auto" }],
     },
   },

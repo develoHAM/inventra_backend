@@ -38,8 +38,9 @@ export class NotificationsProcessor extends WorkerHost {
     const notification = await this.prisma.notification.findUnique({
       where: { id: job.data.notificationId },
     });
-    if (!notification || notification.status === NotificationStatus.SENT)
+    if (!notification || notification.status === NotificationStatus.SENT) {
       return;
+    }
 
     try {
       await this.senderFor(notification.channel).send({

@@ -41,11 +41,15 @@ export class JwtAuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const authorizationHeader = request.headers.authorization;
 
-    if (!authorizationHeader) throw new UnauthorizedException();
+    if (!authorizationHeader) {
+      throw new UnauthorizedException();
+    }
 
     const [tokenType, token] = String(authorizationHeader).split(' ');
 
-    if (tokenType !== 'Bearer' || !token) throw new UnauthorizedException();
+    if (tokenType !== 'Bearer' || !token) {
+      throw new UnauthorizedException();
+    }
 
     let session: AuthAccount;
     try {
@@ -60,7 +64,9 @@ export class JwtAuthGuard implements CanActivate {
         where: { id: session.accountId },
         select: { deletedAt: true },
       });
-      if (!account || account.deletedAt) throw new UnauthorizedException();
+      if (!account || account.deletedAt) {
+        throw new UnauthorizedException();
+      }
 
       // …and the route must not need a company.
       if (!this.isMarked(context, ACCOUNT_ROUTE_KEY)) {
@@ -117,8 +123,9 @@ export class JwtAuthGuard implements CanActivate {
       // left profiles may not.
       (profile.status !== ProfileStatus.PENDING_APPROVAL &&
         profile.status !== ProfileStatus.ACTIVE)
-    )
+    ) {
       throw new UnauthorizedException();
+    }
 
     const authenticatedProfile: AuthProfile = {
       id: profile.id,

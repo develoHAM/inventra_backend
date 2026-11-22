@@ -29,7 +29,9 @@ export class PermissionsService {
       },
     });
 
-    if (!role) return new Set();
+    if (!role) {
+      return new Set();
+    }
 
     const effective: Set<string> = new Set(
       role.rolePermissions.map(

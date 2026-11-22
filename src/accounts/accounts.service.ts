@@ -50,7 +50,9 @@ export class AccountsService {
         accountId,
         preferredProfileId,
       );
-      if (preferred) return preferred;
+      if (preferred) {
+        return preferred;
+      }
     }
     return this.prisma.profile.findFirst({
       where: {

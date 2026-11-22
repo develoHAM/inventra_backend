@@ -101,7 +101,9 @@ export class AppleVerifier implements SocialIdentityVerifier {
     providerUserId: string;
     refreshToken: string | null;
   }): Promise<void> {
-    if (login.refreshToken === null) return;
+    if (login.refreshToken === null) {
+      return;
+    }
     const response = await fetch(APPLE_REVOKE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -143,8 +145,12 @@ export class AppleVerifier implements SocialIdentityVerifier {
  * object ({ givenName, familyName, … }). Anything else → null.
  */
 function nameFrom(fullName: unknown): string | null {
-  if (typeof fullName === 'string') return fullName.trim() || null;
-  if (typeof fullName !== 'object' || fullName === null) return null;
+  if (typeof fullName === 'string') {
+    return fullName.trim() || null;
+  }
+  if (typeof fullName !== 'object' || fullName === null) {
+    return null;
+  }
   const { givenName, familyName } = fullName as Record<string, unknown>;
   const parts = [givenName, familyName].filter(
     (part): part is string => typeof part === 'string' && part.trim() !== '',

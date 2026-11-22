@@ -67,7 +67,9 @@ export class PhoneVerificationService {
         },
         select: { id: true },
       });
-      if (owner) throw new ConflictException('Phone already registered');
+      if (owner) {
+        throw new ConflictException('Phone already registered');
+      }
     }
 
     // ③ The code is shown to the user, so it is stored as-is (not a secret).
@@ -146,7 +148,9 @@ export class PhoneVerificationService {
         'Could not check the message right now; try again',
       );
     }
-    if (!received) throw new BadRequestException('Message not received yet');
+    if (!received) {
+      throw new BadRequestException('Message not received yet');
+    }
 
     // ⑤ Issue the token — conditionally, so two parallel successful confirms
     //    can't both mint one.

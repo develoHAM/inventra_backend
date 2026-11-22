@@ -31,7 +31,9 @@ export class ProfilePhotosService {
   private async present<T extends { profileImageUrl: string | null }>(
     profile: T,
   ): Promise<T> {
-    if (!profile.profileImageUrl) return profile;
+    if (!profile.profileImageUrl) {
+      return profile;
+    }
     return {
       ...profile,
       profileImageUrl: await this.storage.presignGetUrl(
@@ -44,7 +46,9 @@ export class ProfilePhotosService {
     const profile = await this.prisma.profile.findFirst({
       where: { id: caller.id, deletedAt: null },
     });
-    if (!profile) throw new NotFoundException('User not found');
+    if (!profile) {
+      throw new NotFoundException('User not found');
+    }
     return profile;
   }
 
@@ -52,8 +56,9 @@ export class ProfilePhotosService {
     const profile = await this.findSelf(caller);
     const key = this.avatarKey(caller.id, file.mimetype);
     await this.storage.putObject(key, file.buffer, file.mimetype);
-    if (profile.profileImageUrl)
+    if (profile.profileImageUrl) {
       await this.storage.deleteObject(profile.profileImageUrl);
+    }
     const updated = await this.prisma.profile.update({
       where: { id: caller.id },
       data: { profileImageUrl: key },
@@ -70,12 +75,15 @@ export class ProfilePhotosService {
 
   async confirmAvatar(caller: AuthProfile, dto: ConfirmUploadDto) {
     const profile = await this.findSelf(caller);
-    if (!dto.key.startsWith(`profiles/${caller.id}/`))
+    if (!dto.key.startsWith(`profiles/${caller.id}/`)) {
       throw new BadRequestException('Key does not belong to you');
-    if (!(await this.storage.objectExists(dto.key)))
+    }
+    if (!(await this.storage.objectExists(dto.key))) {
       throw new BadRequestException('Uploaded object not found');
-    if (profile.profileImageUrl)
+    }
+    if (profile.profileImageUrl) {
       await this.storage.deleteObject(profile.profileImageUrl);
+    }
     const updated = await this.prisma.profile.update({
       where: { id: caller.id },
       data: { profileImageUrl: dto.key },

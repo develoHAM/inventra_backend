@@ -59,7 +59,9 @@ describe('Account recovery (e2e)', () => {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const value = await probe();
-      if (value) return value;
+      if (value) {
+        return value;
+      }
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
     throw new Error(`waitFor timed out after ${timeoutMs}ms`);

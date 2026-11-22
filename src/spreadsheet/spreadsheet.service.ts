@@ -40,7 +40,9 @@ export class SpreadsheetService {
       worksheet = workbook.worksheets[0];
     }
 
-    if (!worksheet) return [];
+    if (!worksheet) {
+      return [];
+    }
 
     const rows: string[][] = [];
     worksheet.eachRow({ includeEmpty: false }, (row) => {

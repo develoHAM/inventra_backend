@@ -19,7 +19,9 @@ export class MembershipHistoryService {
     transaction: Prisma.TransactionClient,
     changes: MembershipChangeInput[],
   ): Promise<void> {
-    if (changes.length === 0) return;
+    if (changes.length === 0) {
+      return;
+    }
     await transaction.membershipChange.createMany({
       data: changes.map((change) => ({
         companyId: change.companyId,
@@ -53,8 +55,9 @@ export class MembershipHistoryService {
         where: { AND: [where, { id: query.cursor }] },
         select: { id: true },
       });
-      if (!bookmark)
+      if (!bookmark) {
         throw new BadRequestException('This cursor is not from this history');
+      }
     }
 
     const rows = await this.prisma.membershipChange.findMany({

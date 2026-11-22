@@ -95,7 +95,9 @@ describe('Push notifications (e2e)', () => {
       const row = await prisma.notification.findFirst({
         where: { ...where, status: status },
       });
-      if (row) return row;
+      if (row) {
+        return row;
+      }
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
     throw new Error(

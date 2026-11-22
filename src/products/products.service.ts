@@ -41,7 +41,9 @@ export class ProductsService {
       },
     });
 
-    if (dup) throw new ConflictException('Barcode already exists');
+    if (dup) {
+      throw new ConflictException('Barcode already exists');
+    }
   }
 
   private imageKey(productId: string, contentType: string): string {
@@ -52,7 +54,9 @@ export class ProductsService {
   private async present<T extends { imageUrl: string | null }>(
     product: T,
   ): Promise<T> {
-    if (!product.imageUrl) return product;
+    if (!product.imageUrl) {
+      return product;
+    }
     return {
       ...product,
       imageUrl: await this.storage.presignGetUrl(product.imageUrl),
@@ -68,7 +72,9 @@ export class ProductsService {
       },
     });
 
-    if (!product) throw new NotFoundException('Product not found');
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
     return product;
   }
 
@@ -77,10 +83,14 @@ export class ProductsService {
     const companyId = this.ownership.resolveTargetCompany(caller, requested);
 
     const brand = await this.brands.findInCompany(data.brandId, companyId);
-    if (!brand) throw new BadRequestException('Invalid brand');
+    if (!brand) {
+      throw new BadRequestException('Invalid brand');
+    }
 
     const category = await this.categories.findActive(data.categoryId);
-    if (!category) throw new BadRequestException('Invalid category');
+    if (!category) {
+      throw new BadRequestException('Invalid category');
+    }
 
     await this.assertBarcodeAvailable(data.barcode); // barcode stays here — products' own table
 
@@ -118,14 +128,19 @@ export class ProductsService {
         dto.brandId,
         product.companyId,
       );
-      if (!brand) throw new BadRequestException('Invalid brand');
+      if (!brand) {
+        throw new BadRequestException('Invalid brand');
+      }
     }
     if (dto.categoryId !== undefined) {
       const category = await this.categories.findActive(dto.categoryId);
-      if (!category) throw new BadRequestException('Invalid category');
+      if (!category) {
+        throw new BadRequestException('Invalid category');
+      }
     }
-    if (dto.barcode !== undefined)
+    if (dto.barcode !== undefined) {
       await this.assertBarcodeAvailable(dto.barcode, id);
+    }
 
     return this.prisma.product.update({ where: { id: id }, data: dto });
   }
@@ -152,7 +167,9 @@ export class ProductsService {
     const product = await this.findOneRaw(caller, id);
     const key = this.imageKey(id, file.mimetype);
     await this.storage.putObject(key, file.buffer, file.mimetype);
-    if (product.imageUrl) await this.storage.deleteObject(product.imageUrl);
+    if (product.imageUrl) {
+      await this.storage.deleteObject(product.imageUrl);
+    }
     const updated = await this.prisma.product.update({
       where: { id: id },
       data: { imageUrl: key },
@@ -173,11 +190,15 @@ export class ProductsService {
 
   async confirmImage(caller: AuthProfile, id: string, dto: ConfirmImageDto) {
     const product = await this.findOneRaw(caller, id);
-    if (!dto.key.startsWith(`products/${id}/`))
+    if (!dto.key.startsWith(`products/${id}/`)) {
       throw new BadRequestException('Key does not belong to this product');
-    if (!(await this.storage.objectExists(dto.key)))
+    }
+    if (!(await this.storage.objectExists(dto.key))) {
       throw new BadRequestException('Uploaded object not found');
-    if (product.imageUrl) await this.storage.deleteObject(product.imageUrl);
+    }
+    if (product.imageUrl) {
+      await this.storage.deleteObject(product.imageUrl);
+    }
     const updated = await this.prisma.product.update({
       where: { id: id },
       data: { imageUrl: dto.key },

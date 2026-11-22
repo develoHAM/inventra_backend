@@ -15,7 +15,9 @@ export async function waitFor<T>(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const value = await probe();
-    if (value) return value;
+    if (value) {
+      return value;
+    }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new Error(`waitFor timed out after ${timeoutMs}ms`);
@@ -69,7 +71,9 @@ export async function emailProof(
     await fetch(`${MAILPIT_API}/message/${messageId}`)
   ).json()) as { Text: string };
   const code = message.Text.match(/\[(\d{6})\]/)?.[1];
-  if (!code) throw new Error(`no code in the email to ${address}`);
+  if (!code) {
+    throw new Error(`no code in the email to ${address}`);
+  }
 
   const confirmed = await request(http)
     .post('/auth/email/confirm')

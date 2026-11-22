@@ -71,9 +71,13 @@ export class TokenService {
       secret: this.config.get('JWT_ACCESS_SECRET'),
     });
 
-    if (!sub || !type) throw new Error('Missing JWT claim');
+    if (!sub || !type) {
+      throw new Error('Missing JWT claim');
+    }
 
-    if (type !== TokenType.ACCESS) throw new Error('Wrong JWT type');
+    if (type !== TokenType.ACCESS) {
+      throw new Error('Wrong JWT type');
+    }
 
     return { accountId: sub, profileId: pid ?? null };
   }
@@ -85,9 +89,13 @@ export class TokenService {
       secret: this.config.get('JWT_REFRESH_SECRET'),
     });
 
-    if (!sub || !type || !jti) throw new Error('Missing JWT claim');
+    if (!sub || !type || !jti) {
+      throw new Error('Missing JWT claim');
+    }
 
-    if (type !== TokenType.REFRESH) throw new Error('Wrong JWT type');
+    if (type !== TokenType.REFRESH) {
+      throw new Error('Wrong JWT type');
+    }
 
     return { accountId: sub, jti: jti };
   }

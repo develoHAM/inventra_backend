@@ -130,29 +130,34 @@ export class ProfilesService {
       },
       select: { id: true, companyId: true, status: true, roleId: true },
     });
-    if (!target || target.companyId === null)
+    if (!target || target.companyId === null) {
       throw new NotFoundException('Member not found');
-    if (target.status !== ProfileStatus.PENDING_APPROVAL)
+    }
+    if (target.status !== ProfileStatus.PENDING_APPROVAL) {
       throw new BadRequestException('Member is not pending approval');
+    }
     // Pending with a role already = a company owner waiting for their company
     // to be approved (PATCH /companies/:id/approve). Approving them here as a
     // manager or staff would leave the company with no owner.
-    if (target.roleId !== null)
+    if (target.roleId !== null) {
       throw new BadRequestException(
         'This is a company owner awaiting company approval; approve the company instead',
       );
+    }
 
     const role = await this.prisma.role.findUnique({
       where: {
         id: dto.roleId,
       },
     });
-    if (!role || !isMemberRole(role.code))
+    if (!role || !isMemberRole(role.code)) {
       throw new BadRequestException('Invalid role for a member');
+    }
     // The shape before the permission: owners work across the whole
     // company, so an owner with a branch is refused whoever asks.
-    if (role.code === 'OWNER' && dto.cornerId !== null)
+    if (role.code === 'OWNER' && dto.cornerId !== null) {
       throw new BadRequestException('Owners work across the whole company');
+    }
 
     // A guest list, not a blacklist: the admin and owners approve freely,
     // managers within their limits, and every other role is refused, even
@@ -160,19 +165,22 @@ export class ProfilesService {
     const isAdminOrOwner =
       caller.roleCode === 'ADMIN' || caller.roleCode === 'OWNER';
     if (!isAdminOrOwner) {
-      if (caller.roleCode !== 'MANAGER')
+      if (caller.roleCode !== 'MANAGER') {
         throw new ForbiddenException(
           'Only owners and managers can approve members',
         );
-      if (role.code !== 'STAFF')
+      }
+      if (role.code !== 'STAFF') {
         throw new ForbiddenException('Managers can approve only as staff');
+      }
       // cornerId null is no branch at all, so never one of theirs.
       const intoTheirBranch =
         dto.cornerId !== null && caller.branchIds.includes(dto.cornerId);
-      if (!intoTheirBranch)
+      if (!intoTheirBranch) {
         throw new ForbiddenException(
           'Managers can approve only into their own branch',
         );
+      }
     }
 
     const companyId = target.companyId;
@@ -185,7 +193,9 @@ export class ProfilesService {
           cornerId,
           companyId,
         );
-        if (!isLive) throw new NotFoundException('Branch not found');
+        if (!isLive) {
+          throw new NotFoundException('Branch not found');
+        }
       }
 
       // Still a pending newcomer? If someone approved them a moment ago,
@@ -202,8 +212,9 @@ export class ProfilesService {
           status: ProfileStatus.ACTIVE,
         },
       });
-      if (approved.count === 0)
+      if (approved.count === 0) {
         throw new ConflictException('This member was just changed; reload');
+      }
 
       if (cornerId !== null) {
         // Their first assignment. The partial unique index allows one live
@@ -214,8 +225,9 @@ export class ProfilesService {
           skipDuplicates: true,
           select: { id: true },
         });
-        if (started.length === 0)
+        if (started.length === 0) {
           throw new ConflictException('Already in this branch');
+        }
       }
 
       await this.history.record(transaction, [
@@ -252,8 +264,9 @@ export class ProfilesService {
     dto: ChangeRoleDto,
   ): Promise<ProfileView> {
     const target = await this.findTarget(caller, profileId);
-    if (target.status !== ProfileStatus.ACTIVE)
+    if (target.status !== ProfileStatus.ACTIVE) {
       throw new BadRequestException('Only active members can be changed');
+    }
 
     // A null cornerId still counts as sent, so it's refused for anything but
     // demoting an owner. For a demoted owner, not sent and null both mean
@@ -266,7 +279,9 @@ export class ProfilesService {
       requestedRole: dto.role,
       cornerIdSent: cornerIdSent,
     });
-    if (decision === 'noop') return this.toView(target);
+    if (decision === 'noop') {
+      return this.toView(target);
+    }
 
     // Role ids differ between databases; the code is the stable name.
     const role = await this.prisma.role.findUniqueOrThrow({
@@ -292,8 +307,9 @@ export class ProfilesService {
             deletedAt: null,
           },
         });
-        if (activeOwners < 2)
+        if (activeOwners < 2) {
           throw new ConflictException('A company needs at least one owner');
+        }
       }
 
       if (landingCornerId !== null) {
@@ -302,7 +318,9 @@ export class ProfilesService {
           landingCornerId,
           target.companyId,
         );
-        if (!isLive) throw new NotFoundException('Branch not found');
+        if (!isLive) {
+          throw new NotFoundException('Branch not found');
+        }
       }
 
       // The where repeats what we read: if anyone changed this member in
@@ -319,8 +337,9 @@ export class ProfilesService {
         },
         data: { roleId: role.id },
       });
-      if (changed.count === 0)
+      if (changed.count === 0) {
         throw new ConflictException('This member was just changed; reload');
+      }
 
       const branchChanges = await this.applyBranchDecision(
         transaction,
@@ -381,7 +400,9 @@ export class ProfilesService {
         },
       },
     });
-    if (!person) throw new NotFoundException('Member not found');
+    if (!person) {
+      throw new NotFoundException('Member not found');
+    }
 
     const isSelf = person.id === caller.id;
     const isAdminOrOwner =
@@ -393,8 +414,9 @@ export class ProfilesService {
       person.branches.some((assignment) =>
         caller.branchIds.includes(assignment.companyStoreId),
       );
-    if (!isSelf && !isAdminOrOwner && !sharesABranch)
+    if (!isSelf && !isAdminOrOwner && !sharesABranch) {
       throw new ForbiddenException("You cannot read this member's history");
+    }
 
     return this.history.page({ profileId: person.id }, query);
   }
@@ -440,8 +462,9 @@ export class ProfilesService {
       row.companyId === null ||
       roleCode === undefined ||
       !isMemberRole(roleCode)
-    )
+    ) {
       return null;
+    }
     return { ...row, companyId: row.companyId, roleCode: roleCode };
   }
 
@@ -455,7 +478,9 @@ export class ProfilesService {
     profileId: string,
   ): Promise<MemberRow> {
     const target = await this.findMember(caller, profileId);
-    if (!target) throw new NotFoundException('Member not found');
+    if (!target) {
+      throw new NotFoundException('Member not found');
+    }
     return target;
   }
 
@@ -467,8 +492,9 @@ export class ProfilesService {
   private branchFilter(
     cornerId: string,
   ): Prisma.ProfileBranchListRelationFilter {
-    if (cornerId === 'none')
+    if (cornerId === 'none') {
       return { none: { deletedAt: null, companyStore: { deletedAt: null } } };
+    }
     return {
       some: {
         companyStoreId: cornerId,
@@ -530,13 +556,15 @@ export class ProfilesService {
           skipDuplicates: true,
           select: { id: true },
         });
-        if (started.length === 0)
+        if (started.length === 0) {
           throw new ConflictException('Already in this branch');
+        }
       }
       branchChanges = [{ fromCornerId: null, toCornerId: landingCornerId }];
     }
-    if (branchChanges.length === 0)
+    if (branchChanges.length === 0) {
       return [{ fromCornerId: null, toCornerId: null }];
+    }
     return branchChanges;
   }
 

@@ -24,7 +24,9 @@ export class StoresService {
 
   async findOne(id: string) {
     const store = await this.findActive(id);
-    if (!store) throw new NotFoundException('Store not found');
+    if (!store) {
+      throw new NotFoundException('Store not found');
+    }
     return store;
   }
 

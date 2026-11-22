@@ -83,7 +83,9 @@ export class GoogleVerifier implements SocialIdentityVerifier {
     providerUserId: string;
     refreshToken: string | null;
   }): Promise<void> {
-    if (login.refreshToken === null) return;
+    if (login.refreshToken === null) {
+      return;
+    }
     const response = await fetch(GOOGLE_REVOKE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

@@ -50,16 +50,23 @@ export function decideRoleChange(input: {
   // 1. The shape of the request: a branch only makes sense for an owner
   //    being demoted (it's where they land). Checked before who is asking,
   //    so a malformed request gets the same 400 from anyone.
-  if (input.cornerIdSent && !isOwnerDemotion)
+  if (input.cornerIdSent && !isOwnerDemotion) {
     throw new BadRequestException('cornerId is only for demoting an owner');
+  }
 
   // 2. Nothing to change.
-  if (input.requestedRole === input.targetRole) return 'noop';
+  if (input.requestedRole === input.targetRole) {
+    return 'noop';
+  }
 
   // 3. The platform admin: every change. Demoting an owner still counts owners.
   if (input.callerRole === 'ADMIN') {
-    if (isOwnerDemotion) return DEMOTE_OWNER;
-    if (input.requestedRole === 'OWNER') return CLEAR_BRANCH;
+    if (isOwnerDemotion) {
+      return DEMOTE_OWNER;
+    }
+    if (input.requestedRole === 'OWNER') {
+      return CLEAR_BRANCH;
+    }
     return KEEP_BRANCH;
   }
 
@@ -67,11 +74,14 @@ export function decideRoleChange(input: {
   //    themselves goes through the same owner count as the admin's demotion.
   if (input.callerRole === 'OWNER') {
     if (input.targetRole === 'OWNER') {
-      if (!input.isSelf)
+      if (!input.isSelf) {
         throw new ForbiddenException("Owners cannot change an owner's role");
+      }
       return DEMOTE_OWNER;
     }
-    if (input.requestedRole === 'OWNER') return CLEAR_BRANCH;
+    if (input.requestedRole === 'OWNER') {
+      return CLEAR_BRANCH;
+    }
     return KEEP_BRANCH;
   }
 
@@ -82,7 +92,9 @@ export function decideRoleChange(input: {
       input.isSelf &&
       input.targetRole === 'MANAGER' &&
       input.requestedRole === 'STAFF';
-    if (isSteppingDown) return KEEP_BRANCH;
+    if (isSteppingDown) {
+      return KEEP_BRANCH;
+    }
     throw new ForbiddenException('Managers can only step down themselves');
   }
 

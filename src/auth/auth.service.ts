@@ -98,7 +98,9 @@ export class AuthService {
   private async isLoginEmailTaken(
     credentials: AccountSignupCredentials,
   ): Promise<boolean> {
-    if (credentials.type !== 'password') return false;
+    if (credentials.type !== 'password') {
+      return false;
+    }
     const existing = await this.prisma.accountLoginMethod.findFirst({
       where: { email: credentials.email },
     });
@@ -191,8 +193,12 @@ export class AuthService {
       this.isLoginEmailTaken(credentials),
       this.findPhoneOwner(phone),
     ]);
-    if (emailTaken) throw new ConflictException('Email already registered');
-    if (phoneTaken) throw new ConflictException('Phone already registered');
+    if (emailTaken) {
+      throw new ConflictException('Email already registered');
+    }
+    if (phoneTaken) {
+      throw new ConflictException('Phone already registered');
+    }
 
     const passwordHash = await this.passwordHashFor(credentials); // outside: argon2 is slow
 
@@ -234,18 +240,22 @@ export class AuthService {
       },
     });
 
-    if (!loginMethod?.passwordHash)
+    if (!loginMethod?.passwordHash) {
       throw new UnauthorizedException('Invalid credentials');
+    }
 
     const valid = await this.passwordService.verify(
       loginMethod.passwordHash,
       password,
     );
-    if (!valid) throw new UnauthorizedException('Invalid credentials');
+    if (!valid) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
 
     const account = loginMethod.account;
-    if (account.deletedAt)
+    if (account.deletedAt) {
       throw new UnauthorizedException('Account cannot sign in');
+    }
 
     // Which company opens: the last one used, if it can still be opened.
     // None at all (no company yet, or every one left) still signs in: the
@@ -278,7 +288,9 @@ export class AuthService {
         account: { select: { deletedAt: true, lastProfileId: true } },
       },
     });
-    if (!stored) throw new UnauthorizedException('Invalid refresh token');
+    if (!stored) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
 
     if (stored.revokedAt) {
       // every session of the person, whichever company each had open
@@ -345,7 +357,9 @@ export class AuthService {
       dto.profileId,
     );
     // checked BEFORE anything is revoked: a wrong id leaves the session as it was
-    if (!profile) throw new NotFoundException('Company profile not found');
+    if (!profile) {
+      throw new NotFoundException('Company profile not found');
+    }
 
     await this.revokeSession(session.tokenHash);
     // Only switching writes this: a refresh that had to fall back must not

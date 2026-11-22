@@ -83,7 +83,9 @@ export function checkNonce(
   nonce: string | undefined,
   options: { required: boolean },
 ): void {
-  if (payload.nonce === undefined && !options.required) return;
+  if (payload.nonce === undefined && !options.required) {
+    return;
+  }
   if (nonce === undefined || payload.nonce !== nonceClaimFor(nonce)) {
     throw new UnauthorizedException('Invalid social credential');
   }

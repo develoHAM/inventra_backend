@@ -49,15 +49,21 @@ export class OrdersService {
   ): Promise<CreateOrderDto> {
     const ext = file.originalname.split('.').pop()?.toLowerCase();
     const format = ext === 'csv' ? 'csv' : ext === 'xlsx' ? 'xlsx' : null;
-    if (!format) throw new BadRequestException('File must be .csv or .xlsx');
+    if (!format) {
+      throw new BadRequestException('File must be .csv or .xlsx');
+    }
 
     const rows = await this.spreadsheet.parse(format, file.buffer);
-    if (rows.length === 0) throw new BadRequestException('The file is empty');
-    if (rows[0].length !== this.ORDER_EXPORT_COLUMNS.length)
+    if (rows.length === 0) {
+      throw new BadRequestException('The file is empty');
+    }
+    if (rows[0].length !== this.ORDER_EXPORT_COLUMNS.length) {
       throw new BadRequestException('Unexpected column layout');
+    }
     const dataRows = rows.slice(1);
-    if (dataRows.length === 0)
+    if (dataRows.length === 0) {
       throw new BadRequestException('The file has no data rows');
+    }
 
     const titleIdx = this.orderColIndex('title');
     const descIdx = this.orderColIndex('description');
@@ -68,32 +74,38 @@ export class OrdersService {
     const errors: { row: number; error: string }[] = [];
 
     const title = (dataRows[0][titleIdx] ?? '').trim();
-    if (!title) errors.push({ row: 2, error: 'Title is required' });
-    else if (title.length > 255)
+    if (!title) {
+      errors.push({ row: 2, error: 'Title is required' });
+    } else if (title.length > 255) {
       errors.push({ row: 2, error: 'Title exceeds 255 characters' });
+    }
     const descriptionRaw = (dataRows[0][descIdx] ?? '').trim();
     const orderDate = (dataRows[0][dateIdx] ?? '').trim();
-    if (!orderDate || Number.isNaN(Date.parse(orderDate)))
+    if (!orderDate || Number.isNaN(Date.parse(orderDate))) {
       errors.push({ row: 2, error: 'Invalid order date' });
+    }
 
     // one file = one order: every later data row must repeat the same header cells
     dataRows.slice(1).forEach((dataRow, index) => {
       const line = index + 3; // rows 3..N (first data row was line 2)
-      if ((dataRow[titleIdx] ?? '').trim() !== title)
+      if ((dataRow[titleIdx] ?? '').trim() !== title) {
         errors.push({
           row: line,
           error: 'Title differs from the first data row',
         });
-      if ((dataRow[descIdx] ?? '').trim() !== descriptionRaw)
+      }
+      if ((dataRow[descIdx] ?? '').trim() !== descriptionRaw) {
         errors.push({
           row: line,
           error: 'Description differs from the first data row',
         });
-      if ((dataRow[dateIdx] ?? '').trim() !== orderDate)
+      }
+      if ((dataRow[dateIdx] ?? '').trim() !== orderDate) {
         errors.push({
           row: line,
           error: 'Order Date differs from the first data row',
         });
+      }
     });
 
     const barcodes = dataRows.map((dataRow) =>
@@ -165,26 +177,30 @@ export class OrdersService {
       });
     });
 
-    if (errors.length > 0)
+    if (errors.length > 0) {
       throw new BadRequestException({
         message: 'Import failed',
         errors: errors,
       });
+    }
 
     const dto: CreateOrderDto = {
       title: title,
       orderDate: orderDate,
       items: items,
     } as CreateOrderDto;
-    if (descriptionRaw) dto.description = descriptionRaw;
+    if (descriptionRaw) {
+      dto.description = descriptionRaw;
+    }
     return dto;
   }
 
   private async validateItems(cornerId: string, items: OrderItemDto[]) {
     const placementIds = items.map((item) => item.companyStoreProductId);
     const uniquePlacementIds = new Set(placementIds);
-    if (uniquePlacementIds.size !== placementIds.length)
+    if (uniquePlacementIds.size !== placementIds.length) {
       throw new BadRequestException('Duplicate product in order items');
+    }
 
     const livePlacements = await this.prisma.companyStoreProduct.findMany({
       where: {
@@ -194,10 +210,11 @@ export class OrdersService {
       },
       select: { id: true },
     });
-    if (livePlacements.length !== uniquePlacementIds.size)
+    if (livePlacements.length !== uniquePlacementIds.size) {
       throw new BadRequestException(
         'One or more items are not placements on this corner',
       );
+    }
   }
 
   private async getOrder(cornerId: string, orderId: string) {
@@ -205,7 +222,9 @@ export class OrdersService {
       where: { id: orderId, companyStoreId: cornerId, deletedAt: null },
       include: { orderItems: true },
     });
-    if (!order) throw new NotFoundException('Order not found');
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
     return order;
   }
 
@@ -272,7 +291,9 @@ export class OrdersService {
   ) {
     await this.corners.assertWorksCorner(caller, cornerId);
     await this.getOrder(cornerId, orderId);
-    if (dto.items) await this.validateItems(cornerId, dto.items);
+    if (dto.items) {
+      await this.validateItems(cornerId, dto.items);
+    }
 
     return this.prisma.$transaction(async (tx) => {
       await tx.order.update({
@@ -340,7 +361,9 @@ export class OrdersService {
         },
       },
     });
-    if (!order) throw new NotFoundException('Order not found');
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
 
     const rows = order.orderItems.map((item) => ({
       orderId: order.id,

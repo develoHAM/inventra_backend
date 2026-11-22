@@ -48,7 +48,9 @@ export class ReservationExpiryService {
             where: { id: reservation.id, status: ReservationStatus.RESERVED },
             data: { status: ReservationStatus.EXPIRED, expiredAt: now },
           });
-          if (count === 0) return false;
+          if (count === 0) {
+            return false;
+          }
 
           // RELEASE only raises available stock, so it can never cross below
           // target — no stock alert to collect.
@@ -64,7 +66,9 @@ export class ReservationExpiryService {
           );
           return true;
         });
-        if (released) releasedCount += 1;
+        if (released) {
+          releasedCount += 1;
+        }
       } catch (error) {
         this.logger.error(
           `Failed to expire reservation ${reservation.id}`,

@@ -39,8 +39,9 @@ export class CornersService {
     const corner = await this.findOne(caller, cornerId); // company-scoped → 404
     const worksAcrossCompany =
       caller.roleCode === 'OWNER' || caller.roleCode === 'ADMIN';
-    if (!worksAcrossCompany && !caller.branchIds.includes(cornerId))
+    if (!worksAcrossCompany && !caller.branchIds.includes(cornerId)) {
       throw new ForbiddenException('You can only work in your own branches');
+    }
     return corner;
   }
 
@@ -49,7 +50,9 @@ export class CornersService {
     const companyId = this.ownership.resolveTargetCompany(caller, requested);
 
     const store = await this.stores.findActive(data.storeId);
-    if (!store) throw new BadRequestException('Invalid store');
+    if (!store) {
+      throw new BadRequestException('Invalid store');
+    }
 
     return this.prisma.companyStore.create({
       data: { ...data, companyId: companyId },
@@ -88,7 +91,9 @@ export class CornersService {
         deletedAt: null,
       },
     });
-    if (!corner) throw new NotFoundException('Corner not found');
+    if (!corner) {
+      throw new NotFoundException('Corner not found');
+    }
     return corner;
   }
 
@@ -106,10 +111,11 @@ export class CornersService {
       caller.roleCode === 'ADMIN' || caller.roleCode === 'OWNER';
     const managesThisBranch =
       caller.roleCode === 'MANAGER' && caller.branchIds.includes(corner.id);
-    if (!isAdminOrOwner && !managesThisBranch)
+    if (!isAdminOrOwner && !managesThisBranch) {
       throw new ForbiddenException(
         "Only the owners and this branch's managers can read its history",
       );
+    }
 
     // Arrivals and departures: rows where the branch is the "from" or the
     // "to". A promotion inside A (stored "from A to A") shows in A.
@@ -148,7 +154,9 @@ export class CornersService {
         where: { id: id, deletedAt: null },
         data: { deletedAt: new Date(), deletedByProfileId: caller.id },
       });
-      if (deleted.count === 0) throw new NotFoundException('Corner not found');
+      if (deleted.count === 0) {
+        throw new NotFoundException('Corner not found');
+      }
 
       // One statement ends the assignments AND reports exactly which it
       // ended, so the history and the notifications can't include someone

@@ -26,7 +26,9 @@ export async function generateUniqueJoinCode(
       where: { joinCode: joinCode },
       select: { id: true },
     });
-    if (!taken) return joinCode;
+    if (!taken) {
+      return joinCode;
+    }
   }
   throw new InternalServerErrorException(
     'Could not generate a unique join code',

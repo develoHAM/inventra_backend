@@ -122,7 +122,9 @@ export class LoginMethodsService {
     if (holder?.accountId === accountId) {
       return 'This account is already linked to you';
     }
-    if (holder) return 'This account is linked to another user';
+    if (holder) {
+      return 'This account is linked to another user';
+    }
     return 'You already have a login with this provider; unlink it first';
   }
 
@@ -147,7 +149,9 @@ export class LoginMethodsService {
     if (ownPasswordLogin) {
       throw new ConflictException('You already have a password login');
     }
-    if (emailInUse) throw new ConflictException('Email already registered');
+    if (emailInUse) {
+      throw new ConflictException('Email already registered');
+    }
 
     const passwordHash = await this.passwords.hash(dto.password); // slow: outside the transaction
 
@@ -216,7 +220,9 @@ export class LoginMethodsService {
       const target = await transaction.accountLoginMethod.findFirst({
         where: { id: loginMethodId, accountId: accountId },
       });
-      if (!target) return null;
+      if (!target) {
+        return null;
+      }
 
       const count = await transaction.accountLoginMethod.count({
         where: { accountId: accountId },
@@ -229,7 +235,9 @@ export class LoginMethodsService {
       await transaction.accountLoginMethod.delete({ where: { id: target.id } });
       return target;
     });
-    if (!removed) throw new NotFoundException('Login method not found');
+    if (!removed) {
+      throw new NotFoundException('Login method not found');
+    }
 
     await this.disconnectFromProvider(removed);
   }
@@ -242,7 +250,9 @@ export class LoginMethodsService {
     refreshToken: string | null;
   }): Promise<void> {
     const provider = SOCIAL_PROVIDERS.find((name) => name === removed.method);
-    if (!provider || removed.providerUserId === null) return; // a password login
+    if (!provider || removed.providerUserId === null) {
+      return; // a password login
+    }
     try {
       await this.verifiers[provider].disconnect({
         providerUserId: removed.providerUserId,

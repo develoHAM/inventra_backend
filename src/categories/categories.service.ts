@@ -29,7 +29,9 @@ export class CategoriesService {
         deletedAt: null,
       },
     });
-    if (!category) throw new NotFoundException('Category not found');
+    if (!category) {
+      throw new NotFoundException('Category not found');
+    }
     return category;
   }
 

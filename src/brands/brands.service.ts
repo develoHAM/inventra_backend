@@ -35,7 +35,9 @@ export class BrandsService {
   private async present<T extends { logoUrl: string | null }>(
     brand: T,
   ): Promise<T> {
-    if (!brand.logoUrl) return brand;
+    if (!brand.logoUrl) {
+      return brand;
+    }
     return {
       ...brand,
       logoUrl: await this.storage.presignGetUrl(brand.logoUrl),
@@ -50,7 +52,9 @@ export class BrandsService {
         deletedAt: null,
       },
     });
-    if (!brand) throw new NotFoundException('Brand not found');
+    if (!brand) {
+      throw new NotFoundException('Brand not found');
+    }
     return brand;
   }
 
@@ -102,7 +106,9 @@ export class BrandsService {
     const brand = await this.findOneRaw(caller, id);
     const key = this.logoKey(id, file.mimetype);
     await this.storage.putObject(key, file.buffer, file.mimetype);
-    if (brand.logoUrl) await this.storage.deleteObject(brand.logoUrl);
+    if (brand.logoUrl) {
+      await this.storage.deleteObject(brand.logoUrl);
+    }
     const updated = await this.prisma.brand.update({
       where: {
         id: id,
@@ -127,11 +133,15 @@ export class BrandsService {
 
   async confirmLogo(caller: AuthProfile, id: number, dto: ConfirmUploadDto) {
     const brand = await this.findOneRaw(caller, id);
-    if (!dto.key.startsWith(`brands/${id}/`))
+    if (!dto.key.startsWith(`brands/${id}/`)) {
       throw new BadRequestException('Key does not belong to this brand');
-    if (!(await this.storage.objectExists(dto.key)))
+    }
+    if (!(await this.storage.objectExists(dto.key))) {
       throw new BadRequestException('Uploaded object not found');
-    if (brand.logoUrl) await this.storage.deleteObject(brand.logoUrl);
+    }
+    if (brand.logoUrl) {
+      await this.storage.deleteObject(brand.logoUrl);
+    }
     const updated = await this.prisma.brand.update({
       where: { id: id },
       data: { logoUrl: dto.key },

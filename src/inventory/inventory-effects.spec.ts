@@ -76,7 +76,9 @@ describe('EFFECTS', () => {
     ] as const) {
       const eff = EFFECTS[t];
       expect(eff.kind).toBe('delta');
-      if (eff.kind === 'delta') expect(eff.deltas[0].sign).toBe(-1);
+      if (eff.kind === 'delta') {
+        expect(eff.deltas[0].sign).toBe(-1);
+      }
     }
   });
 
