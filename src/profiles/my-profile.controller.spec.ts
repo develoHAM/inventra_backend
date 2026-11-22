@@ -6,6 +6,8 @@ import {
   PATH_METADATA,
 } from '@nestjs/common/constants';
 import { MyProfileController } from './my-profile.controller';
+import { MyProfileService } from './my-profile.service';
+import { LeavingService } from './leaving.service';
 import { ProfilesController } from './profiles.controller';
 import { ProfilesModule } from './profiles.module';
 import { ACCOUNT_ROUTE_KEY } from '../auth/decorators/account-route.decorator';
@@ -17,6 +19,7 @@ import type { AuthProfile } from '../auth/types/auth-profile';
 describe('MyProfileController', () => {
   let controller: MyProfileController;
   let myProfile: { updateMyProfile: jest.Mock; setMyContactEmail: jest.Mock };
+  let leaving: { preview: jest.Mock; leave: jest.Mock };
 
   const caller: AuthProfile = {
     id: 'profile-1',
@@ -36,7 +39,18 @@ describe('MyProfileController', () => {
       updateMyProfile: jest.fn().mockResolvedValue({ id: 'profile-1' }),
       setMyContactEmail: jest.fn().mockResolvedValue({ id: 'profile-1' }),
     };
-    controller = new MyProfileController(myProfile as any);
+    leaving = {
+      preview: jest
+        .fn()
+        .mockResolvedValue({ companyWillClose: false, owner: null }),
+      leave: jest
+        .fn()
+        .mockResolvedValue({ companyClosed: false, newOwner: null }),
+    };
+    controller = new MyProfileController(
+      myProfile as unknown as MyProfileService,
+      leaving as unknown as LeavingService,
+    );
   });
 
   it('lives at /profiles/me', () => {
@@ -51,9 +65,16 @@ describe('MyProfileController', () => {
     ).toBeUndefined();
     expect(metadata(ACCOUNT_ROUTE_KEY, 'updateMyProfile')).toBeUndefined();
     expect(metadata(ACCOUNT_ROUTE_KEY, 'setMyContactEmail')).toBeUndefined();
+    expect(metadata(ACCOUNT_ROUTE_KEY, 'leavePreview')).toBeUndefined();
+    expect(metadata(ACCOUNT_ROUTE_KEY, 'leave')).toBeUndefined();
   });
 
-  it.each(['updateMyProfile', 'setMyContactEmail'] as const)(
+  it.each([
+    'updateMyProfile',
+    'setMyContactEmail',
+    'leavePreview',
+    'leave',
+  ] as const)(
     '%s has no permission decorator, so a WAITING profile may use it (and it is not public)',
     (method) => {
       expect(metadata(REQUIRE_PERMISSIONS_KEY, method)).toBeUndefined();
@@ -75,6 +96,17 @@ describe('MyProfileController', () => {
       expect(metadata(HTTP_CODE_METADATA, method)).toBeUndefined(); // the default: 200
     },
   );
+
+  it('GET leave-preview: what leaving would need, answering 200', () => {
+    expect(metadata(METHOD_METADATA, 'leavePreview')).toBe(RequestMethod.GET);
+    expect(metadata(PATH_METADATA, 'leavePreview')).toBe('leave-preview');
+  });
+
+  it('POST leave answers 200 with a summary, not 201: nothing is created', () => {
+    expect(metadata(METHOD_METADATA, 'leave')).toBe(RequestMethod.POST);
+    expect(metadata(PATH_METADATA, 'leave')).toBe('leave');
+    expect(metadata(HTTP_CODE_METADATA, 'leave')).toBe(200);
+  });
 
   it('is registered BEFORE ProfilesController, so /profiles/me never falls into a /profiles/:id route', () => {
     const controllers = Reflect.getMetadata(
@@ -105,5 +137,23 @@ describe('MyProfileController', () => {
     await controller.setMyContactEmail(caller, dto);
 
     expect(myProfile.setMyContactEmail).toHaveBeenCalledWith(caller, dto);
+  });
+
+  it('GET leave-preview passes the open profile from the token', async () => {
+    await expect(controller.leavePreview(caller)).resolves.toEqual({
+      companyWillClose: false,
+      owner: null,
+    });
+    expect(leaving.preview).toHaveBeenCalledWith(caller);
+  });
+
+  it('POST leave passes the open profile from the token and the body', async () => {
+    const dto = { ownerSuccessorProfileId: 'profile-2' };
+
+    await expect(controller.leave(caller, dto)).resolves.toEqual({
+      companyClosed: false,
+      newOwner: null,
+    });
+    expect(leaving.leave).toHaveBeenCalledWith(caller, dto);
   });
 });

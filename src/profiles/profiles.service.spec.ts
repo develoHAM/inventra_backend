@@ -1311,7 +1311,11 @@ describe('ProfilesService', () => {
       const profiles = await service.list(owner, {});
 
       expect(prisma.profile.findMany).toHaveBeenCalledWith({
-        where: { companyId: 'company-1', deletedAt: null },
+        where: {
+          companyId: 'company-1',
+          deletedAt: null,
+          NOT: { status: { in: [ProfileStatus.DEACTIVATED] } }, // people who left
+        },
         select: {
           id: true,
           name: true,
@@ -1378,6 +1382,7 @@ describe('ProfilesService', () => {
       expect(whereSent()).toEqual({
         companyId: 'company-1',
         deletedAt: null,
+        NOT: { status: { in: [ProfileStatus.DEACTIVATED] } }, // people who left
         branches: {
           some: {
             companyStoreId: 'corner-a',
@@ -1394,6 +1399,7 @@ describe('ProfilesService', () => {
       expect(whereSent()).toEqual({
         companyId: 'company-1',
         deletedAt: null,
+        NOT: { status: { in: [ProfileStatus.DEACTIVATED] } }, // people who left
         branches: {
           none: { deletedAt: null, companyStore: { deletedAt: null } },
         },
@@ -1406,17 +1412,38 @@ describe('ProfilesService', () => {
       expect(whereSent()).toEqual({
         companyId: 'company-1',
         deletedAt: null,
+        NOT: { status: { in: [ProfileStatus.DEACTIVATED] } }, // people who left
         role: { code: 'MANAGER' },
       });
     });
 
-    it('filters by status', async () => {
+    it('filters by status: then nothing is hidden, the status decides', async () => {
       await service.list(owner, { status: ProfileStatus.PENDING_APPROVAL });
 
       expect(whereSent()).toEqual({
         companyId: 'company-1',
         deletedAt: null,
         status: ProfileStatus.PENDING_APPROVAL,
+      });
+    });
+
+    it('hides people who left (DEACTIVATED) unless asked for: someone who left and rejoined shows once', async () => {
+      await service.list(owner, {});
+
+      expect(whereSent()).toEqual({
+        companyId: 'company-1',
+        deletedAt: null,
+        NOT: { status: { in: [ProfileStatus.DEACTIVATED] } },
+      });
+    });
+
+    it('?status=DEACTIVATED shows the people who left', async () => {
+      await service.list(owner, { status: ProfileStatus.DEACTIVATED });
+
+      expect(whereSent()).toEqual({
+        companyId: 'company-1',
+        deletedAt: null,
+        status: ProfileStatus.DEACTIVATED,
       });
     });
 
@@ -1511,10 +1538,15 @@ describe('ProfilesService', () => {
 
         await service.list(staffCaller, {});
 
+        // both hidden statuses in ONE NOT: an object can't hold two NOT keys
         expect(whereSent()).toEqual({
           companyId: 'company-1',
           deletedAt: null,
-          NOT: { status: ProfileStatus.PENDING_APPROVAL },
+          NOT: {
+            status: {
+              in: [ProfileStatus.PENDING_APPROVAL, ProfileStatus.DEACTIVATED],
+            },
+          },
         });
       });
 
@@ -1529,7 +1561,7 @@ describe('ProfilesService', () => {
         expect(whereSent()).toEqual({
           companyId: 'company-1',
           deletedAt: null,
-          NOT: { status: ProfileStatus.PENDING_APPROVAL },
+          NOT: { status: { in: [ProfileStatus.PENDING_APPROVAL] } },
           status: ProfileStatus.PENDING_APPROVAL,
         });
       });
@@ -1540,7 +1572,10 @@ describe('ProfilesService', () => {
       ])('are shown to %s holding profiles.approve', async (_label, caller) => {
         await service.list(caller, {});
 
-        expect(whereSent()).not.toHaveProperty('NOT');
+        // only the people who left are hidden from them
+        expect(whereSent()).toHaveProperty('NOT', {
+          status: { in: [ProfileStatus.DEACTIVATED] },
+        });
       });
 
       it('stay hidden from a manager with no branch: they can approve no one', async () => {
@@ -1549,7 +1584,9 @@ describe('ProfilesService', () => {
         await service.list(managerWithoutBranch, {});
 
         expect(whereSent()).toHaveProperty('NOT', {
-          status: ProfileStatus.PENDING_APPROVAL,
+          status: {
+            in: [ProfileStatus.PENDING_APPROVAL, ProfileStatus.DEACTIVATED],
+          },
         });
       });
 
@@ -1558,7 +1595,9 @@ describe('ProfilesService', () => {
         await service.list(staffCaller, {});
 
         expect(whereSent()).toHaveProperty('NOT', {
-          status: ProfileStatus.PENDING_APPROVAL,
+          status: {
+            in: [ProfileStatus.PENDING_APPROVAL, ProfileStatus.DEACTIVATED],
+          },
         });
       });
 
@@ -1568,7 +1607,9 @@ describe('ProfilesService', () => {
         await service.list(manager, {});
 
         expect(whereSent()).toHaveProperty('NOT', {
-          status: ProfileStatus.PENDING_APPROVAL,
+          status: {
+            in: [ProfileStatus.PENDING_APPROVAL, ProfileStatus.DEACTIVATED],
+          },
         });
       });
     });

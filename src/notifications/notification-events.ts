@@ -7,6 +7,7 @@ export const NotificationEvent = {
   MEMBER_APPROVED: 'member.approved',
   MEMBER_MOVED: 'member.moved',
   MEMBER_ROLE_CHANGED: 'member.roleChanged',
+  MEMBER_LEFT: 'member.left',
   ORDER_CREATED: 'order.created',
   AUDIT_APPLIED: 'audit.applied',
   STOCK_BELOW_TARGET: 'stock.belowTarget',
@@ -44,6 +45,20 @@ export interface MemberRoleChangedEvent {
   memberProfileId: string;
   changedByProfileId: string | null; // null = changed by the system
   toRoleCode: MemberRoleCode;
+}
+
+/**
+ * Someone is out of the company: they left, were removed, or deleted their
+ * account. A snapshot taken in the transaction: after the commit their
+ * assignments are ended rows, so the event carries which ones just ended.
+ */
+export interface MemberLeftEvent {
+  companyId: string;
+  memberProfileId: string;
+  memberName: string;
+  cornerIds: string[]; // the branches whose assignments just ended
+  reason: 'LEFT_COMPANY' | 'REMOVED' | 'ACCOUNT_DELETED';
+  changedByProfileId: string; // the leaver, or the remover
 }
 
 /** About the sign-in itself, not a company: notified to the account. */

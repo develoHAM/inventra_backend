@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import { decideRoleChange } from './member-rules';
+import { decideRoleChange, pickSuccessor } from './member-rules';
 import type { MemberRoleCode, RoleChangeDecision } from './member-rules';
 
 /** One request, as the rules see it. Defaults: an owner promoting someone else's staff. */
@@ -119,4 +119,68 @@ describe('decideRoleChange', () => {
       ).toBe('noop');
     },
   );
+});
+
+describe('pickSuccessor', () => {
+  /** One candidate: who they are, when they joined, and their role. */
+  const candidate = (profileId: string, joined: string, roleCode: string) => ({
+    profileId: profileId,
+    createdAt: new Date(joined),
+    roleCode: roleCode,
+  });
+
+  it('a manager beats staff, even staff who joined earlier', () => {
+    expect(
+      pickSuccessor([
+        candidate('staff-early', '2026-01-01T00:00:00.000Z', 'STAFF'),
+        candidate('manager-late', '2026-06-01T00:00:00.000Z', 'MANAGER'),
+      ]),
+    ).toBe('manager-late');
+  });
+
+  it('among managers, the longest-serving wins', () => {
+    expect(
+      pickSuccessor([
+        candidate('manager-new', '2026-06-01T00:00:00.000Z', 'MANAGER'),
+        candidate('manager-old', '2026-02-01T00:00:00.000Z', 'MANAGER'),
+        candidate('staff-oldest', '2025-01-01T00:00:00.000Z', 'STAFF'),
+      ]),
+    ).toBe('manager-old');
+  });
+
+  it('with no manager, the longest-serving staff member wins', () => {
+    expect(
+      pickSuccessor([
+        candidate('staff-new', '2026-06-01T00:00:00.000Z', 'STAFF'),
+        candidate('staff-old', '2026-02-01T00:00:00.000Z', 'STAFF'),
+      ]),
+    ).toBe('staff-old');
+  });
+
+  it('the same role and the same moment: the lower id wins, whatever the input order', () => {
+    const sameMoment = '2026-03-01T00:00:00.000Z';
+    const first = candidate('profile-a', sameMoment, 'MANAGER');
+    const second = candidate('profile-b', sameMoment, 'MANAGER');
+
+    expect(pickSuccessor([second, first])).toBe('profile-a');
+    expect(pickSuccessor([first, second])).toBe('profile-a');
+  });
+
+  it("does not reorder the caller's list", () => {
+    const candidates = [
+      candidate('staff-1', '2026-01-01T00:00:00.000Z', 'STAFF'),
+      candidate('manager-1', '2026-06-01T00:00:00.000Z', 'MANAGER'),
+    ];
+
+    pickSuccessor(candidates);
+
+    expect(candidates.map((each) => each.profileId)).toEqual([
+      'staff-1',
+      'manager-1',
+    ]);
+  });
+
+  it('nobody to pick → null', () => {
+    expect(pickSuccessor([])).toBeNull();
+  });
 });

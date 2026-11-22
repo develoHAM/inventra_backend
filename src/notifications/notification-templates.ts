@@ -1,4 +1,5 @@
 import type { MemberRoleCode } from '../profiles/member-rules';
+import type { MemberLeftEvent } from './notification-events';
 
 export interface RenderedMessage {
   subject: string;
@@ -58,6 +59,17 @@ export const notificationTemplates = {
   ): RenderedMessage => ({
     subject: '[Inventra] 소속 지점이 삭제되었습니다',
     body: `${companyName}의 ${cornerName} 지점이 삭제되어 해당 지점 배정이 해제되었습니다.`,
+  }),
+  memberLeft: (
+    companyName: string,
+    memberName: string,
+    reason: MemberLeftEvent['reason'],
+  ): RenderedMessage => ({
+    subject: '[Inventra] 구성원이 회사를 떠났습니다',
+    body:
+      reason === 'REMOVED'
+        ? `${memberName}님이 ${companyName}의 구성원에서 제외되었습니다.`
+        : `${memberName}님이 ${companyName}을(를) 떠났습니다.`,
   }),
   memberRoleChanged: (
     companyName: string,

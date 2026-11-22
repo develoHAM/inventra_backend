@@ -11,6 +11,7 @@ import { ProfilePhotosController } from './profile-photos.controller';
 import { ProfilePhotosService } from './profile-photos.service';
 import { ProfilesController } from './profiles.controller';
 import { ProfilesService } from './profiles.service';
+import { LeavingService } from './leaving.service';
 
 /** Company profiles: who is where, in which role, their name, email and photo. */
 @Module({
@@ -33,6 +34,9 @@ import { ProfilesService } from './profiles.service';
     ProfileBranchesService,
     ProfilePhotosService,
     MyProfileService,
+    LeavingService,
   ],
+  // removal (here) and account deletion (its own module) run the same procedure
+  exports: [LeavingService],
 })
 export class ProfilesModule {}

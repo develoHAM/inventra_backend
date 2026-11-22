@@ -101,3 +101,29 @@ export function decideRoleChange(input: {
   // 6. Staff, or anyone else.
   throw new ForbiddenException('You cannot change member roles');
 }
+
+/**
+ * Who takes over when the last ACTIVE owner leaves without naming anyone:
+ * managers before staff, then the longest-serving (the profile's
+ * createdAt), then the lower id, so the same people always give the same
+ * answer (the preview's suggestion and the real pick agree). Pure on
+ * purpose: tested with plain arrays, and swapped here if the rule changes.
+ */
+export function pickSuccessor(
+  candidates: { profileId: string; createdAt: Date; roleCode: string }[],
+): string | null {
+  // sort() rearranges in place: copy first, so the caller's list stays as it was
+  const ranked = [...candidates].sort((first, second) => {
+    const firstRank = first.roleCode === 'MANAGER' ? 0 : 1;
+    const secondRank = second.roleCode === 'MANAGER' ? 0 : 1;
+    if (firstRank !== secondRank) {
+      return firstRank - secondRank; // managers first
+    }
+    const byTenure = first.createdAt.getTime() - second.createdAt.getTime();
+    if (byTenure !== 0) {
+      return byTenure; // the earliest joiner first
+    }
+    return first.profileId < second.profileId ? -1 : 1; // a fixed tie-break
+  });
+  return ranked[0]?.profileId ?? null;
+}

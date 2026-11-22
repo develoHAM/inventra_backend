@@ -260,7 +260,7 @@
 
 **Files:**
 - Modify: `src/profiles/member-rules.ts` (`pickSuccessor`), `src/profiles/profiles.service.ts` (the list hides people who left)
-- Create: `src/profiles/leaving.service.ts`, `src/profiles/leaving.ts` (types), `src/profiles/dto/leave-company.dto.ts`
+- Create: `src/profiles/leaving.service.ts` (with its types: no separate file), `src/profiles/dto/leave-company.dto.ts`
 - Modify: `src/profiles/{my-profile.controller,profiles.module}.ts`
 - Modify: `src/notifications/{notification-events,event-channels,notification-templates,notifications.listener}.ts`
 - Test: `member-rules.spec.ts`, `leaving.service.spec.ts`, `my-profile.controller.spec.ts`, `profiles.service.spec.ts`, `notifications.listener.spec.ts`, `event-channels.spec.ts`, `test/leaving.e2e-spec.ts` (new, `testPhones(18)`)
@@ -270,7 +270,7 @@
 - **Produces:**
   - **`pickSuccessor(candidates: { profileId: string; createdAt: Date; roleCode: string }[]): string | null`.** Order: MANAGER first, then `createdAt` ascending, then `profileId` ascending.
   - **`LeaveCompanyDto { ownerSuccessorProfileId?: string }`** (`@IsOptional @IsUUID`).
-  - **In `leaving.ts`:**
+  - **Exported from `leaving.service.ts`:**
     - `LeavePreview` (the spec's JSON: `{ companyWillClose: boolean; owner: { successorNeeded: boolean; candidates: { profileId: string; name: string; role: string }[]; defaultPick: string | null } | null }`);
     - `Successor { profileId: string; name: string; picked: 'CHOSEN' | 'AUTO' }`;
     - `LeaveSummary { companyClosed: boolean; newOwner: Successor | null }`;
@@ -278,7 +278,7 @@
   - **`LeavingService`:**
     - `preview(caller: AuthProfile): Promise<LeavePreview>`;
     - `leave(caller: AuthProfile, dto: LeaveCompanyDto): Promise<LeaveSummary>`;
-    - `leaveInTransaction(transaction: Prisma.TransactionClient, input: { profileId: string; actorProfileId: string; reason: 'LEFT_COMPANY' | 'REMOVED' | 'ACCOUNT_DELETED'; ownerSuccessorProfileId?: string }): Promise<LeaveOutcome>`. The statuses it accepts: `LEFT_COMPANY` ACTIVE or PENDING_APPROVAL; `REMOVED` ACTIVE or SUSPENDED; `ACCOUNT_DELETED` anything but DEACTIVATED.
+    - `leaveInTransaction(transaction: Prisma.TransactionClient, input: { profileId: string; companyId: string; actorProfileId: string; reason: 'LEFT_COMPANY' | 'REMOVED' | 'ACCOUNT_DELETED'; ownerSuccessorProfileId?: string }): Promise<LeaveOutcome>`. `companyId` comes from the caller (who already knows it), so the company lock is the very first statement; the re-read then checks the leaver is in that company. The statuses it accepts: `LEFT_COMPANY` ACTIVE or PENDING_APPROVAL; `REMOVED` ACTIVE or SUSPENDED; `ACCOUNT_DELETED` anything but DEACTIVATED.
   - **Routes** on `MyProfileController`: `GET /profiles/me/leave-preview`, `POST /profiles/me/leave` (`@HttpCode(200)`).
   - **Event:** `NotificationEvent.MEMBER_LEFT = 'member.left'` with `MemberLeftEvent`; channels `EMAIL_AND_PUSH`.
   - **The member list** leaves out `DEACTIVATED` profiles unless `query.status` is set.

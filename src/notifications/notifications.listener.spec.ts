@@ -473,6 +473,115 @@ describe('NotificationsListener', () => {
     });
   });
 
+  describe('member.left', () => {
+    const event = {
+      companyId: 'company-1',
+      memberProfileId: 'park',
+      memberName: 'Park',
+      cornerIds: ['corner-a', 'corner-b'],
+      reason: 'LEFT_COMPANY' as const,
+      changedByProfileId: 'park',
+    };
+
+    beforeEach(() => {
+      notifications.findCompanyOwnerIds.mockResolvedValue(['owner-1']);
+      notifications.findCornerRecipientIds
+        .mockResolvedValueOnce(['manager-a', 'owner-1'])
+        .mockResolvedValueOnce(['manager-b', 'owner-1']);
+    });
+
+    // notifyProfiles collapses the repeated owner (notifications.service.spec)
+    it('tells the owners and the managers of each branch they worked in, never the one who made the change', async () => {
+      await listener.handleMemberLeft(event);
+
+      expect(prisma.company.findUnique).toHaveBeenCalledWith({
+        where: { id: 'company-1' },
+        select: { name: true },
+      });
+      expect(notifications.findCompanyOwnerIds).toHaveBeenCalledWith(
+        'company-1',
+      );
+      expect(notifications.findCornerRecipientIds).toHaveBeenNthCalledWith(
+        1,
+        'corner-a',
+      );
+      expect(notifications.findCornerRecipientIds).toHaveBeenNthCalledWith(
+        2,
+        'corner-b',
+      );
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith({
+        profileIds: ['owner-1', 'manager-a', 'owner-1', 'manager-b', 'owner-1'],
+        excludeProfileId: 'park',
+        eventType: NotificationEvent.MEMBER_LEFT,
+        message: notificationTemplates.memberLeft(
+          'UPL Co',
+          'Park',
+          'LEFT_COMPANY',
+        ),
+        data: { companyId: 'company-1' },
+      });
+    });
+
+    it('someone with no branch: only the owners hear of it', async () => {
+      await listener.handleMemberLeft({ ...event, cornerIds: [] });
+
+      expect(notifications.findCornerRecipientIds).not.toHaveBeenCalled();
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith(
+        expect.objectContaining({ profileIds: ['owner-1'] }),
+      );
+    });
+
+    it('a removal is worded as one, and the remover is not told', async () => {
+      await listener.handleMemberLeft({
+        ...event,
+        reason: 'REMOVED',
+        changedByProfileId: 'owner-1',
+      });
+
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith(
+        expect.objectContaining({
+          excludeProfileId: 'owner-1',
+          message: notificationTemplates.memberLeft(
+            'UPL Co',
+            'Park',
+            'REMOVED',
+          ),
+        }),
+      );
+    });
+
+    it('sends nothing when the company no longer exists', async () => {
+      prisma.company.findUnique.mockResolvedValue(null);
+
+      await listener.handleMemberLeft(event);
+
+      expect(notifications.notifyProfiles).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('memberLeft template', () => {
+    it.each(['LEFT_COMPANY', 'ACCOUNT_DELETED'] as const)(
+      '%s: they left the company',
+      (reason) => {
+        expect(
+          notificationTemplates.memberLeft('UPL Co', 'Park', reason),
+        ).toEqual({
+          subject: '[Inventra] 구성원이 회사를 떠났습니다',
+          body: 'Park님이 UPL Co을(를) 떠났습니다.',
+        });
+      },
+    );
+
+    it('REMOVED: they were removed from the company', () => {
+      expect(
+        notificationTemplates.memberLeft('UPL Co', 'Park', 'REMOVED'),
+      ).toEqual({
+        subject: '[Inventra] 구성원이 회사를 떠났습니다',
+        body: 'Park님이 UPL Co의 구성원에서 제외되었습니다.',
+      });
+    });
+  });
+
   describe('branch templates', () => {
     it('memberBranchAdded names the company and the branch', () => {
       expect(

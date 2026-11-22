@@ -1,0 +1,591 @@
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import { jest } from '@jest/globals';
+import request from 'supertest';
+import { AppModule } from '../src/app.module';
+import { PrismaService } from '../src/prisma/prisma.service';
+import { testPhones } from './helpers/phone';
+import { joinCompany, signUp, suiteAccounts } from './helpers/accounts';
+import type { MemberSetup, OwnerSetup, Session } from './helpers/accounts';
+
+// Owners get a contact email proven through Mailpit (a code email, queued
+// and delivered asynchronously), so Jest's 5 s default is too tight.
+jest.setTimeout(30_000);
+
+/**
+ * Leaving a company: POST /profiles/me/leave and its preview. Every block
+ * has its own company, so the blocks can't disturb each other.
+ */
+describe('Leaving (e2e)', () => {
+  let app: INestApplication;
+  let prisma: PrismaService;
+  // Nest types its HTTP server as any; supertest wants its own type
+  let http: Parameters<typeof request>[0];
+  let accounts: ReturnType<typeof suiteAccounts>;
+  let adminAccess: string;
+  let storeId: string;
+
+  // accounts.phone is unique across the shared DB: suite 18's own block
+  const nextPhone = testPhones(18);
+  const taxIdOf = (n: number) => `018-18-0000${n}`;
+
+  /** What POST /profiles/me/leave answers (supertest types every body as any). */
+  type LeaveSummaryBody = {
+    companyClosed: boolean;
+    newOwner: { profileId: string; name: string; picked: string } | null;
+  };
+  /** A member view, as GET /profiles lists it. */
+  type MemberBody = { id: string; name: string; status: string };
+
+  const auth = (token: string): [string, string] => [
+    'Authorization',
+    `Bearer ${token}`,
+  ];
+
+  const leave = (access: string, body: Record<string, unknown> = {}) =>
+    request(http)
+      .post('/profiles/me/leave')
+      .set(...auth(access))
+      .send(body);
+
+  const previewOf = (access: string) =>
+    request(http)
+      .get('/profiles/me/leave-preview')
+      .set(...auth(access));
+
+  /** The error message Nest sent. */
+  const messageOf = (response: { body: unknown }) =>
+    (response.body as { message: string }).message;
+
+  const roleIdOf = async (code: string) =>
+    (await prisma.role.findUniqueOrThrow({ where: { code: code } })).id;
+
+  const openBranch = async (access: string, name: string) => {
+    const response = await request(http)
+      .post('/corners')
+      .set(...auth(access))
+      .send({ storeId: storeId, name: name })
+      .expect(201);
+    return (response.body as { id: string }).id;
+  };
+
+  const addBranch = (access: string, profileId: string, cornerId: string) =>
+    request(http)
+      .post(`/profiles/${profileId}/branches`)
+      .set(...auth(access))
+      .send({ cornerId: cornerId });
+
+  const profileOf = (profileId: string) =>
+    prisma.profile.findUniqueOrThrow({
+      where: { id: profileId },
+      include: { role: true },
+    });
+
+  /** The branches someone works in now, straight from the database. */
+  const liveBranchIdsOf = async (profileId: string) =>
+    (
+      await prisma.profileBranch.findMany({
+        where: { profileId: profileId, deletedAt: null },
+      })
+    ).map((assignment) => assignment.companyStoreId);
+
+  const historyOf = (profileId: string) =>
+    prisma.membershipChange.findMany({
+      where: { profileId: profileId },
+      orderBy: { createdAt: 'asc' },
+    });
+
+  const waitFor = async <T>(
+    probe: () => Promise<T | null>,
+    timeoutMs = 10_000,
+  ): Promise<T> => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const value = await probe();
+      if (value) {
+        return value;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    throw new Error(`waitFor timed out after ${timeoutMs}ms`);
+  };
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+    app = moduleRef.createNestApplication();
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
+    await app.init();
+    prisma = app.get(PrismaService);
+    http = app.getHttpServer() as Parameters<typeof request>[0];
+    accounts = suiteAccounts(app, {
+      nextPhone: nextPhone,
+      emailDomain: 'lv.test',
+      taxIdOf: taxIdOf,
+      companyNameOf: (n) => `Leaving Co ${n}`,
+    });
+
+    const adminLogin = await request(http)
+      .post('/auth/login')
+      .send({
+        email: process.env.SEED_ADMIN_EMAIL,
+        password: process.env.SEED_ADMIN_PASSWORD,
+      })
+      .expect(201);
+    adminAccess = (adminLogin.body as { accessToken: string }).accessToken;
+
+    const store = await request(http)
+      .post('/stores')
+      .set(...auth(adminAccess))
+      .send({ name: 'Leaving Mall' })
+      .expect(201);
+    storeId = (store.body as { id: string }).id;
+  });
+
+  afterAll(async () => {
+    // Let this suite's emails finish sending before closing the app, so the
+    // queue isn't shut down mid-job ("Connection is closed").
+    await waitFor(async () => {
+      const pending = await prisma.notification.count({
+        where: {
+          status: 'PENDING',
+          recipientAddress: { endsWith: '@lv.test' },
+        },
+      });
+      return pending === 0 ? true : null;
+    });
+    await app.close();
+  });
+
+  describe('a staff member leaves', () => {
+    let owner: OwnerSetup;
+    let park: MemberSetup;
+    let branchId: string;
+    let parkWithoutCompany: Session; // after the refresh that found nothing to open
+
+    beforeAll(async () => {
+      owner = await accounts.registerOwner(adminAccess, 1, {
+        contactEmail: true,
+      });
+      branchId = await openBranch(owner.access, 'Branch 1');
+      park = await accounts.registerJoinedMember(
+        owner.access,
+        owner.joinCode,
+        'STAFF',
+        'park1',
+      );
+      await addBranch(owner.access, park.profileId, branchId).expect(201);
+    });
+
+    it('the preview: staff need no successor, and the company stays', async () => {
+      const preview = await previewOf(park.access).expect(200);
+
+      expect(preview.body).toEqual({ companyWillClose: false, owner: null });
+    });
+
+    it('leaves: 200 with a summary; DEACTIVATED, their branch ended, one LEFT_COMPANY row', async () => {
+      const left = await leave(park.access).expect(200);
+
+      expect(left.body).toEqual({ companyClosed: false, newOwner: null });
+      expect((await profileOf(park.profileId)).status).toBe('DEACTIVATED');
+      expect(await liveBranchIdsOf(park.profileId)).toEqual([]);
+      const leftRows = (await historyOf(park.profileId)).filter(
+        (row) => row.reason === 'LEFT_COMPANY',
+      );
+      expect(leftRows).toHaveLength(1);
+      expect(leftRows[0]).toMatchObject({
+        fromRoleId: await roleIdOf('STAFF'),
+        toRoleId: null,
+        fromCompanyStoreId: branchId,
+        toCompanyStoreId: null,
+        changedByProfileId: park.profileId,
+      });
+    });
+
+    it('their old access token gets 401 at once: the guard reads the status on every request (Review Focus 3)', async () => {
+      await request(http)
+        .get('/profiles')
+        .set(...auth(park.access))
+        .expect(401);
+    });
+
+    it('their refresh opens no company, and company routes then say "Choose a company first"', async () => {
+      const refreshed = await request(http)
+        .post('/auth/refresh')
+        .send({ refreshToken: park.refreshToken })
+        .expect(201);
+      const session = refreshed.body as {
+        accessToken: string;
+        refreshToken: string;
+        profile: unknown;
+      };
+      expect(session.profile).toBeNull();
+      parkWithoutCompany = {
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+      };
+
+      const refused = await request(http)
+        .get('/profiles')
+        .set(...auth(session.accessToken))
+        .expect(403);
+      expect(messageOf(refused)).toBe('Choose a company first');
+    });
+
+    it('the owner is told', async () => {
+      await waitFor(() =>
+        prisma.notification.findFirst({
+          where: {
+            recipientProfileId: owner.profileId,
+            eventType: 'member.left',
+            body: { contains: 'park1' },
+          },
+        }),
+      );
+    });
+
+    it('the member list hides the old profile; ?status=DEACTIVATED shows it', async () => {
+      const list = await request(http)
+        .get('/profiles')
+        .set(...auth(owner.access))
+        .expect(200);
+      expect(
+        (list.body as MemberBody[]).map((member) => member.id),
+      ).not.toContain(park.profileId);
+
+      const departed = await request(http)
+        .get('/profiles')
+        .query({ status: 'DEACTIVATED' })
+        .set(...auth(owner.access))
+        .expect(200);
+      expect(
+        (departed.body as MemberBody[]).map((member) => member.id),
+      ).toEqual([park.profileId]);
+    });
+
+    it('they can come back with the code: a new profile waits for approval, the old one stays a record, and the list shows them once', async () => {
+      const rejoined = await joinCompany(
+        app,
+        parkWithoutCompany,
+        owner.joinCode,
+        'park1',
+      );
+
+      expect(rejoined.profileId).not.toBe(park.profileId);
+      expect((await profileOf(rejoined.profileId)).status).toBe(
+        'PENDING_APPROVAL',
+      );
+      expect((await profileOf(park.profileId)).status).toBe('DEACTIVATED');
+      const list = await request(http)
+        .get('/profiles')
+        .set(...auth(owner.access))
+        .expect(200);
+      expect(
+        (list.body as MemberBody[]).filter((member) => member.name === 'park1'),
+      ).toEqual([expect.objectContaining({ id: rejoined.profileId })]);
+    });
+  });
+
+  describe('an owner names who takes over', () => {
+    let owner: OwnerSetup;
+    let lee: MemberSetup;
+    let kim: MemberSetup;
+    let outsider: OwnerSetup; // the owner of another company
+    let branchId: string;
+
+    beforeAll(async () => {
+      owner = await accounts.registerOwner(adminAccess, 2);
+      outsider = await accounts.registerOwner(adminAccess, 6);
+      branchId = await openBranch(owner.access, 'Branch 2');
+      lee = await accounts.registerJoinedMember(
+        owner.access,
+        owner.joinCode,
+        'MANAGER',
+        'lee2',
+      );
+      kim = await accounts.registerJoinedMember(
+        owner.access,
+        owner.joinCode,
+        'STAFF',
+        'kim2',
+      );
+      await addBranch(owner.access, lee.profileId, branchId).expect(201);
+      await addBranch(owner.access, kim.profileId, branchId).expect(201);
+    });
+
+    it('the preview lists who could take over, oldest first, and who the system would pick', async () => {
+      const preview = await previewOf(owner.access).expect(200);
+
+      expect(preview.body).toEqual({
+        companyWillClose: false,
+        owner: {
+          successorNeeded: true,
+          candidates: [
+            { profileId: lee.profileId, name: 'lee2', role: 'MANAGER' },
+            { profileId: kim.profileId, name: 'kim2', role: 'STAFF' },
+          ],
+          defaultPick: lee.profileId, // managers first
+        },
+      });
+    });
+
+    it('someone who cannot take over is 400, and the owner stays (Review Focus 5)', async () => {
+      const waiting = await accounts.pendingMember(owner.joinCode, 'waiting2');
+
+      for (const ineligibleId of [
+        waiting.profileId, // still waiting for approval
+        outsider.profileId, // another company's owner
+        owner.profileId, // the leaver themselves
+      ]) {
+        const refused = await leave(owner.access, {
+          ownerSuccessorProfileId: ineligibleId,
+        }).expect(400);
+        expect(messageOf(refused)).toBe(
+          'This person cannot take over as owner',
+        );
+      }
+
+      const ownerNow = await profileOf(owner.profileId);
+      expect(ownerNow.status).toBe('ACTIVE');
+      expect(ownerNow.role?.code).toBe('OWNER');
+      expect((await profileOf(waiting.profileId)).status).toBe(
+        'PENDING_APPROVAL',
+      );
+    });
+
+    it('a waiting newcomer withdraws their request: DEACTIVATED, nothing recorded', async () => {
+      const waiting = await accounts.pendingMember(owner.joinCode, 'waiting2b');
+
+      const left = await leave(waiting.access).expect(200);
+
+      expect(left.body).toEqual({ companyClosed: false, newOwner: null });
+      expect((await profileOf(waiting.profileId)).status).toBe('DEACTIVATED');
+      expect(await historyOf(waiting.profileId)).toEqual([]);
+    });
+
+    it('names Kim: Kim is the owner, works everywhere now (their branch ended), and the history says the leaver chose', async () => {
+      const left = await leave(owner.access, {
+        ownerSuccessorProfileId: kim.profileId,
+      }).expect(200);
+
+      expect(left.body as LeaveSummaryBody).toEqual({
+        companyClosed: false,
+        newOwner: { profileId: kim.profileId, name: 'kim2', picked: 'CHOSEN' },
+      });
+      const kimNow = await profileOf(kim.profileId);
+      expect(kimNow.role?.code).toBe('OWNER');
+      expect(kimNow.status).toBe('ACTIVE');
+      expect(await liveBranchIdsOf(kim.profileId)).toEqual([]);
+      const kimRows = await historyOf(kim.profileId);
+      expect(kimRows[kimRows.length - 1]).toMatchObject({
+        reason: 'ROLE_CHANGED',
+        fromRoleId: await roleIdOf('STAFF'),
+        toRoleId: await roleIdOf('OWNER'),
+        fromCompanyStoreId: branchId,
+        toCompanyStoreId: null,
+        changedByProfileId: owner.profileId,
+      });
+      expect((await profileOf(owner.profileId)).status).toBe('DEACTIVATED');
+    });
+
+    it("Kim's existing token now passes owner-only routes", async () => {
+      // Adding Lee to a branch they already work in gets past the permission
+      // check and is refused only for the data (409), not with a 403.
+      await addBranch(kim.access, lee.profileId, branchId).expect(409);
+    });
+  });
+
+  describe('the last owner leaves without naming anyone', () => {
+    let owner: OwnerSetup;
+    let earlyStaff: MemberSetup;
+    let firstManager: MemberSetup;
+
+    beforeAll(async () => {
+      owner = await accounts.registerOwner(adminAccess, 3);
+      // the order they join in is the order of their createdAt
+      earlyStaff = await accounts.registerJoinedMember(
+        owner.access,
+        owner.joinCode,
+        'STAFF',
+        'early3',
+      );
+      firstManager = await accounts.registerJoinedMember(
+        owner.access,
+        owner.joinCode,
+        'MANAGER',
+        'mgr3a',
+      );
+      await accounts.registerJoinedMember(
+        owner.access,
+        owner.joinCode,
+        'MANAGER',
+        'mgr3b',
+      );
+    });
+
+    it('the system picks the longest-serving manager over earlier staff: AUTO_PROMOTED, by nobody', async () => {
+      const left = await leave(owner.access).expect(200);
+
+      expect(left.body as LeaveSummaryBody).toEqual({
+        companyClosed: false,
+        newOwner: {
+          profileId: firstManager.profileId,
+          name: 'mgr3a',
+          picked: 'AUTO',
+        },
+      });
+      expect((await profileOf(firstManager.profileId)).role?.code).toBe(
+        'OWNER',
+      );
+      expect((await profileOf(earlyStaff.profileId)).role?.code).toBe('STAFF');
+      const managerRows = await historyOf(firstManager.profileId);
+      expect(managerRows[managerRows.length - 1]).toMatchObject({
+        reason: 'AUTO_PROMOTED',
+        fromRoleId: await roleIdOf('MANAGER'),
+        toRoleId: await roleIdOf('OWNER'),
+        changedByProfileId: null, // the system chose
+      });
+    });
+  });
+
+  describe('two owners leave at the same moment (Review Focus 2)', () => {
+    let owner: OwnerSetup;
+    let coOwner: MemberSetup;
+    let remaining: MemberSetup;
+
+    beforeAll(async () => {
+      owner = await accounts.registerOwner(adminAccess, 4);
+      coOwner = await accounts.pendingMember(owner.joinCode, 'co4');
+      await request(http)
+        .patch(`/profiles/${coOwner.profileId}/approve`)
+        .set(...auth(owner.access))
+        .send({ roleId: await roleIdOf('OWNER'), cornerId: null })
+        .expect(200);
+      remaining = await accounts.registerJoinedMember(
+        owner.access,
+        owner.joinCode,
+        'STAFF',
+        'staff4',
+      );
+    });
+
+    it('one of them hands over to the remaining member; the company never ends up with no owner', async () => {
+      // A smoke test: if the two requests happen not to overlap, the same
+      // outcome comes out with or without the lock. The unit tests prove the
+      // company lock comes first.
+      const results = await Promise.all([
+        leave(owner.access),
+        leave(coOwner.access),
+      ]);
+
+      expect(results.map((result) => result.status)).toEqual([200, 200]);
+      const summaries = results.map(
+        (result) => result.body as LeaveSummaryBody,
+      );
+      expect(
+        summaries.filter((summary) => summary.newOwner === null),
+      ).toHaveLength(1);
+      expect(
+        summaries.flatMap((summary) =>
+          summary.newOwner ? [summary.newOwner.profileId] : [],
+        ),
+      ).toEqual([remaining.profileId]);
+      const activeOwners = await prisma.profile.findMany({
+        where: {
+          companyId: owner.companyId,
+          role: { code: 'OWNER' },
+          status: 'ACTIVE',
+          deletedAt: null,
+        },
+      });
+      expect(activeOwners.map((profile) => profile.id)).toEqual([
+        remaining.profileId,
+      ]);
+    });
+  });
+
+  describe('a lone owner leaves: the company closes', () => {
+    let owner: OwnerSetup;
+    let waiting: MemberSetup;
+    let branchId: string;
+    let latecomer: Session; // signed up, no company
+
+    beforeAll(async () => {
+      owner = await accounts.registerOwner(adminAccess, 5);
+      branchId = await openBranch(owner.access, 'Branch 5');
+      waiting = await accounts.pendingMember(owner.joinCode, 'waiting5');
+      latecomer = await signUp(app, nextPhone, {
+        email: 'late5@lv.test',
+        password: 'password123',
+      });
+    });
+
+    it('the preview says the company would close: nobody could take over', async () => {
+      const preview = await previewOf(owner.access).expect(200);
+
+      expect(preview.body).toEqual({
+        companyWillClose: true,
+        owner: { successorNeeded: true, candidates: [], defaultPick: null },
+      });
+    });
+
+    it('leaving closes it: the company and its branches soft-deleted by the leaver, everyone DEACTIVATED', async () => {
+      const left = await leave(owner.access).expect(200);
+
+      expect(left.body).toEqual({ companyClosed: true, newOwner: null });
+      const company = await prisma.company.findUniqueOrThrow({
+        where: { id: owner.companyId },
+      });
+      expect(company.deletedAt).not.toBeNull();
+      expect(company.deletedByProfileId).toBe(owner.profileId);
+      const branch = await prisma.companyStore.findUniqueOrThrow({
+        where: { id: branchId },
+      });
+      expect(branch.deletedAt).not.toBeNull();
+      expect((await profileOf(owner.profileId)).status).toBe('DEACTIVATED');
+      expect((await profileOf(waiting.profileId)).status).toBe('DEACTIVATED');
+      const ownerRows = await historyOf(owner.profileId);
+      expect(ownerRows[ownerRows.length - 1]).toMatchObject({
+        reason: 'COMPANY_CLOSED',
+        toRoleId: null,
+        changedByProfileId: owner.profileId,
+      });
+    });
+
+    it('its invite code no longer works (404)', async () => {
+      await request(http)
+        .post('/me/companies/join')
+        .set(...auth(latecomer.accessToken))
+        .send({ joinCode: owner.joinCode, name: 'late5' })
+        .expect(404);
+    });
+
+    it('closing is final: its tax ID stays taken (409)', async () => {
+      const refused = await request(http)
+        .post('/me/companies')
+        .set(...auth(latecomer.accessToken))
+        .send({
+          companyName: 'Leaving Co 5 again',
+          taxId: taxIdOf(5),
+          ownerName: 'Late Five',
+        })
+        .expect(409);
+      expect(messageOf(refused)).toBe('Tax ID already registered');
+    });
+  });
+
+  it('the platform admin has no company to leave (403)', async () => {
+    const refused = await leave(adminAccess).expect(403);
+
+    expect(messageOf(refused)).toBe(
+      'The platform admin has no company to leave',
+    );
+  });
+});

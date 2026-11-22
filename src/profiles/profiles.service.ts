@@ -72,13 +72,23 @@ export class ProfilesService {
         caller.roleCode === 'OWNER' ||
         (caller.roleCode === 'MANAGER' && caller.branchIds.length > 0));
 
+    // Hidden unless asked for: people waiting for approval (from anyone who
+    // can't approve them, even when asked), and people who left (unless
+    // ?status= names a status), so someone who left and rejoined shows once.
+    // ONE NOT with a list: an object can't hold two NOT keys, and a second
+    // spread would silently replace the first.
+    const hiddenStatuses = [
+      ...(canApprove ? [] : [ProfileStatus.PENDING_APPROVAL]),
+      ...(query.status ? [] : [ProfileStatus.DEACTIVATED]),
+    ];
+
     const rows = await this.prisma.profile.findMany({
       where: {
         companyId: companyId,
         deletedAt: null,
-        ...(canApprove
-          ? {}
-          : { NOT: { status: ProfileStatus.PENDING_APPROVAL } }),
+        ...(hiddenStatuses.length > 0
+          ? { NOT: { status: { in: hiddenStatuses } } }
+          : {}),
         ...(query.cornerId
           ? { branches: this.branchFilter(query.cornerId) }
           : {}),

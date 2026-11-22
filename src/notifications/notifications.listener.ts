@@ -11,6 +11,7 @@ import type {
   CompanyRegisteredEvent,
   MemberApprovedEvent,
   MemberJoinRequestedEvent,
+  MemberLeftEvent,
   MemberMovedEvent,
   MemberRoleChangedEvent,
   OrderCreatedEvent,
@@ -152,6 +153,44 @@ export class NotificationsListener {
         event.change === 'ADDED'
           ? { companyId: member.company.id, cornerId: event.cornerId }
           : { companyId: member.company.id },
+    });
+  }
+
+  /**
+   * Someone is out of the company: the owners hear of it, and so do the
+   * managers of each branch they worked in. Never the one who made the
+   * change (the leaver, or the remover).
+   */
+  @OnEvent(NotificationEvent.MEMBER_LEFT)
+  async handleMemberLeft(event: MemberLeftEvent): Promise<void> {
+    const company = await this.prisma.company.findUnique({
+      where: { id: event.companyId },
+      select: { name: true },
+    });
+    if (!company) {
+      return;
+    }
+
+    const ownerIds = await this.notifications.findCompanyOwnerIds(
+      event.companyId,
+    );
+    // findCornerRecipientIds gives each branch's managers, then the owners
+    const branchRecipientIds = await Promise.all(
+      event.cornerIds.map((cornerId) =>
+        this.notifications.findCornerRecipientIds(cornerId),
+      ),
+    );
+    await this.notifications.notifyProfiles({
+      // owners appear in both lists; notifyProfiles sends one message per person
+      profileIds: [...ownerIds, ...branchRecipientIds.flat()],
+      excludeProfileId: event.changedByProfileId,
+      eventType: NotificationEvent.MEMBER_LEFT,
+      message: notificationTemplates.memberLeft(
+        company.name,
+        event.memberName,
+        event.reason,
+      ),
+      data: { companyId: event.companyId },
     });
   }
 
