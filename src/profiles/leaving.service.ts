@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,10 +14,12 @@ import {
 } from '../generated/prisma/enums';
 import { MembershipHistoryService } from '../membership-history/membership-history.service';
 import type { MembershipChangeInput } from '../membership-history/membership-change';
+import { OwnershipService } from '../authorization/ownership.service';
 import type { AuthProfile } from '../auth/types/auth-profile';
 import { NotificationEvent } from '../notifications/notification-events';
 import type {
   MemberLeftEvent,
+  MemberRemovedEvent,
   MemberRoleChangedEvent,
 } from '../notifications/notification-events';
 import type { NotificationEventName } from '../notifications/event-channels';
@@ -64,6 +67,7 @@ export class LeavingService {
     private readonly prisma: PrismaService,
     private readonly history: MembershipHistoryService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly ownership: OwnershipService,
   ) {}
 
   /** What leaving would need, without changing anything: a forecast, not a promise. */
@@ -174,6 +178,75 @@ export class LeavingService {
   }
 
   /**
+   * POST /profiles/:id/remove: an owner, or the platform admin, takes
+   * someone out of the company. The same procedure as leaving, with the
+   * remover as the actor.
+   */
+  async remove(caller: AuthProfile, profileId: string): Promise<void> {
+    // The role, not just the permission: a personal GRANT of profiles.remove
+    // gets a manager past the guard, but never past this.
+    if (caller.roleCode !== 'OWNER' && caller.roleCode !== 'ADMIN') {
+      throw new ForbiddenException(
+        'Only owners and the admin can remove members',
+      );
+    }
+    if (profileId === caller.id) {
+      throw new BadRequestException('To leave, use POST /profiles/me/leave');
+    }
+
+    // Scoped to the caller's company (the admin: any company). Another
+    // company's member is 404, never 403: we don't confirm they exist.
+    const target = await this.prisma.profile.findFirst({
+      where: {
+        id: profileId,
+        ...this.ownership.scopeToCompany(caller),
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        companyId: true,
+        status: true,
+        role: { select: { code: true } },
+      },
+    });
+    if (!target || target.companyId === null) {
+      throw new NotFoundException('Member not found');
+    }
+    if (caller.roleCode === 'OWNER' && target.role?.code === 'OWNER') {
+      throw new ForbiddenException('Owners cannot remove an owner');
+    }
+    // Checked last: nobody learns the state of someone they may not remove.
+    if (
+      target.status !== ProfileStatus.ACTIVE &&
+      target.status !== ProfileStatus.SUSPENDED
+    ) {
+      throw new BadRequestException('Only active members can be removed');
+    }
+    // The target's company, not the caller's: the admin has none. A const
+    // keeps the narrowing (not null) inside the closure below.
+    const companyId = target.companyId;
+
+    const outcome = await this.prisma.$transaction((transaction) =>
+      this.leaveInTransaction(transaction, {
+        profileId: target.id,
+        companyId: companyId,
+        actorProfileId: caller.id, // the remover
+        reason: 'REMOVED',
+      }),
+    );
+    // Only now, after the commit: the removed person first, then the rest.
+    const removed: MemberRemovedEvent = {
+      companyId: companyId,
+      memberProfileId: target.id,
+      removedByProfileId: caller.id,
+    };
+    this.eventEmitter.emit(NotificationEvent.MEMBER_REMOVED, removed);
+    for (const event of outcome.events) {
+      this.eventEmitter.emit(event.name, event.payload);
+    }
+  }
+
+  /**
    * The leave procedure, inside the caller's transaction (leaving, removal
    * and account deletion each open their own). Returns the events instead
    * of sending them: only the caller knows when its transaction commits.
@@ -264,6 +337,11 @@ export class LeavingService {
         if (input.ownerSuccessorProfileId !== undefined) {
           throw new BadRequestException('No owner successor is needed');
         }
+      } else if (input.reason === 'REMOVED') {
+        // Removing the last ACTIVE owner would hand the company to someone
+        // else, or close it. Counted under the lock, so a co-owner leaving at
+        // the same moment can't slip past this.
+        throw new ConflictException('A company needs at least one owner');
       } else {
         const rows = await transaction.profile.findMany({
           where: {

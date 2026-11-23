@@ -8,6 +8,7 @@ export const NotificationEvent = {
   MEMBER_MOVED: 'member.moved',
   MEMBER_ROLE_CHANGED: 'member.roleChanged',
   MEMBER_LEFT: 'member.left',
+  MEMBER_REMOVED: 'member.removed',
   ORDER_CREATED: 'order.created',
   AUDIT_APPLIED: 'audit.applied',
   STOCK_BELOW_TARGET: 'stock.belowTarget',
@@ -59,6 +60,16 @@ export interface MemberLeftEvent {
   cornerIds: string[]; // the branches whose assignments just ended
   reason: 'LEFT_COMPANY' | 'REMOVED' | 'ACCOUNT_DELETED';
   changedByProfileId: string; // the leaver, or the remover
+}
+
+/**
+ * Someone was removed from the company: told to them, though their profile
+ * is DEACTIVATED by then (member.left tells everyone else).
+ */
+export interface MemberRemovedEvent {
+  companyId: string;
+  memberProfileId: string;
+  removedByProfileId: string; // an owner, or the platform admin
 }
 
 /** About the sign-in itself, not a company: notified to the account. */

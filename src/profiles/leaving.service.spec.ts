@@ -2,12 +2,14 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { LeavingService } from './leaving.service';
 import type { LeaveOutcome } from './leaving.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { MembershipHistoryService } from '../membership-history/membership-history.service';
+import { OwnershipService } from '../authorization/ownership.service';
 import type { Prisma } from '../generated/prisma/client';
 import type { AuthProfile } from '../auth/types/auth-profile';
 import {
@@ -40,7 +42,7 @@ describe('LeavingService', () => {
   };
   let prisma: {
     $transaction: jest.Mock;
-    profile: { count: jest.Mock; findMany: jest.Mock };
+    profile: { count: jest.Mock; findMany: jest.Mock; findFirst: jest.Mock };
   };
   let history: { record: jest.Mock };
   let eventEmitter: { emit: jest.Mock };
@@ -181,7 +183,7 @@ describe('LeavingService', () => {
         timeline.push('commit');
         return result;
       }),
-      profile: { count: jest.fn(), findMany: jest.fn() },
+      profile: { count: jest.fn(), findMany: jest.fn(), findFirst: jest.fn() },
     };
     history = { record: jest.fn().mockResolvedValue(undefined) };
     eventEmitter = {
@@ -190,11 +192,14 @@ describe('LeavingService', () => {
         return true;
       }),
     };
-    // constructor order: (prisma, history, eventEmitter)
+    // constructor order: (prisma, history, eventEmitter, ownership). The
+    // real OwnershipService: it has no dependencies, and its scoping is what
+    // the removal lookup relies on.
     service = new LeavingService(
       prisma as unknown as PrismaService,
       history as unknown as MembershipHistoryService,
       eventEmitter as unknown as EventEmitter2,
+      new OwnershipService(),
     );
   });
 
@@ -579,9 +584,60 @@ describe('LeavingService', () => {
         );
         expect(tx.profile.updateMany).not.toHaveBeenCalled();
       });
+
+      it('the admin removes the owner: one REMOVED (OWNER, none) row by the admin, and member.left', async () => {
+        const outcome = await leaveInTransaction({
+          profileId: 'jisoo',
+          companyId: 'company-1',
+          actorProfileId: 'admin-1',
+          reason: 'REMOVED',
+        });
+
+        expect(tx.profile.findMany).not.toHaveBeenCalled();
+        expect(history.record).toHaveBeenCalledWith(tx, [
+          {
+            companyId: 'company-1',
+            profileId: 'jisoo',
+            reason: MembershipChangeReason.REMOVED,
+            fromRoleId: 2,
+            toRoleId: null,
+            fromCornerId: null,
+            toCornerId: null,
+            changedByProfileId: 'admin-1',
+          },
+        ]);
+        expect(outcome.summary).toEqual({
+          companyClosed: false,
+          newOwner: null,
+        });
+        expect(outcome.events.map((event) => event.name)).toEqual([
+          NotificationEvent.MEMBER_LEFT,
+        ]);
+      });
     });
 
     describe('the last ACTIVE owner', () => {
+      it('a removal never hands the company over or closes it: 409 after the count, nothing written', async () => {
+        await expect(
+          leaveInTransaction({
+            profileId: 'jisoo',
+            companyId: 'company-1',
+            actorProfileId: 'admin-1',
+            reason: 'REMOVED',
+          }),
+        ).rejects.toThrow(
+          new ConflictException('A company needs at least one owner'),
+        );
+        expect(timeline).toEqual([
+          'lock company',
+          'read leaver',
+          'count owners',
+        ]);
+        expect(tx.profile.findMany).not.toHaveBeenCalled();
+        expect(tx.profile.updateMany).not.toHaveBeenCalled();
+        expect(history.record).not.toHaveBeenCalled();
+      });
+
       it('reads the candidates: the ACTIVE managers and staff of the company, not the leaver', async () => {
         await leaveInTransaction({
           profileId: 'jisoo',
@@ -1087,6 +1143,198 @@ describe('LeavingService', () => {
         new ForbiddenException('The platform admin has no company to leave'),
       );
       expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('remove', () => {
+    // The target as the removal lookup returns them.
+    const leeTarget = {
+      id: 'lee',
+      companyId: 'company-1',
+      status: ProfileStatus.ACTIVE,
+      role: { code: 'MANAGER' },
+    };
+    const managerCaller: AuthProfile = {
+      id: 'lee',
+      accountId: 'account-of-lee',
+      companyId: 'company-1',
+      roleId: 3,
+      roleCode: 'MANAGER',
+      branchIds: ['corner-a'],
+      status: ProfileStatus.ACTIVE,
+    };
+    const REMOVAL_OUTCOME: LeaveOutcome = {
+      summary: { companyClosed: false, newOwner: null },
+      events: [
+        {
+          name: NotificationEvent.MEMBER_LEFT,
+          payload: { memberProfileId: 'lee', reason: 'REMOVED' },
+        },
+      ],
+    };
+
+    it('runs the procedure as a removal by the caller, then tells the removed person and the rest, only after the commit', async () => {
+      prisma.profile.findFirst.mockResolvedValue(leeTarget);
+      const procedure = jest
+        .spyOn(service, 'leaveInTransaction')
+        .mockImplementation(() => {
+          timeline.push('procedure');
+          return Promise.resolve(REMOVAL_OUTCOME);
+        });
+
+      await expect(service.remove(ownerCaller, 'lee')).resolves.toBeUndefined();
+
+      expect(prisma.profile.findFirst).toHaveBeenCalledWith({
+        where: { id: 'lee', companyId: 'company-1', deletedAt: null },
+        select: {
+          id: true,
+          companyId: true,
+          status: true,
+          role: { select: { code: true } },
+        },
+      });
+      expect(procedure).toHaveBeenCalledWith(tx, {
+        profileId: 'lee',
+        companyId: 'company-1',
+        actorProfileId: 'jisoo',
+        reason: 'REMOVED',
+      });
+      expect(eventEmitter.emit).toHaveBeenNthCalledWith(
+        1,
+        NotificationEvent.MEMBER_REMOVED,
+        {
+          companyId: 'company-1',
+          memberProfileId: 'lee',
+          removedByProfileId: 'jisoo',
+        },
+      );
+      expect(eventEmitter.emit).toHaveBeenNthCalledWith(
+        2,
+        NotificationEvent.MEMBER_LEFT,
+        { memberProfileId: 'lee', reason: 'REMOVED' },
+      );
+      expect(timeline).toEqual(['procedure', 'commit', 'emit', 'emit']);
+    });
+
+    it("the admin reaches any company: an unscoped lookup, and the procedure runs in the target's company", async () => {
+      prisma.profile.findFirst.mockResolvedValue({
+        id: 'jisoo',
+        companyId: 'company-1',
+        status: ProfileStatus.ACTIVE,
+        role: { code: 'OWNER' },
+      });
+      const procedure = jest
+        .spyOn(service, 'leaveInTransaction')
+        .mockResolvedValue(REMOVAL_OUTCOME);
+
+      await service.remove(adminCaller, 'jisoo');
+
+      expect(prisma.profile.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'jisoo', deletedAt: null } }),
+      );
+      expect(procedure).toHaveBeenCalledWith(tx, {
+        profileId: 'jisoo',
+        companyId: 'company-1',
+        actorProfileId: 'admin-1',
+        reason: 'REMOVED',
+      });
+    });
+
+    it('a SUSPENDED member can be removed: still a member, only blocked', async () => {
+      prisma.profile.findFirst.mockResolvedValue({
+        ...leeTarget,
+        status: ProfileStatus.SUSPENDED,
+      });
+      const procedure = jest
+        .spyOn(service, 'leaveInTransaction')
+        .mockResolvedValue(REMOVAL_OUTCOME);
+
+      await service.remove(ownerCaller, 'lee');
+
+      expect(procedure).toHaveBeenCalled();
+    });
+
+    it('only owners and the admin: a personal grant gets a manager past the guard, not past this (403)', async () => {
+      await expect(service.remove(managerCaller, 'park')).rejects.toThrow(
+        new ForbiddenException('Only owners and the admin can remove members'),
+      );
+      expect(prisma.profile.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('removing yourself is leaving, not removal (400)', async () => {
+      await expect(service.remove(ownerCaller, 'jisoo')).rejects.toThrow(
+        new BadRequestException('To leave, use POST /profiles/me/leave'),
+      );
+      expect(prisma.profile.findFirst).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['nobody, or someone in another company', null],
+      [
+        'a profile with no company (the platform admin)',
+        { ...leeTarget, companyId: null },
+      ],
+    ])('404 for %s', async (_label, row) => {
+      prisma.profile.findFirst.mockResolvedValue(row);
+
+      await expect(service.remove(ownerCaller, 'lee')).rejects.toThrow(
+        new NotFoundException('Member not found'),
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('an owner cannot remove an owner (403)', async () => {
+      prisma.profile.findFirst.mockResolvedValue({
+        ...leeTarget,
+        role: { code: 'OWNER' },
+      });
+
+      await expect(service.remove(ownerCaller, 'lee')).rejects.toThrow(
+        new ForbiddenException('Owners cannot remove an owner'),
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        'a waiting request (PENDING_APPROVAL)',
+        ProfileStatus.PENDING_APPROVAL,
+        null,
+      ],
+      [
+        'someone already gone (DEACTIVATED)',
+        ProfileStatus.DEACTIVATED,
+        { code: 'STAFF' },
+      ],
+      ['a rejected request (REJECTED)', ProfileStatus.REJECTED, null],
+    ])(
+      'only ACTIVE or SUSPENDED members: %s is 400',
+      async (_label, status, role) => {
+        prisma.profile.findFirst.mockResolvedValue({
+          ...leeTarget,
+          status: status,
+          role: role,
+        });
+
+        await expect(service.remove(ownerCaller, 'lee')).rejects.toThrow(
+          new BadRequestException('Only active members can be removed'),
+        );
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      },
+    );
+
+    it('sends nothing when the procedure throws (the transaction rolled back)', async () => {
+      prisma.profile.findFirst.mockResolvedValue(leeTarget);
+      jest
+        .spyOn(service, 'leaveInTransaction')
+        .mockRejectedValue(
+          new ConflictException('A company needs at least one owner'),
+        );
+
+      await expect(service.remove(adminCaller, 'lee')).rejects.toThrow(
+        new ConflictException('A company needs at least one owner'),
+      );
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
   });
 

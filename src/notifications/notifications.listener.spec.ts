@@ -559,6 +559,48 @@ describe('NotificationsListener', () => {
     });
   });
 
+  describe('member.removed', () => {
+    const event = {
+      companyId: 'company-1',
+      memberProfileId: 'park',
+      removedByProfileId: 'owner-1',
+    };
+
+    it('tells the removed person straight by id: their profile is DEACTIVATED now, and only the recipient lookups filter that out', async () => {
+      await listener.handleMemberRemoved(event);
+
+      expect(prisma.company.findUnique).toHaveBeenCalledWith({
+        where: { id: 'company-1' },
+        select: { name: true },
+      });
+      expect(notifications.notifyProfiles).toHaveBeenCalledWith({
+        profileIds: ['park'],
+        excludeProfileId: 'owner-1',
+        eventType: NotificationEvent.MEMBER_REMOVED,
+        message: notificationTemplates.memberRemoved('UPL Co'),
+        data: { companyId: 'company-1' },
+      });
+      expect(notifications.findCompanyOwnerIds).not.toHaveBeenCalled();
+    });
+
+    it('sends nothing when the company no longer exists', async () => {
+      prisma.company.findUnique.mockResolvedValue(null);
+
+      await listener.handleMemberRemoved(event);
+
+      expect(notifications.notifyProfiles).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('memberRemoved template', () => {
+    it('names the company, and says how to come back', () => {
+      expect(notificationTemplates.memberRemoved('UPL Co')).toEqual({
+        subject: '[Inventra] 회사 구성원에서 제외되었습니다',
+        body: 'UPL Co의 구성원에서 제외되었습니다. 다시 함께하려면 초대 코드로 가입을 요청해 주세요.',
+      });
+    });
+  });
+
   describe('memberLeft template', () => {
     it.each(['LEFT_COMPANY', 'ACCOUNT_DELETED'] as const)(
       '%s: they left the company',

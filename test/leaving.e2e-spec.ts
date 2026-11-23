@@ -48,6 +48,11 @@ describe('Leaving (e2e)', () => {
       .set(...auth(access))
       .send(body);
 
+  const removeMember = (access: string, profileId: string) =>
+    request(http)
+      .post(`/profiles/${profileId}/remove`)
+      .set(...auth(access));
+
   const previewOf = (access: string) =>
     request(http)
       .get('/profiles/me/leave-preview')
@@ -578,6 +583,224 @@ describe('Leaving (e2e)', () => {
         })
         .expect(409);
       expect(messageOf(refused)).toBe('Tax ID already registered');
+    });
+  });
+
+  describe('an owner removes a member', () => {
+    let owner: OwnerSetup;
+    let coOwner: MemberSetup;
+    let manager: MemberSetup;
+    let park: MemberSetup;
+    let waiting: MemberSetup;
+    let branchId: string;
+
+    beforeAll(async () => {
+      owner = await accounts.registerOwner(adminAccess, 7);
+      branchId = await openBranch(owner.access, 'Branch 7');
+      coOwner = await accounts.pendingMember(owner.joinCode, 'co7', {
+        contactEmail: true,
+      });
+      await request(http)
+        .patch(`/profiles/${coOwner.profileId}/approve`)
+        .set(...auth(owner.access))
+        .send({ roleId: await roleIdOf('OWNER'), cornerId: null })
+        .expect(200);
+      manager = await accounts.registerJoinedMember(
+        owner.access,
+        owner.joinCode,
+        'MANAGER',
+        'lee7',
+      );
+      park = await accounts.registerJoinedMember(
+        owner.access,
+        owner.joinCode,
+        'STAFF',
+        'park7',
+        { contactEmail: true },
+      );
+      await addBranch(owner.access, park.profileId, branchId).expect(201);
+      waiting = await accounts.pendingMember(owner.joinCode, 'wait7');
+    });
+
+    it('a manager cannot remove anyone (403): only the owners hold profiles.remove', async () => {
+      await removeMember(manager.access, park.profileId).expect(403);
+
+      expect((await profileOf(park.profileId)).status).toBe('ACTIVE');
+    });
+
+    it('removing yourself is leaving, not removal (400)', async () => {
+      const refused = await removeMember(owner.access, owner.profileId).expect(
+        400,
+      );
+
+      expect(messageOf(refused)).toBe('To leave, use POST /profiles/me/leave');
+    });
+
+    it('an owner cannot remove a co-owner (403)', async () => {
+      const refused = await removeMember(
+        owner.access,
+        coOwner.profileId,
+      ).expect(403);
+
+      expect(messageOf(refused)).toBe('Owners cannot remove an owner');
+    });
+
+    it('a waiting request is not removed (400)', async () => {
+      const refused = await removeMember(
+        owner.access,
+        waiting.profileId,
+      ).expect(400);
+
+      expect(messageOf(refused)).toBe('Only active members can be removed');
+    });
+
+    it('a malformed id is 400 before any query', async () => {
+      await removeMember(owner.access, 'not-a-uuid').expect(400);
+    });
+
+    it('removes staff: 204; DEACTIVATED, their branch ended by the owner, one REMOVED row by the owner', async () => {
+      const removed = await removeMember(owner.access, park.profileId).expect(
+        204,
+      );
+
+      expect(removed.body).toEqual({});
+      expect((await profileOf(park.profileId)).status).toBe('DEACTIVATED');
+      const assignment = await prisma.profileBranch.findFirstOrThrow({
+        where: { profileId: park.profileId, companyStoreId: branchId },
+      });
+      expect(assignment.deletedAt).not.toBeNull();
+      expect(assignment.deletedByProfileId).toBe(owner.profileId);
+      const removedRows = (await historyOf(park.profileId)).filter(
+        (row) => row.reason === 'REMOVED',
+      );
+      expect(removedRows).toHaveLength(1);
+      expect(removedRows[0]).toMatchObject({
+        fromRoleId: await roleIdOf('STAFF'),
+        toRoleId: null,
+        fromCompanyStoreId: branchId,
+        toCompanyStoreId: null,
+        changedByProfileId: owner.profileId,
+      });
+    });
+
+    it('their old access token gets 401 at once (Review Focus 3)', async () => {
+      await request(http)
+        .get('/profiles')
+        .set(...auth(park.access))
+        .expect(401);
+    });
+
+    it('they are told, though DEACTIVATED; the co-owner hears it as a removal', async () => {
+      await waitFor(() =>
+        prisma.notification.findFirst({
+          where: {
+            recipientProfileId: park.profileId,
+            eventType: 'member.removed',
+          },
+        }),
+      );
+      await waitFor(() =>
+        prisma.notification.findFirst({
+          where: {
+            recipientProfileId: coOwner.profileId,
+            eventType: 'member.left',
+            body: {
+              contains: 'park7님이 Leaving Co 7의 구성원에서 제외되었습니다.',
+            },
+          },
+        }),
+      );
+    });
+
+    it('the member list hides them', async () => {
+      const list = await request(http)
+        .get('/profiles')
+        .set(...auth(owner.access))
+        .expect(200);
+
+      expect(
+        (list.body as MemberBody[]).map((member) => member.id),
+      ).not.toContain(park.profileId);
+    });
+
+    it('they can come back with the code: a new profile waits for approval', async () => {
+      const refreshed = await request(http)
+        .post('/auth/refresh')
+        .send({ refreshToken: park.refreshToken })
+        .expect(201);
+      const session = refreshed.body as {
+        accessToken: string;
+        refreshToken: string;
+        profile: unknown;
+      };
+      expect(session.profile).toBeNull();
+
+      const rejoined = await joinCompany(
+        app,
+        {
+          accessToken: session.accessToken,
+          refreshToken: session.refreshToken,
+        },
+        owner.joinCode,
+        'park7',
+      );
+
+      expect(rejoined.profileId).not.toBe(park.profileId);
+      expect((await profileOf(rejoined.profileId)).status).toBe(
+        'PENDING_APPROVAL',
+      );
+    });
+  });
+
+  describe('the admin removes an owner', () => {
+    let owner: OwnerSetup;
+    let coOwner: MemberSetup;
+    let adminProfileId: string;
+
+    beforeAll(async () => {
+      owner = await accounts.registerOwner(adminAccess, 8);
+      coOwner = await accounts.pendingMember(owner.joinCode, 'co8');
+      await request(http)
+        .patch(`/profiles/${coOwner.profileId}/approve`)
+        .set(...auth(owner.access))
+        .send({ roleId: await roleIdOf('OWNER'), cornerId: null })
+        .expect(200);
+      adminProfileId = (
+        await prisma.profile.findFirstOrThrow({
+          where: { role: { code: 'ADMIN' }, deletedAt: null },
+        })
+      ).id;
+    });
+
+    it('removes one of two owners: 204, and the history says the admin did it', async () => {
+      await removeMember(adminAccess, coOwner.profileId).expect(204);
+
+      expect((await profileOf(coOwner.profileId)).status).toBe('DEACTIVATED');
+      const removedRows = (await historyOf(coOwner.profileId)).filter(
+        (row) => row.reason === 'REMOVED',
+      );
+      expect(removedRows).toHaveLength(1);
+      expect(removedRows[0]).toMatchObject({
+        fromRoleId: await roleIdOf('OWNER'),
+        toRoleId: null,
+        fromCompanyStoreId: null,
+        changedByProfileId: adminProfileId,
+      });
+    });
+
+    it('the last owner cannot be removed (409): nobody is picked, and the company stays open', async () => {
+      const refused = await removeMember(adminAccess, owner.profileId).expect(
+        409,
+      );
+
+      expect(messageOf(refused)).toBe('A company needs at least one owner');
+      const ownerNow = await profileOf(owner.profileId);
+      expect(ownerNow.status).toBe('ACTIVE');
+      expect(ownerNow.role?.code).toBe('OWNER');
+      const company = await prisma.company.findUniqueOrThrow({
+        where: { id: owner.companyId },
+      });
+      expect(company.deletedAt).toBeNull();
     });
   });
 

@@ -44,7 +44,7 @@
 - 409 `Already in this branch` · 404 `Not in this branch`
 - 403 `You can only work in your own branches` (replaces both old `assertWorksCorner` messages)
 - 400 `This person cannot take over as owner` · 400 `No owner successor is needed`
-- 400 `To leave, use POST /profiles/me/leave` · 400 `Only active members can be removed` · 403 `Owners cannot remove an owner`
+- 400 `To leave, use POST /profiles/me/leave` · 400 `Only active members can be removed` · 403 `Owners cannot remove an owner` · 403 `Only owners and the admin can remove members` (added 2026-11-22: a personal GRANT of `profiles.remove` gets a manager past the guard, not past `remove()`, as with `approve()`)
 - 403 `The platform admin has no company to leave` · 403 `The platform admin cannot delete its account`
 - Removed: 400 `Choose a branch (or null) for the demoted owner` (a `cornerId` not sent now means no branch).
 - Kept and reused: 409 `A company needs at least one owner`, 404 `Branch not found`, 403 `Managers can approve only as staff`, 403 `Managers can approve only into their own branch`, 403 `Owners cannot change an owner's role`, 403 `You cannot change member roles`, 400 `Invalid role for a member`, 400 `Invalid or expired verification token`.
@@ -77,6 +77,8 @@
 - **e2e helpers:** `registerJoinedMember` takes `options.cornerId` (passed to approve); new `addToBranch(ownerAccess, profileId, cornerId)`.
 - **No shared fixture or helper files** (the user's call, 2026-11-22: a new file only to remove repetition harms readability). Every spec keeps its own full `AuthProfile` literals, now with `branchIds`; Prisma `select` / `where` objects are written inline at each query.
 - **Status codes:** `POST /profiles/me/leave` answers 200 with a `LeaveSummary`; `POST /profiles/:id/remove` answers 204.
+- **Retired permissions** (the user's call, 2026-11-22): `profiles.create`, `profiles.update`, `profiles.delete` and `companies.update` were seeded but never checked by any route. `profiles.delete` isn't reused for removal: the profile permissions are named after their action and route (`profiles.approve` ↔ `:id/approve`), and a removal deletes nothing. The seed drops the four from its lists, and a retire step deletes them, with their role and personal grants first (`ON DELETE RESTRICT`), from databases seeded before. The upserts only ever add.
+- **The last-owner check for removal lives in `leaveInTransaction`:** an ACTIVE owner, no other ACTIVE owner, and reason `REMOVED` → 409 `A company needs at least one owner`. It runs on the locked re-read and reuses the count the owner part already makes, so a removal never reaches the successor or closing branch.
 
 ## Review Focus
 
@@ -339,9 +341,12 @@
   - **Route:** `POST /profiles/:id/remove` with `@RequirePermissions('profiles.remove')` and `@HttpCode(204)`.
   - **Event:** `NotificationEvent.MEMBER_REMOVED = 'member.removed'` with `MemberRemovedEvent`; channels `EMAIL_AND_PUSH`; template `memberRemoved(company)`.
   - **Seed:** permission `profiles.remove` ('Remove members from the company'), granted to OWNER. The admin gets it automatically (it holds every permission).
+  - **Seed:** the retire step for `profiles.create`, `profiles.update`, `profiles.delete`, `companies.update` (see Decisions beyond the spec).
+  - `LeavingService` gains `OwnershipService` (constructor: prisma, history, eventEmitter, ownership); the removal lookup is `scopeToCompany`-scoped, and the procedure runs in the target's company.
 
 - [ ] **Step 1 (Claude):** Write the tests.
   - **`remove`:**
+    - a caller who isn't an OWNER or the ADMIN (a personal GRANT) → 403 `Only owners and the admin can remove members`;
     - yourself → 400 `To leave, use POST /profiles/me/leave`;
     - another company's or unknown → 404 `Member not found`;
     - not ACTIVE or SUSPENDED → 400 `Only active members can be removed`;

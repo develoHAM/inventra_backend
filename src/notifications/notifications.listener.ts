@@ -13,6 +13,7 @@ import type {
   MemberJoinRequestedEvent,
   MemberLeftEvent,
   MemberMovedEvent,
+  MemberRemovedEvent,
   MemberRoleChangedEvent,
   OrderCreatedEvent,
   StockBelowTargetEvent,
@@ -190,6 +191,30 @@ export class NotificationsListener {
         event.memberName,
         event.reason,
       ),
+      data: { companyId: event.companyId },
+    });
+  }
+
+  /**
+   * Tells the removed person. Their profile is DEACTIVATED by now, which
+   * only the recipient lookups (findCompanyOwnerIds, …) filter out, so
+   * naming them by id still reaches their email and devices.
+   */
+  @OnEvent(NotificationEvent.MEMBER_REMOVED)
+  async handleMemberRemoved(event: MemberRemovedEvent): Promise<void> {
+    const company = await this.prisma.company.findUnique({
+      where: { id: event.companyId },
+      select: { name: true },
+    });
+    if (!company) {
+      return;
+    }
+
+    await this.notifications.notifyProfiles({
+      profileIds: [event.memberProfileId],
+      excludeProfileId: event.removedByProfileId,
+      eventType: NotificationEvent.MEMBER_REMOVED,
+      message: notificationTemplates.memberRemoved(company.name),
       data: { companyId: event.companyId },
     });
   }

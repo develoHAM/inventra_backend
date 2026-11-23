@@ -71,6 +71,10 @@ export const notificationTemplates = {
         ? `${memberName}님이 ${companyName}의 구성원에서 제외되었습니다.`
         : `${memberName}님이 ${companyName}을(를) 떠났습니다.`,
   }),
+  memberRemoved: (companyName: string): RenderedMessage => ({
+    subject: '[Inventra] 회사 구성원에서 제외되었습니다',
+    body: `${companyName}의 구성원에서 제외되었습니다. 다시 함께하려면 초대 코드로 가입을 요청해 주세요.`,
+  }),
   memberRoleChanged: (
     companyName: string,
     roleCode: MemberRoleCode,

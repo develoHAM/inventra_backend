@@ -26,15 +26,12 @@ const ROLES = [
 ];
 
 const PERMISSIONS = [
-  { code: 'profiles.create', name: 'Create profiles' },
   { code: 'profiles.read', name: 'Read profiles' },
-  { code: 'profiles.update', name: 'Update profiles' },
-  { code: 'profiles.delete', name: 'Delete profiles' },
   { code: 'profiles.approve', name: 'Approve profiles' },
   { code: 'profiles.move', name: 'Move members between branches' },
   { code: 'profiles.changeRole', name: 'Change member roles' },
+  { code: 'profiles.remove', name: 'Remove members from the company' },
   { code: 'companies.read', name: 'Read companies' },
-  { code: 'companies.update', name: 'Update companies' },
   { code: 'companies.approve', name: 'Approve companies' },
   { code: 'categories.create', name: 'Create categories' },
   { code: 'categories.read', name: 'Read categories' },
@@ -82,15 +79,12 @@ const PERMISSIONS = [
 const ROLE_PERMISSIONS: Record<string, string[]> = {
   ADMIN: PERMISSIONS.map((permission) => permission.code),
   OWNER: [
-    'profiles.create',
     'profiles.read',
-    'profiles.update',
-    'profiles.delete',
     'profiles.approve',
     'profiles.move',
     'profiles.changeRole',
+    'profiles.remove',
     'companies.read',
-    'companies.update',
     'products.create',
     'products.read',
     'products.update',
@@ -128,10 +122,7 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'companies.rotateJoinCode',
   ],
   MANAGER: [
-    'profiles.create',
     'profiles.read',
-    'profiles.update',
-    'profiles.delete',
     'profiles.approve', // as staff only, into their own branch (ProfilesService)
     'profiles.changeRole', // stepping down to staff only (decideRoleChange)
     'companies.read',
@@ -168,8 +159,6 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
   ],
   STAFF: [
     'profiles.read',
-    'profiles.update',
-    'profiles.delete',
     'companies.read',
     'products.read',
     'brands.read',
@@ -208,7 +197,7 @@ async function main() {
     });
   }
 
-  // 2) Permissions — resource/action derived from the code (e.g. "profiles.create")
+  // 2) Permissions — resource/action derived from the code (e.g. "profiles.read")
   for (const perm of PERMISSIONS) {
     const [resource, action] = perm.code.split('.');
     await prisma.permission.upsert({
@@ -217,6 +206,26 @@ async function main() {
       create: { code: perm.code, name: perm.name, resource, action },
     });
   }
+
+  // 2b) Retired permissions: gone from PERMISSIONS above, and deleted here
+  // from databases seeded before (the upserts above only ever add). The
+  // grants go first: both grant tables point at the permission with
+  // ON DELETE RESTRICT. No route ever checked these.
+  const retiredCodes = [
+    'profiles.create',
+    'profiles.update',
+    'profiles.delete',
+    'companies.update',
+  ];
+  await prisma.$transaction([
+    prisma.rolePermission.deleteMany({
+      where: { permission: { code: { in: retiredCodes } } },
+    }),
+    prisma.profilePermission.deleteMany({
+      where: { permission: { code: { in: retiredCodes } } },
+    }),
+    prisma.permission.deleteMany({ where: { code: { in: retiredCodes } } }),
+  ]);
 
   // 3) Role → permission baselines
   for (const [roleCode, permCodes] of Object.entries(ROLE_PERMISSIONS)) {
