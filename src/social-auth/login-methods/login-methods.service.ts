@@ -1,9 +1,8 @@
 import {
   ConflictException,
-  Inject,
   Injectable,
-  Logger,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Env } from '../../config/env.schema';
@@ -11,18 +10,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '../../generated/prisma/client';
 import { PasswordService } from '../../auth/password.service';
 import { maskEmail } from '../../auth/mask-email';
-import { decryptToken, encryptToken } from '../../common/token-cipher';
+import { encryptToken } from '../../common/token-cipher';
 import { EmailVerificationService } from '../../email-verification/email-verification.service';
-import { SOCIAL_VERIFIERS } from '../social-auth.constants';
 import { SocialAuthService } from '../social-auth.service';
-import { SOCIAL_PROVIDERS } from '../verifiers/social-identity-verifier';
+import { ProviderDisconnectService } from '../provider-disconnect.service';
 import type { SocialSignInDto } from '../dto/social-sign-in.dto';
 import type { LinkPasswordDto } from './dto/link-password.dto';
-import type {
-  SocialIdentity,
-  SocialIdentityVerifier,
-  SocialProvider,
-} from '../verifiers/social-identity-verifier';
+import type { SocialIdentity } from '../verifiers/social-identity-verifier';
 
 /** One way to sign in, as the settings screen shows it. */
 export interface LoginMethodSummary {
@@ -44,14 +38,12 @@ const toSummary = (row: {
 /** The ways a person's account can sign in: list, link, add a password, unlink. */
 @Injectable()
 export class LoginMethodsService {
-  private readonly logger = new Logger(LoginMethodsService.name);
   private readonly encryptionKey: string;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly socialAuth: SocialAuthService,
-    @Inject(SOCIAL_VERIFIERS)
-    private readonly verifiers: Record<SocialProvider, SocialIdentityVerifier>,
+    private readonly disconnect: ProviderDisconnectService,
     private readonly passwords: PasswordService,
     private readonly emailVerification: EmailVerificationService,
     config: ConfigService<Env, true>,
@@ -80,37 +72,57 @@ export class LoginMethodsService {
     accountId: string,
     body: SocialSignInDto,
   ): Promise<LoginMethodSummary> {
+    // a network call to the provider: outside the transaction, so no lock waits on it
     const identity = await this.socialAuth.identify(body);
 
-    const [linked] = await this.prisma.accountLoginMethod.createManyAndReturn({
-      data: [
+    return this.prisma.$transaction(async (transaction) => {
+      // The account lock, on a live account only. An account deletion
+      // running now finishes first; then this matches nothing → 401.
+      // Without it, the new row could land after the deletion removed the
+      // others, and stay on a deleted account forever.
+      const locked = await transaction.account.updateMany({
+        where: { id: accountId, deletedAt: null },
+        data: { updatedAt: new Date() },
+      });
+      if (locked.count === 0) {
+        throw new UnauthorizedException(); // deleted since the guard let this request in
+      }
+
+      const [linked] = await transaction.accountLoginMethod.createManyAndReturn(
         {
-          accountId: accountId,
-          method: identity.provider,
-          providerUserId: identity.providerUserId,
-          email: identity.email,
-          emailVerified: identity.emailVerified,
-          refreshToken:
-            identity.refreshToken === null
-              ? null
-              : encryptToken(identity.refreshToken, this.encryptionKey),
+          data: [
+            {
+              accountId: accountId,
+              method: identity.provider,
+              providerUserId: identity.providerUserId,
+              email: identity.email,
+              emailVerified: identity.emailVerified,
+              refreshToken:
+                identity.refreshToken === null
+                  ? null
+                  : encryptToken(identity.refreshToken, this.encryptionKey),
+            },
+          ],
+          skipDuplicates: true,
+          select: { id: true, method: true, email: true },
         },
-      ],
-      skipDuplicates: true,
-      select: { id: true, method: true, email: true },
+      );
+      if (!linked) {
+        throw new ConflictException(
+          await this.whyNotLinked(transaction, accountId, identity),
+        );
+      }
+      return toSummary(linked);
     });
-    if (!linked) {
-      throw new ConflictException(await this.whyNotLinked(accountId, identity));
-    }
-    return toSummary(linked);
   }
 
   /** Which unique rule stopped the link (read only after the insert said no). */
   private async whyNotLinked(
+    transaction: Prisma.TransactionClient,
     accountId: string,
     identity: SocialIdentity,
   ): Promise<string> {
-    const holder = await this.prisma.accountLoginMethod.findUnique({
+    const holder = await transaction.accountLoginMethod.findUnique({
       where: {
         method_providerUserId: {
           method: identity.provider,
@@ -156,6 +168,16 @@ export class LoginMethodsService {
     const passwordHash = await this.passwords.hash(dto.password); // slow: outside the transaction
 
     return this.prisma.$transaction(async (transaction) => {
+      // The account lock, as in linkProvider: an account deleted meanwhile
+      // → 401, before the proof is spent.
+      const locked = await transaction.account.updateMany({
+        where: { id: accountId, deletedAt: null },
+        data: { updatedAt: new Date() },
+      });
+      if (locked.count === 0) {
+        throw new UnauthorizedException(); // deleted since the guard let this request in
+      }
+
       // spent with the insert: if the insert is refused, the proof rolls back too
       await this.emailVerification.consume(transaction, {
         token: dto.emailVerificationToken,
@@ -239,33 +261,7 @@ export class LoginMethodsService {
       throw new NotFoundException('Login method not found');
     }
 
-    await this.disconnectFromProvider(removed);
-  }
-
-  /** Best-effort: logged, never thrown (the unlink already succeeded). */
-  private async disconnectFromProvider(removed: {
-    id: string;
-    method: string;
-    providerUserId: string | null;
-    refreshToken: string | null;
-  }): Promise<void> {
-    const provider = SOCIAL_PROVIDERS.find((name) => name === removed.method);
-    if (!provider || removed.providerUserId === null) {
-      return; // a password login
-    }
-    try {
-      await this.verifiers[provider].disconnect({
-        providerUserId: removed.providerUserId,
-        refreshToken:
-          removed.refreshToken === null
-            ? null
-            : decryptToken(removed.refreshToken, this.encryptionKey),
-      });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      this.logger.warn(
-        `Unlinked ${provider} login ${removed.id}, but the provider disconnect failed: ${reason}`,
-      );
-    }
+    // after the commit; never throws (the unlink already succeeded)
+    await this.disconnect.disconnectQuietly(removed);
   }
 }

@@ -4,8 +4,14 @@ import { jest } from '@jest/globals';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { testPhones } from './helpers/phone';
-import { joinCompany, signUp, suiteAccounts } from './helpers/accounts';
+import { FakeSocialVerifier } from '../src/social-auth/verifiers/fake.verifier';
+import { testPhones, verifiedPhoneToken } from './helpers/phone';
+import {
+  joinCompany,
+  signUp,
+  suiteAccounts,
+  switchTo,
+} from './helpers/accounts';
 import type { MemberSetup, OwnerSetup, Session } from './helpers/accounts';
 
 // Owners get a contact email proven through Mailpit (a code email, queued
@@ -13,8 +19,9 @@ import type { MemberSetup, OwnerSetup, Session } from './helpers/accounts';
 jest.setTimeout(30_000);
 
 /**
- * Leaving a company: POST /profiles/me/leave and its preview. Every block
- * has its own company, so the blocks can't disturb each other.
+ * Leaving a company: POST /profiles/me/leave and its preview, removal
+ * (POST /profiles/:id/remove), and deleting an account (DELETE /me). Every
+ * block has its own company, so the blocks can't disturb each other.
  */
 describe('Leaving (e2e)', () => {
   let app: INestApplication;
@@ -57,6 +64,37 @@ describe('Leaving (e2e)', () => {
     request(http)
       .get('/profiles/me/leave-preview')
       .set(...auth(access));
+
+  const deleteMe = (access: string, phoneVerificationToken: string) =>
+    request(http)
+      .delete('/me')
+      .set(...auth(access))
+      .send({ phoneVerificationToken: phoneVerificationToken });
+
+  /** Link a Kakao identity the fake verifier vouches for (no nonce needed). */
+  const linkKakao = (access: string, credentialToken: string) =>
+    request(http)
+      .post('/accounts/me/login-methods')
+      .set(...auth(access))
+      .send({ provider: 'kakao', credential: { token: credentialToken } });
+
+  /** A Kakao identity the fake verifier will vouch for, behind `credentialToken`. */
+  const vouchForKakao = (credentialToken: string, providerUserId: string) =>
+    app.get(FakeSocialVerifier).register(credentialToken, {
+      provider: 'kakao',
+      providerUserId: providerUserId,
+      email: null,
+      emailVerified: false,
+      name: null,
+      refreshToken: null,
+    });
+
+  const accountIdOfPhone = async (phone: string) =>
+    (
+      await prisma.account.findFirstOrThrow({
+        where: { phone: phone, deletedAt: null },
+      })
+    ).id;
 
   /** The error message Nest sent. */
   const messageOf = (response: { body: unknown }) =>
@@ -801,6 +839,230 @@ describe('Leaving (e2e)', () => {
         where: { id: owner.companyId },
       });
       expect(company.deletedAt).toBeNull();
+    });
+  });
+
+  describe('deleting an account (Review Focus 4)', () => {
+    // Han: staff in Company 9 and Company 10, signs in with a password and
+    // Kakao, and has a phone registered for pushes.
+    const hanEmail = 'han@lv.test';
+    let ownerA: OwnerSetup;
+    let ownerB: OwnerSetup;
+    let han: Session; // Company 9 open
+    let hanPhone: string;
+    let hanAccountId: string;
+    let hanInA: string;
+    let hanInB: string;
+
+    beforeAll(async () => {
+      // A contact email, so Company 9's owner can be seen hearing of it.
+      ownerA = await accounts.registerOwner(adminAccess, 9, {
+        contactEmail: true,
+      });
+      ownerB = await accounts.registerOwner(adminAccess, 10);
+
+      hanPhone = nextPhone();
+      const signedUp = await signUp(app, () => hanPhone, {
+        email: hanEmail,
+        password: 'password123',
+      });
+      hanInA = (await joinCompany(app, signedUp, ownerA.joinCode, 'han9'))
+        .profileId;
+      hanInB = (await joinCompany(app, signedUp, ownerB.joinCode, 'han10'))
+        .profileId;
+      await request(http)
+        .patch(`/profiles/${hanInA}/approve`)
+        .set(...auth(ownerA.access))
+        .send({ roleId: await roleIdOf('STAFF'), cornerId: null })
+        .expect(200);
+      await request(http)
+        .patch(`/profiles/${hanInB}/approve`)
+        .set(...auth(ownerB.access))
+        .send({ roleId: await roleIdOf('STAFF'), cornerId: null })
+        .expect(200);
+      han = await switchTo(app, signedUp, hanInA);
+      hanAccountId = await accountIdOfPhone(hanPhone);
+
+      vouchForKakao('kakao-han', 'e2e-lv-kakao-han');
+      await linkKakao(han.accessToken, 'kakao-han').expect(201);
+      await request(http)
+        .post('/devices')
+        .set(...auth(han.accessToken))
+        .send({ token: 'e2e-lv-han-device', platform: 'ANDROID' })
+        .expect(204);
+    });
+
+    it('the platform admin → 403: it runs the platform, and has no phone to prove', async () => {
+      const refused = await deleteMe(adminAccess, 'no-phone-to-prove').expect(
+        403,
+      );
+
+      expect(messageOf(refused)).toBe(
+        'The platform admin cannot delete its account',
+      );
+    });
+
+    it('a proof for another purpose (FIND_ID) → 400, nothing deleted', async () => {
+      const findIdProof = await verifiedPhoneToken(app, hanPhone, 'FIND_ID');
+
+      const refused = await deleteMe(han.accessToken, findIdProof).expect(400);
+
+      expect(messageOf(refused)).toBe('Invalid or expired verification token');
+      const account = await prisma.account.findUniqueOrThrow({
+        where: { id: hanAccountId },
+      });
+      expect(account.deletedAt).toBeNull();
+    });
+
+    it("a DELETE_ACCOUNT proof of someone else's phone → 400, nothing deleted", async () => {
+      const otherPhoneProof = await verifiedPhoneToken(
+        app,
+        nextPhone(),
+        'DELETE_ACCOUNT',
+      );
+
+      await deleteMe(han.accessToken, otherPhoneProof).expect(400);
+
+      const account = await prisma.account.findUniqueOrThrow({
+        where: { id: hanAccountId },
+      });
+      expect(account.deletedAt).toBeNull();
+      expect((await profileOf(hanInA)).status).toBe('ACTIVE');
+    });
+
+    it('deletes it: 204, and Han has left both companies, by their own hand', async () => {
+      const proof = await verifiedPhoneToken(app, hanPhone, 'DELETE_ACCOUNT');
+
+      await deleteMe(han.accessToken, proof).expect(204);
+
+      const account = await prisma.account.findUniqueOrThrow({
+        where: { id: hanAccountId },
+      });
+      expect(account.deletedAt).not.toBeNull();
+      expect(account.lastProfileId).toBeNull();
+      for (const profileId of [hanInA, hanInB]) {
+        expect((await profileOf(profileId)).status).toBe('DEACTIVATED');
+        expect(await historyOf(profileId)).toContainEqual(
+          expect.objectContaining({
+            reason: 'ACCOUNT_DELETED',
+            changedByProfileId: profileId,
+          }),
+        );
+      }
+    });
+
+    it('both companies list Han only under ?status=DEACTIVATED', async () => {
+      for (const [owner, profileId] of [
+        [ownerA, hanInA],
+        [ownerB, hanInB],
+      ] as const) {
+        const live = await request(http)
+          .get('/profiles')
+          .set(...auth(owner.access))
+          .expect(200);
+        const gone = await request(http)
+          .get('/profiles?status=DEACTIVATED')
+          .set(...auth(owner.access))
+          .expect(200);
+
+        expect(
+          (live.body as MemberBody[]).map((member) => member.id),
+        ).not.toContain(profileId);
+        expect(
+          (gone.body as MemberBody[]).map((member) => member.id),
+        ).toContain(profileId);
+      }
+    });
+
+    it("Company 9's owner hears that Han left", async () => {
+      await waitFor(() =>
+        prisma.notification.findFirst({
+          where: {
+            recipientProfileId: ownerA.profileId,
+            eventType: 'member.left',
+            body: { contains: 'han9님이 Leaving Co 9을(를) 떠났습니다.' },
+          },
+        }),
+      );
+    });
+
+    it('every credential is gone: old access and refresh tokens, password login, login methods, devices', async () => {
+      await request(http)
+        .get('/me/companies')
+        .set(...auth(han.accessToken))
+        .expect(401);
+      await request(http)
+        .post('/auth/refresh')
+        .send({ refreshToken: han.refreshToken })
+        .expect(401);
+      await request(http)
+        .post('/auth/login')
+        .send({ email: hanEmail, password: 'password123' })
+        .expect(401);
+
+      expect(
+        await prisma.accountLoginMethod.count({
+          where: { accountId: hanAccountId },
+        }),
+      ).toBe(0);
+      expect(
+        await prisma.refreshToken.count({
+          where: { accountId: hanAccountId, revokedAt: null },
+        }),
+      ).toBe(0);
+      expect(
+        await prisma.deviceToken.count({ where: { accountId: hanAccountId } }),
+      ).toBe(0);
+    });
+
+    it('Kakao is asked to forget us, after the commit', () => {
+      expect(app.get(FakeSocialVerifier).disconnected).toContainEqual({
+        provider: 'kakao',
+        providerUserId: 'e2e-lv-kakao-han',
+        refreshToken: null,
+      });
+    });
+
+    it('the same phone and email sign up again, and the same Kakao identity links again', async () => {
+      const again = await signUp(app, () => hanPhone, {
+        email: hanEmail,
+        password: 'password123',
+      });
+
+      await linkKakao(again.accessToken, 'kakao-han').expect(201);
+      expect(await accountIdOfPhone(hanPhone)).not.toBe(hanAccountId);
+    });
+  });
+
+  describe('a link racing the deletion (Review Focus 4)', () => {
+    it('never leaves a login on the deleted account: whichever takes the account lock second waits, then sees the other', async () => {
+      const yoonPhone = nextPhone();
+      const yoon = await signUp(app, () => yoonPhone, {
+        email: 'yoon@lv.test',
+        password: 'password123',
+      });
+      const yoonAccountId = await accountIdOfPhone(yoonPhone);
+      vouchForKakao('kakao-yoon', 'e2e-lv-kakao-yoon');
+      const proof = await verifiedPhoneToken(app, yoonPhone, 'DELETE_ACCOUNT');
+
+      const [deleted, linked] = await Promise.all([
+        deleteMe(yoon.accessToken, proof),
+        linkKakao(yoon.accessToken, 'kakao-yoon'),
+      ]);
+
+      expect(deleted.status).toBe(204);
+      // linked first (then deleted with the rest), or refused as deleted
+      expect([201, 401]).toContain(linked.status);
+      expect(
+        await prisma.accountLoginMethod.count({
+          where: { accountId: yoonAccountId },
+        }),
+      ).toBe(0);
+      expect(
+        await prisma.accountLoginMethod.count({
+          where: { method: 'kakao', providerUserId: 'e2e-lv-kakao-yoon' },
+        }),
+      ).toBe(0);
     });
   });
 

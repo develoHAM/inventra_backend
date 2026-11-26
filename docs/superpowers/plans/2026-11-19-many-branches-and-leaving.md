@@ -79,6 +79,8 @@
 - **Status codes:** `POST /profiles/me/leave` answers 200 with a `LeaveSummary`; `POST /profiles/:id/remove` answers 204.
 - **Retired permissions** (the user's call, 2026-11-22): `profiles.create`, `profiles.update`, `profiles.delete` and `companies.update` were seeded but never checked by any route. `profiles.delete` isn't reused for removal: the profile permissions are named after their action and route (`profiles.approve` ↔ `:id/approve`), and a removal deletes nothing. The seed drops the four from its lists, and a retire step deletes them, with their role and personal grants first (`ON DELETE RESTRICT`), from databases seeded before. The upserts only ever add.
 - **The last-owner check for removal lives in `leaveInTransaction`:** an ACTIVE owner, no other ACTIVE owner, and reason `REMOVED` → 409 `A company needs at least one owner`. It runs on the locked re-read and reuses the count the owner part already makes, so a removal never reaches the successor or closing branch.
+- **Linking takes the account lock** (the user's call, 2026-11-24, found while teaching Task 5): `linkProvider` and `linkPassword` start their transaction with `account.updateMany({ where: { id, deletedAt: null } })`, count 0 → 401. Without it, a link at the same moment as a deletion could insert its row after step 4 deleted the others, leaving a login on a deleted account; `UQ_login_methods_identity` and `UQ_login_methods_local_email` count every row, so that identity or email could never sign up again. `linkProvider` now runs in a transaction (the provider check stays before it: a network call never holds the lock). Sessions and devices made at that moment are harmless: the guard refuses a deleted account.
+- **The deletion's account lock is `updateManyAndReturn` with `select: { phone: true }`:** one statement locks the live account and reads the phone the proof must match. `[]` → 401 (a second deletion that waited).
 
 ## Review Focus
 
@@ -391,6 +393,7 @@
     - a social login → `verifiers[provider].disconnect` with the decrypted refresh token;
     - a throwing provider → logged, resolves;
     - `unlink` still disconnects through it.
+  - **Linking takes the account lock** (see Decisions beyond the spec): `linkProvider` proves the identity before its transaction, then locks the live account before the insert; `linkPassword` locks before spending the email proof; an account deleted meanwhile → 401, nothing inserted, nothing spent.
   - **`deleteAccount`:**
     - the admin → 403 `The platform admin cannot delete its account`;
     - inside one transaction, in this order:
@@ -408,7 +411,8 @@
     - afterwards their old access and refresh tokens → 401, password login → 401, `device_tokens` has none of theirs (Prisma), and both companies list them only with `?status=DEACTIVATED`;
     - the same phone signs up again → 201, and the same email login can be added again;
     - a proof for another purpose, or for another phone → 400, and nothing is deleted;
-    - the admin → 403.
+    - the admin → 403;
+    - a link racing the deletion (`Promise.all`): the deletion → 204, the link → 201 or 401, and afterwards no login method is left on the account, and the identity is free.
 - [ ] **Step 2:** Run `npm test`. Expected: FAIL.
 - [ ] **Step 3 (user):** Code to the interfaces.
 - [ ] **Step 4:** Run `npm test`, `npm run build`, `npm run lint`. Expected: PASS.

@@ -12,6 +12,7 @@ import { SignupTicketsModule } from './signup-tickets/signup-tickets.module';
 import { EmailVerificationModule } from '../email-verification/email-verification.module';
 import { LoginMethodsController } from './login-methods/login-methods.controller';
 import { LoginMethodsService } from './login-methods/login-methods.service';
+import { ProviderDisconnectService } from './provider-disconnect.service';
 import { AppleVerifier } from './verifiers/apple.verifier';
 import { FacebookVerifier } from './verifiers/facebook.verifier';
 import { FakeSocialVerifier } from './verifiers/fake.verifier';
@@ -79,6 +80,7 @@ export function buildSocialVerifiers(
   providers: [
     SocialAuthService,
     LoginMethodsService,
+    ProviderDisconnectService,
     SocialNonceService,
     FakeSocialVerifier,
     {
@@ -87,5 +89,7 @@ export function buildSocialVerifiers(
       useFactory: buildSocialVerifiers,
     },
   ],
+  // account deletion disconnects every social login, as unlink does one
+  exports: [ProviderDisconnectService],
 })
 export class SocialAuthModule {}

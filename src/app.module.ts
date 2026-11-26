@@ -27,6 +27,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { DevicesModule } from './devices/devices.module';
 import { EmailVerificationModule } from './email-verification/email-verification.module';
 import { SocialAuthModule } from './social-auth/social-auth.module';
+import { AccountDeletionModule } from './account-deletion/account-deletion.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { SocialAuthModule } from './social-auth/social-auth.module';
     DevicesModule,
     EmailVerificationModule,
     SocialAuthModule,
+    AccountDeletionModule, // DELETE /me
     PrismaModule,
     StorageModule,
     SpreadsheetModule,
