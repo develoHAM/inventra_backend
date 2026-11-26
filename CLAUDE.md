@@ -5,7 +5,7 @@ Multi-tenant inventory-management SaaS (Korean concession-store model — compan
 ## Start here
 **Read [`docs/superpowers/STATUS.md`](docs/superpowers/STATUS.md) first** — the living handoff: what's done, the current phase, the next slice, and new-machine setup. Specs are in `docs/superpowers/specs/`, plans in `docs/superpowers/plans/`, phase retrospectives in `blog/en` + `blog/ko`.
 
-**Current state:** Phases 0–10a complete, plus the file-upload + order/audit CSV·xlsx import/export track, the notifications track (email · OCTOMO phone verification · account recovery · FCM push) and the **social login track** (Kakao · Google · Facebook · Apple, verified by our backend; login methods link/unlink) and **roles & branches** (membership piece 1: promote/demote, move between branches, one branch per manager, append-only change history) and **one sign-in, many companies** (membership piece 2: `POST /auth/signup` → join or create from `/me/companies`, a profile per company, Slack-style `POST /auth/switch`, per-company name and code-proven contact email, company-tagged pushes; `register` endpoints retired). Join and create can also carry a proven contact email. **Now:** membership piece 3 (leaving: account deletion, company closure) — starts with brainstorm → spec → plan; see STATUS.md.
+**Current state:** Phases 0–10a complete, plus the file-upload + order/audit CSV·xlsx import/export track, the notifications track (email · OCTOMO phone verification · account recovery · FCM push) and the **social login track** (Kakao · Google · Facebook · Apple, verified by our backend; login methods link/unlink) and **roles & branches** (membership piece 1: promote/demote, move between branches, one branch per manager, append-only change history) and **one sign-in, many companies** (membership piece 2: `POST /auth/signup` → join or create from `/me/companies`, a profile per company, Slack-style `POST /auth/switch`, per-company name and code-proven contact email, company-tagged pushes; `register` endpoints retired). Join and create can also carry a proven contact email. And **many branches & leaving** (membership piece 3: a manager or staff member works in any number of branches via `profile_branches`; leave a company with an owner successor or closure, owners and the admin remove members, `DELETE /me` deletes an account behind a phone proof and disconnects the providers). **Now:** the membership track is complete; the next track is the user's choice — see STATUS.md.
 
 ## How we work (please follow)
 - **Teaching-first.** I'm learning NestJS — explain the concepts and framework fundamentals as we build, the *why* not just the *what*.
@@ -15,7 +15,7 @@ Multi-tenant inventory-management SaaS (Korean concession-store model — compan
 - **Phase-end:** offer the bilingual EN+KR Medium-style `/phase-blog` retrospective.
 
 ## Commands
-- `npm test` — unit suite (currently **1238 green**).
+- `npm test` — unit suite (currently **1403 green**).
 - `npm run test:e2e` — e2e. ⚠️ Its `pretest` runs `prisma migrate reset --force`, which Claude's Prisma AI-safety guard blocks — **a human must run e2e and any `prisma migrate` command**. Claude runs `npm test`, `npm run seed`, and read-only `psql` fine.
 - `npm run build` · `npm run seed` · `npm run lint`.
 

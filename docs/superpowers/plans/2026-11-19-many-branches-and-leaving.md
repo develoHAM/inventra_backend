@@ -111,7 +111,7 @@
 
 ---
 
-### Task 1: Who may do what (on today's single branch)
+### Task 1: Who may do what (on today's single branch) — ✅ done (`5cbebd3`)
 
 **Files:**
 - Modify: `src/profiles/member-rules.ts`, `src/profiles/profiles.service.ts` (`approve`, `changeRole`), `src/profiles/dto/change-role.dto.ts` (comment), `prisma/seed.ts` (comments on MANAGER's `profiles.approve` and `profiles.changeRole`)
@@ -164,7 +164,7 @@
 
 ---
 
-### Task 2: Many branches per person
+### Task 2: Many branches per person — ✅ done (`196e1fc`)
 
 **Files:**
 - Modify: `prisma/schema.prisma`; migration `profile_branches`
@@ -260,7 +260,7 @@
 
 ---
 
-### Task 3: Leaving a company
+### Task 3: Leaving a company — ✅ done (`8e5e78a`)
 
 **Files:**
 - Modify: `src/profiles/member-rules.ts` (`pickSuccessor`), `src/profiles/profiles.service.ts` (the list hides people who left)
@@ -329,7 +329,7 @@
 
 ---
 
-### Task 4: Removing a member
+### Task 4: Removing a member — ✅ done (`7488e4c`)
 
 **Files:**
 - Modify: `prisma/seed.ts` (`profiles.remove` for OWNER), `src/profiles/leaving.service.ts` (`remove`), `src/profiles/profiles.controller.ts` (the route)
@@ -371,7 +371,7 @@
 
 ---
 
-### Task 5: Deleting an account; docs
+### Task 5: Deleting an account; docs — ✅ done (`01ade77` + docs; unit 1403, e2e 324, measured 2026-11-26)
 
 **Files:**
 - Create: `src/social-auth/provider-disconnect.service.ts`; `src/account-deletion/{account-deletion.module,account-deletion.service,account-deletion.controller}.ts`, `dto/delete-account.dto.ts`

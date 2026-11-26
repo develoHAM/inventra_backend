@@ -1,7 +1,7 @@
 # Inventra — Project Status & Handoff
 
 > Living status doc. Read this first when resuming (especially on a different machine).
-> Last updated: 2026-11-19.
+> Last updated: 2026-11-26.
 
 **Inventra** = multi-tenant inventory-management SaaS (Korean concession-store model — companies operate "corners" inside physical stores).
 **Stack:** NestJS 11 · Prisma 7 (driver adapters, client generated to `src/generated/prisma`) · PostgreSQL · Jest + supertest · npm.
@@ -29,8 +29,42 @@
 | Social | **Social login** (Kakao · Google · Facebook · Apple, native app-to-app) + **login methods** (link · add a password · unlink) | ✅ complete (Tasks 1–14) |
 | Members | **Roles & branches** (membership piece 1 of 3: promote/demote, move between branches, one branch per manager, change history, notifications) | ✅ complete (Tasks 1–8) |
 | Members | **One sign-in, many companies** (membership piece 2 of 3: a profile per company, switching, join/create from inside the app) | ✅ complete (Tasks 1, 1b, 2–7) |
+| Members | **Many branches & leaving** (membership piece 3 of 3: several branches per person, leaving, removal, company closure, account deletion) | ✅ complete (Tasks 1–5) |
 
-## Where we are right now — One sign-in, many companies (membership piece 2): complete
+## Where we are right now — Many branches & leaving (membership piece 3): complete
+
+Spec `docs/superpowers/specs/2026-11-19-many-branches-and-leaving-design.md` (redesigned with the user 2026-11-21: the role belongs to the person, branches are a list), plan `docs/superpowers/plans/2026-11-19-many-branches-and-leaving.md` (5 tasks, native execution: per task teach → Claude applies the tests first, then the code → the user reviews the diff file by file → a human runs migrate + e2e). "As built" at the end of the spec lists every deviation.
+
+- **Task 1** (`5cbebd3`): who may do what, on the single branch. Managers only step down themselves (403 `Managers can only step down themselves`); an owner steps down while another ACTIVE owner remains (company lock + owner count); owners never demote another owner. The admin and owners may approve a newcomer as OWNER, never with a branch (400 `Owners work across the whole company`). `cornerId` is accepted only when demoting an owner.
+- **Task 2** (`196e1fc`, breaking): many branches per person.
+  - `profile_branches`: one live row per person per branch (partial unique `WHERE deleted_at IS NULL`); `profiles.company_store_id` dropped after a hand-written copy into it.
+  - `AuthProfile.branchIds`, read fresh by the guard; `assertWorksCorner`: owners and the admin anywhere, everyone else only in `branchIds` (403 `You can only work in your own branches`).
+  - `POST /profiles/:id/branches` (201; 409 `Already in this branch`) and `DELETE /profiles/:id/branches/:cornerId` (404 `Not in this branch`), owners and the admin only. **`PUT /profiles/:id/branch` removed.**
+  - Approval writes the first assignment; promotion to owner ends every assignment; staff ↔ manager keeps them; deleting a branch ends only its assignments, and nobody's role changes. `member.moved` is `{ cornerId, change: ADDED | REMOVED | BRANCH_DELETED }`.
+  - Member list: `cornerId=X` is "works in X", `none` is "no live assignment"; views show `branches: [{ id, name }]`. Every Prisma `select`/`where` is written inline at its query (the user's call).
+- **Style** (`ce2c7a2`): braces on every if/else/loop body, enforced by ESLint `curly: ['error', 'all']`.
+- **Task 3** (`8e5e78a`): leaving a company.
+  - `GET /profiles/me/leave-preview` and `POST /profiles/me/leave` (200, `LeaveSummary { companyClosed, newOwner }`). The leaver turns DEACTIVATED (their sessions get 401 on the next request; the slot frees for rejoining), their assignments end, and `member.left` tells the owners and the managers of those branches.
+  - **The shared procedure** `LeavingService.leaveInTransaction(transaction, { profileId, companyId, actorProfileId, reason, ownerSuccessorProfileId? })`: the company row lock first, a re-read of the leaver, and the events returned for sending after the commit. Leaving, removal and deletion each open their own transaction around it.
+  - The last ACTIVE owner names an ACTIVE manager or staff member (anyone else → 400 `This person cannot take over as owner`), or the system picks (managers first, then the earliest joiner; `AUTO_PROMOTED`, no `changed_by`). Nobody to pick, or a waiting founder withdrawing → the company closes: company and branches soft-deleted, everyone else deactivated, `COMPANY_CLOSED` rows.
+  - The member list hides DEACTIVATED unless `?status=` names it.
+- **Task 4** (`7488e4c`): removal. `POST /profiles/:id/remove` (`profiles.remove`, 204).
+  - Checks, in order: OWNER or ADMIN (403 `Only owners and the admin can remove members`, so a personal GRANT doesn't get a manager past it) → not yourself (400 `To leave, use POST /profiles/me/leave`) → the caller's company (404 `Member not found`; the admin: any company) → owners never remove an owner (403 `Owners cannot remove an owner`) → ACTIVE or SUSPENDED (400 `Only active members can be removed`).
+  - The last ACTIVE owner → 409 `A company needs at least one owner`, counted under the company lock inside the procedure, so a removal never hands the company over or closes it.
+  - After the commit: `member.removed` tells the removed person by id (`memberRemoved`: "…의 구성원에서 제외되었습니다"), then `member.left` tells the rest.
+  - **Seed:** `profiles.remove` for OWNER (the admin holds every permission). `profiles.create`, `profiles.update`, `profiles.delete` and `companies.update` are retired (no route ever checked them); a retire step deletes them, grants first, from databases seeded before.
+- **Task 5** (`01ade77`): deleting an account. `DELETE /me { phoneVerificationToken }` (`@AccountRoute()`, 204), in `AccountDeletionModule`, which imports phone verification, social auth, profiles and accounts, and which nothing imports.
+  - The admin → 403 `The platform admin cannot delete its account`. Then one transaction: (1) lock the live account and read its phone (`updateManyAndReturn`; `[]` → 401) → (2) spend a `DELETE_ACCOUNT` proof of that phone (400 otherwise) → (3) `leaveInTransaction` for every non-DEACTIVATED profile in `companyId` order (reason `ACCOUNT_DELETED`, the system picks any successor) → (4) read, then delete the login methods → (5) revoke the live refresh tokens → (6) delete the device tokens → (7) `deleted_at`, and `last_profile_id` null.
+  - After the commit: the events, then `ProviderDisconnectService.disconnectQuietly` for each login (moved out of `LoginMethodsService`, exported by `SocialAuthModule`; logged, never thrown).
+  - **Linking now takes the account lock** (live accounts only; count 0 → 401), so a link racing a deletion can't leave a login on a deleted account, whose identity could then never sign up again.
+- **Migration of this piece:** `20261122020212_profile_branches` (the table, every new enum value of the piece, `companies.deleted_by_profile_id`, the copy, then the drop).
+- **New endpoints of this piece:** `POST /profiles/:id/branches`, `DELETE /profiles/:id/branches/:cornerId`, `GET /profiles/me/leave-preview`, `POST /profiles/me/leave`, `POST /profiles/:id/remove`, `DELETE /me`. Removed: `PUT /profiles/:id/branch`.
+- **For the app:** every push carries the recipient's `profileId`. After a removal or a leave that profile is DEACTIVATED, so a tap-to-switch gets 404 `Company profile not found` from `POST /auth/switch`, with the session left as it was. Treat that 404 as "show the message, stay where you are" (any old push can hit it).
+- **1403 unit tests green (98 suites) + 324 e2e green (18 suites)** — both **measured** 2026-11-26 (`Tests: 324 passed, 324 total`, on a database rebuilt from all 30 migrations), incl. `test/leaving.e2e-spec.ts` (phone suite 18).
+
+**Next:** the membership track is complete (pieces 1–3); what comes next is the user's choice. Candidates: the spec's "Built for later" (scrubbing personal data at deletion for PIPA, declining a join request, reviving a closed company, a role per branch) or Phase 10b+ (cross-cutting concerns; caching only when measured). The piece-3 phase blog is in `blog/en` + `blog/ko`; the piece-2 blog was offered and deferred.
+
+## One sign-in, many companies (membership piece 2): complete
 
 Spec `docs/superpowers/specs/2026-11-12-one-sign-in-many-companies-design.md`, plan `docs/superpowers/plans/2026-11-12-one-sign-in-many-companies.md` (7 tasks, native execution: per task teach → reference code → user applies or asks Claude to → Claude tests → human runs migrate + e2e). Ledger `.superpowers/sdd/2026-11-12-one-sign-in-many-companies/progress.md` (git-ignored).
 
@@ -77,7 +111,7 @@ Spec `docs/superpowers/specs/2026-11-12-one-sign-in-many-companies-design.md`, p
 - **1238 unit tests green (90 suites) + 271 e2e green (17 suites)** — both **measured** 2026-11-19 after the follow-up (`Tests: 271 passed, 271 total`, on a database rebuilt from all 29 migrations).
 - The sections below are history: they use the names of their time (`users.*` permissions, `/users/:id/...` routes, `src/members`, `src/users`).
 
-**Next:** membership piece 3 — leaving: leave a company (a profile → `DEACTIVATED`, freeing its slot), delete an account (soft-delete the account, deactivate every profile; Apple requires token revocation), close a company when its last owner leaves (successor / auto-promotion by `created_at`), provider disconnect. Starts with `/brainstorming` → spec → plan. (The piece-2 phase blog was offered and deferred.)
+**Next (at the time):** membership piece 3 — leaving; built, see the section above. (The piece-2 phase blog was offered and deferred.)
 
 ## Prior — Roles & branches complete (membership piece 1, Tasks 1–8)
 
@@ -244,14 +278,16 @@ The DB, secrets, and generated client are **not** in the repo. After `git pull`:
 3. `docker compose up -d` (postgres + redis + **minio** + **mailpit** — MinIO console at `localhost:${MINIO_CONSOLE_PORT}`, Mailpit inbox at `localhost:${MAILPIT_UI_PORT}`). The app and **every** e2e suite need Redis up (BullMQ connects at boot).
 4. `npx prisma generate` (client generates into `src/generated/prisma`, which is gitignored)
 5. `npx prisma migrate deploy` then `npm run seed` (or `npx prisma migrate reset --force` which also seeds via `prisma/seed.ts`)
-6. `npm test` (unit — 1069 green across 75 suites) and `npm run test:e2e` (16 suites, incl. uploads, CSV·xlsx import/export, notifications via Mailpit, phone verification, account recovery, push, social login and members)
+6. `npm test` (unit — 1403 green across 98 suites) and `npm run test:e2e` (18 suites, incl. uploads, CSV·xlsx import/export, notifications via Mailpit, phone verification, account recovery, push, social login, members, accounts and leaving)
 
-Latest migration: `prisma/migrations/20261111141931_membership_changes_restrict_deletes`. **Keep the `prisma` CLI + `@prisma/client` + `@prisma/adapter-pg` all on the same major (v7); don't bump to the v8 RC.**
+Latest migration: `prisma/migrations/20261122020212_profile_branches`. **Keep the `prisma` CLI + `@prisma/client` + `@prisma/adapter-pg` all on the same major (v7); don't bump to the v8 RC.**
 
-⚠️ **A dev database from before the roles & branches track** (e.g. the other laptop's): `20261107182006_branch_managers` drops `company_stores.manager_user_id` **without copying it** (only this machine's database was checked, and it had no manager links). Before `migrate deploy` there, note each corner's manager, then put them back with `PUT /users/:id/branch`.
+⚠️ **A dev database from before the roles & branches track** (e.g. the other laptop's): `20261107182006_branch_managers` drops `company_stores.manager_user_id` **without copying it** (only this machine's database was checked, and it had no manager links). Before `migrate deploy` there, note each corner's manager, then put them back with `POST /profiles/:id/branches { cornerId }` (the old `PUT /users/:id/branch` is gone).
 
 ## Key references in-repo
-- `docs/superpowers/specs/2026-11-06-roles-and-branches-design.md` + `docs/superpowers/plans/2026-11-06-roles-and-branches.md` — roles & branches, membership piece 1 (latest)
+- `docs/superpowers/specs/2026-11-19-many-branches-and-leaving-design.md` + `docs/superpowers/plans/2026-11-19-many-branches-and-leaving.md` — many branches & leaving, membership piece 3 (latest)
+- `docs/superpowers/specs/2026-11-12-one-sign-in-many-companies-design.md` + `docs/superpowers/plans/2026-11-12-one-sign-in-many-companies.md` — one sign-in, many companies, membership piece 2
+- `docs/superpowers/specs/2026-11-06-roles-and-branches-design.md` + `docs/superpowers/plans/2026-11-06-roles-and-branches.md` — roles & branches, membership piece 1
 - `docs/superpowers/specs/2026-10-09-social-login-design.md` + `docs/superpowers/plans/2026-10-09-social-login.md` — the social login track
 - `docs/superpowers/specs/2026-09-23-notifications-and-account-security-design.md` — the notifications track
 - `docs/superpowers/specs/2026-09-07-phase-9-purchase-reservations-design.md` — Phase 9 design (Phase 10a was built directly from an in-session design, no spec file)

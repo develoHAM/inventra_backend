@@ -1,7 +1,7 @@
 # Many Branches & Leaving: Design
 
 **Date:** 2026-11-19
-**Status:** approved 2026-11-19; **redesigned with the user 2026-11-21** (the role belongs to the person, branches are a list; see "How we got here"). Plan next.
+**Status:** approved 2026-11-19; **redesigned with the user 2026-11-21** (the role belongs to the person, branches are a list; see "How we got here"); **built** 2026-11-26 (Tasks 1–5). "As built" at the end lists every deviation.
 **Piece 3 of 3** of the membership track:
 1. Roles & branches (built): promote and demote people, move them between branches, change history.
 2. One sign-in, many companies (built): an account with one profile per company, Slack-style switching.
@@ -415,3 +415,17 @@ A **pending** leaver goes through steps 1, 2 and 4 only (no assignments, no hist
 - Which module holds account deletion and its `DELETE /me` controller, as long as it adds no import cycle (for example, a small module that imports the others and that nothing imports).
 - Index names that follow the existing conventions.
 - How the guard's assignment select is shared with the views.
+
+## As built (2026-11-26)
+
+Plan `docs/superpowers/plans/2026-11-19-many-branches-and-leaving.md` ("Decisions beyond the spec" has the reasons). The deviations from this design:
+
+- **One migration for the piece:** `20261122020212_profile_branches` (the table, every new enum value, `companies.deleted_by_profile_id`, the copy, then dropping `profiles.company_store_id`). Task 1 needed no schema change and shipped first.
+- **Permissions:** "unchanged except `profiles.remove`" became "plus four retired": `profiles.create`, `profiles.update`, `profiles.delete` and `companies.update` were seeded but never checked by any route. The seed drops them, and a retire step deletes them and their role and personal grants from databases seeded before. `profiles.delete` wasn't reused for removal: the profile permissions are named after their route, and a removal deletes nothing.
+- **Removal checks** start with the role: a caller who isn't an OWNER or the ADMIN → 403 `Only owners and the admin can remove members`, so a personal GRANT of `profiles.remove` gets a manager past the guard but not past the service (as with approval). Then: yourself (400), the lookup (404), an owner removing an owner (403), the status (400). The last-owner 409 is counted inside the shared procedure, under the company lock.
+- **The shared procedure** is `LeavingService.leaveInTransaction(transaction, { profileId, companyId, actorProfileId, reason, ownerSuccessorProfileId? })`: `actorProfileId` is the leaver for leaving and deletion, the remover for removal, and it returns its events for sending after the commit.
+- **Deletion** lives in `AccountDeletionModule` (`DELETE /me`, an `@AccountRoute()`), which imports phone verification, social auth, profiles and accounts, and which nothing imports. Its account lock is one `updateManyAndReturn` that also reads the phone the proof must match; a second deletion that waited for it gets 401.
+- **Linking takes the account lock** (not in this design; found while building deletion): `linkProvider` and `linkPassword` lock the live account before inserting (count 0 → 401). Without it, a link at the same moment as a deletion could leave a login on the deleted account, and since the login-method unique indexes count every row, that identity or email could never sign up again. `linkProvider` now runs in a transaction, with the provider check before it.
+- **The disconnect** is `ProviderDisconnectService.disconnectQuietly` (moved out of `LoginMethodsService`, exported by `SocialAuthModule`); its warning now reads `Could not disconnect <provider> login <id>: <reason>`.
+- **For the app:** a push names the recipient's `profileId`; once that profile is DEACTIVATED (left or removed), a tap-to-switch gets 404 `Company profile not found` and the session stays as it was.
+- **Tests:** 1403 unit (98 suites) and 324 e2e (18 suites), measured 2026-11-26. Review Focus 1–5 each have an e2e: several branches (`profiles.e2e`), two owners leaving at once, a session on a profile that left or was removed, every credential of a deleted account plus a link racing the deletion, and ineligible successors (`leaving.e2e`).
